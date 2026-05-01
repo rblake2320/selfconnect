@@ -30,7 +30,7 @@ Run as a script to list all visible windows:
   python self_connect.py
 """
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 __all__ = [
     # Core types
     "WindowTarget", "WindowPool",
@@ -70,17 +70,21 @@ __all__ = [
     "parse_all_frames", "MessageListener",
     # Layer 3 Supervisor (v0.8.0) — peer tracking, watchdog, approval gating
     "PeerState", "PeerRecord", "AgentRegistry", "WatchdogLoop", "ApprovalRelay",
+    # Layer 4 Continuity (v0.9.0) — context-preserving role migration
+    "Checkpoint", "write_checkpoint", "read_checkpoint", "MigrationCoordinator",
 ]
 
 import ctypes
 import ctypes.wintypes as wintypes
 import time
 import os
+import json as _json
+import subprocess as _subprocess
 import collections
 import enum as _enum
 import hashlib as _hashlib
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 # ── Win32 constants ───────────────────────────────────────────────────────────
@@ -2178,6 +2182,270 @@ class ApprovalRelay:
         """Frame IDs currently queued for approval."""
         with self._lock:
             return list(self._pending.keys())
+
+
+# ── Layer 4 Continuity (v0.9.0) ───────────────────────────────────────────────
+#
+# Protocol stack:
+#   Layer 1 (Physical):    PostMessage(WM_CHAR) + PrintWindow
+#   Layer 2 (Framing):     STX|header|NUL|payload|ETX        (v0.5.0)
+#   Layer 2 receive:       MessageListener                    (v0.7.0)
+#   Layer 3 (Supervisor):  AgentRegistry + WatchdogLoop + ApprovalRelay  (v0.8.0)
+#   Layer 4 (Continuity):  Checkpoint + MigrationCoordinator              (v0.9.0)
+#
+# Patent claim: an agent autonomously detects its own context exhaustion,
+# serializes its mesh position (role, peers, pending tasks) to a JSON checkpoint,
+# broadcasts PEER_MIGRATING to all registered peers via send_frame(), spawns a
+# successor session (new terminal + claude), and the successor reads the
+# checkpoint and resumes the same role — zero human coordination required.
+
+
+@dataclass
+class Checkpoint:
+    """
+    Serializable snapshot of an agent's mesh position.
+
+    Created by MigrationCoordinator when context usage crosses the threshold.
+    Read by the successor session to resume role without human intervention.
+
+    Fields:
+        role:        Human-readable label for this agent's function ("A", "Supervisor", etc.)
+        own_hwnd:    HWND of the session that wrote this checkpoint
+        peers:       List of {hwnd, label, state} dicts — current mesh state
+        pending:     Arbitrary task/state dict the agent wants to carry forward
+        meta:        Free-form dict (version, session_id, notes, etc.)
+        written_at:  Unix timestamp when the checkpoint was written
+        schema:      Always "selfconnect-checkpoint-v1" — for forward-compat validation
+    """
+    role:       str
+    own_hwnd:   int
+    peers:      "list[dict]"
+    pending:    "dict"
+    meta:       "dict"
+    written_at: float = field(default_factory=time.time)
+    schema:     str   = "selfconnect-checkpoint-v1"
+
+
+def write_checkpoint(checkpoint: Checkpoint, path: str) -> str:
+    """
+    Serialize a Checkpoint to a JSON file.
+
+    Returns the resolved absolute path on success.
+    Raises OSError if the directory is not writable.
+
+    Usage::
+
+        cp = Checkpoint(role="A", own_hwnd=2820438,
+                        peers=[{"hwnd": 3546648, "label": "B", "state": "READY"}],
+                        pending={"task": "build v0.9.0"}, meta={"session": 8})
+        path = write_checkpoint(cp, "proofs/checkpoint_A.json")
+    """
+    abs_path = os.path.abspath(path)
+    os.makedirs(os.path.dirname(abs_path) or ".", exist_ok=True)
+    data = asdict(checkpoint)
+    with open(abs_path, "w", encoding="utf-8") as f:
+        _json.dump(data, f, indent=2)
+    return abs_path
+
+
+def read_checkpoint(path: str) -> Checkpoint:
+    """
+    Deserialize a Checkpoint from a JSON file.
+
+    Validates the schema field — raises ValueError if not a selfconnect checkpoint.
+    Raises FileNotFoundError if path does not exist.
+
+    Usage::
+
+        cp = read_checkpoint("proofs/checkpoint_A.json")
+        print(cp.role, cp.own_hwnd, cp.peers)
+    """
+    with open(path, encoding="utf-8") as f:
+        data = _json.load(f)
+    if data.get("schema") != "selfconnect-checkpoint-v1":
+        raise ValueError(f"Not a selfconnect checkpoint (schema={data.get('schema')!r})")
+    return Checkpoint(
+        role       = data["role"],
+        own_hwnd   = data["own_hwnd"],
+        peers      = data.get("peers", []),
+        pending    = data.get("pending", {}),
+        meta       = data.get("meta", {}),
+        written_at = data.get("written_at", 0.0),
+        schema     = data["schema"],
+    )
+
+
+class MigrationCoordinator:
+    """
+    Autonomous context-migration supervisor.
+
+    Monitors a counter that the host agent increments each conversation turn
+    (or character count, or message count — any integer proxy for context usage).
+    When ``current / capacity >= threshold``, it:
+
+      1. Writes a Checkpoint to ``checkpoint_path``
+      2. Broadcasts ``PEER_MIGRATING`` to all peers in the registry via send_frame()
+      3. Spawns a successor session: opens a new terminal, launches ``claude``,
+         sends it the continuation briefing (includes checkpoint path + mesh state)
+      4. Fires any registered ``on_migrate`` handlers
+
+    The successor session is expected to call ``read_checkpoint(path)`` and
+    re-register itself with all peers using the same ``role``.
+
+    Args:
+        own_hwnd:        This agent's HWND
+        role:            This agent's role label (carried into the checkpoint)
+        registry:        AgentRegistry for current peer list
+        checkpoint_path: Where to write the JSON snapshot (default: proofs/checkpoint_{role}.json)
+        capacity:        Total context budget (e.g. 100 for percentage, or token count)
+        threshold:       Fraction of capacity that triggers migration (default 0.70)
+        continuation:    Optional extra text appended to the successor briefing
+
+    Usage::
+
+        reg = AgentRegistry()
+        reg.register(3546648, "B")
+        coord = MigrationCoordinator(own_hwnd=2820438, role="A", registry=reg,
+                                     capacity=100, threshold=0.70)
+        coord.on_migrate(lambda cp, path: print("Migrated:", path))
+
+        # Each turn, tick the counter:
+        coord.tick(current=75)   # 75/100 = 0.75 → triggers migration
+    """
+
+    def __init__(
+        self,
+        own_hwnd:        int,
+        role:            str,
+        registry:        "AgentRegistry",
+        checkpoint_path: "str | None"  = None,
+        capacity:        int           = 100,
+        threshold:       float         = 0.70,
+        continuation:    str           = "",
+    ) -> None:
+        self.own_hwnd        = own_hwnd
+        self.role            = role
+        self.registry        = registry
+        self.checkpoint_path = checkpoint_path or f"proofs/checkpoint_{role}.json"
+        self.capacity        = capacity
+        self.threshold       = threshold
+        self.continuation    = continuation
+        self._migrated       = False
+        self._handlers: list = []
+        self._lock           = threading.Lock()
+
+    def on_migrate(self, handler) -> "MigrationCoordinator":
+        """Register callback fired after migration. Receives (checkpoint, path). Chainable."""
+        self._handlers.append(handler)
+        return self
+
+    def tick(self, current: int, pending: "dict | None" = None,
+             meta: "dict | None" = None) -> bool:
+        """
+        Update context counter. Triggers migration when current/capacity >= threshold.
+
+        Args:
+            current: Current context usage (same units as capacity)
+            pending: Optional task state to carry forward in checkpoint
+            meta:    Optional metadata dict
+
+        Returns True if migration was triggered this call, False otherwise.
+        """
+        with self._lock:
+            if self._migrated:
+                return False
+            if current / self.capacity < self.threshold:
+                return False
+            self._migrated = True
+
+        peers_snapshot = [
+            {"hwnd": r.hwnd, "label": r.label, "state": r.state.value}
+            for r in self.registry.all_peers()
+        ]
+        cp = Checkpoint(
+            role       = self.role,
+            own_hwnd   = self.own_hwnd,
+            peers      = peers_snapshot,
+            pending    = pending or {},
+            meta       = meta or {},
+        )
+        path = write_checkpoint(cp, self.checkpoint_path)
+
+        # Broadcast PEER_MIGRATING to all registered peers
+        for rec in self.registry.all_peers():
+            try:
+                target = next((w for w in list_windows() if w.hwnd == rec.hwnd), None)
+                if target:
+                    send_frame(target, self.own_hwnd,
+                               f"PEER_MIGRATING role={self.role} checkpoint={path}",
+                               topic="migration")
+            except Exception:
+                pass
+
+        # Spawn successor
+        self._spawn_successor(cp, path)
+
+        for h in self._handlers:
+            try:
+                h(cp, path)
+            except Exception:
+                pass
+
+        return True
+
+    def _spawn_successor(self, cp: Checkpoint, checkpoint_path: str) -> None:
+        """
+        Open a new Windows Terminal tab and launch claude with a continuation briefing.
+
+        The briefing injected into the new session instructs it to:
+        1. Read the checkpoint at checkpoint_path
+        2. Re-register with all peers in cp.peers
+        3. Resume the same role
+        4. Run the standing protocol
+        """
+        peers_text = "\n".join(
+            f"  - {p['label']} hwnd={p['hwnd']} state={p['state']}"
+            for p in cp.peers
+        )
+        briefing = (
+            f"[CONTINUATION BRIEFING — Role Migration]\n"
+            f"You are resuming role '{cp.role}' (previous hwnd={cp.own_hwnd}).\n"
+            f"Checkpoint: {checkpoint_path}\n\n"
+            f"Mesh peers at migration time:\n{peers_text}\n\n"
+            f"Steps to resume:\n"
+            f"1. Run: python -c \"from self_connect import read_checkpoint; "
+            f"cp = read_checkpoint(r'{checkpoint_path}'); print(cp.role, cp.peers)\"\n"
+            f"2. Re-register with each peer via send_string()\n"
+            f"3. Resume pending work: {_json.dumps(cp.pending)}\n"
+            f"4. Standing protocol: capture all peers via PrintWindow, "
+            f"confirm Enter on any pending response.\n"
+        )
+        if self.continuation:
+            briefing += f"\n{self.continuation}\n"
+
+        # Write briefing to a temp file so it survives the shell spawn
+        briefing_path = os.path.abspath(
+            f"proofs/briefing_successor_{self.role}_{int(time.time())}.txt"
+        )
+        os.makedirs("proofs", exist_ok=True)
+        with open(briefing_path, "w", encoding="utf-8") as f:
+            f.write(briefing)
+
+        # Launch new terminal → claude → pipe briefing
+        # wt.exe new-tab: works on Windows 11 with Windows Terminal installed
+        cmd = (
+            f'wt.exe new-tab -- cmd /k '
+            f'"claude < \"{briefing_path}\""'
+        )
+        try:
+            _subprocess.Popen(cmd, shell=True)
+        except Exception:
+            pass  # Best-effort — migration coordinator logs via on_migrate handler
+
+    @property
+    def has_migrated(self) -> bool:
+        """True if migration has been triggered for this instance."""
+        return self._migrated
 
 
 # ── CLI: list windows ─────────────────────────────────────────────────────────
