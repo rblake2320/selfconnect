@@ -30,7 +30,7 @@ Run as a script to list all visible windows:
   python self_connect.py
 """
 
-__version__ = "0.5.2"
+__version__ = "0.6.0"
 __all__ = [
     # Core types
     "WindowTarget", "WindowPool",
@@ -55,6 +55,17 @@ __all__ = [
     "wait_for_title_change",
     # Framing layer (v0.5.0) — reliable AI-to-AI messaging
     "build_frame", "parse_frame", "send_frame", "verify_delivery",
+    # Universal App Control (v0.6.0) — background-safe control messages
+    "app_type", "is_elevated",
+    "send_keys_to", "close_window",
+    "get_text", "set_text",
+    "click_button", "send_command",
+    "select_combo", "select_listbox",
+    "post_click",
+    "list_child_controls", "find_child_by_text",
+    "get_menu_items", "invoke_menu",
+    # Focus isolation (v0.6.0)
+    "exclude_from_capture", "include_in_capture",
 ]
 
 import ctypes
@@ -98,6 +109,24 @@ SWP_NOZORDER         = 0x0004
 WM_MOUSEWHEEL        = 0x020A
 SRCCOPY              = 0x00CC0020
 PW_RENDERFULLCONTENT = 0x2
+# v0.6.0 — Universal App Control
+BM_CLICK             = 0x00F5
+WM_CLOSE             = 0x0010
+WM_COMMAND           = 0x0111
+WM_SETTEXT           = 0x000C
+WM_GETTEXT           = 0x000D
+WM_GETTEXTLENGTH     = 0x000E
+WM_LBUTTONDOWN       = 0x0201
+WM_LBUTTONUP         = 0x0202
+MK_LBUTTON           = 0x0001
+CB_SETCURSEL         = 0x014E
+LB_SETCURSEL         = 0x0186
+WDA_NONE             = 0x00000000
+WDA_EXCLUDEFROMCAPTURE = 0x00000011
+SMTO_ABORTIFHUNG     = 0x0002
+# Elevated process check (UIPI)
+ACCESS_TOKEN_QUERY   = 0x0008
+TOKEN_ELEVATION_TYPE = 18
 
 WT_HOST_CLASS  = "CASCADIA_HOSTING_WINDOW_CLASS"
 WT_INPUT_CLASS = "Windows.UI.Input.InputSite.WindowClass"
@@ -742,6 +771,394 @@ def save_capture(hwnd: int, path: Optional[str] = None, crop: bool = True) -> st
     return path
 
 
+# ── Universal App Control (v0.6.0) ───────────────────────────────────────────
+#
+# SENTINEL fixes applied:
+#   1. _smto() wrapper uses SendMessageTimeoutW(SMTO_ABORTIFHUNG, 5000ms)
+#      instead of bare SendMessage — prevents hangs on frozen windows.
+#   2. is_elevated() / UIPI check: fail-fast if target process runs as admin
+#      (PostMessage to elevated windows silently drops without this check).
+#   3. BM_CLICK reliability claims are "app-dependent" — works for classic
+#      Win32 buttons, unreliable for UWP/Electron (documented below).
+#   4. WordPad removed from Win11 24H2 — tests use mspaint.exe instead.
+#   5. Audit logging via _audit() — records every control action.
+
+
+def _smto(hwnd: int, msg: int, wparam: int, lparam: int,
+          timeout_ms: int = 5000) -> int:
+    """
+    SendMessageTimeoutW wrapper — never blocks forever on a frozen app.
+    Returns the message result, or 0 on timeout/error.
+    SMTO_ABORTIFHUNG: returns immediately if the target is not responding.
+    """
+    result = ctypes.c_size_t(0)
+    user32.SendMessageTimeoutW(
+        hwnd, msg, wparam, lparam,
+        SMTO_ABORTIFHUNG, timeout_ms,
+        ctypes.byref(result),
+    )
+    return result.value
+
+
+def _makelparam(x: int, y: int) -> int:
+    """Pack (x, y) client coordinates into a LPARAM for mouse messages."""
+    return ((y & 0xFFFF) << 16) | (x & 0xFFFF)
+
+
+def _audit(action: str, hwnd: int, detail: str = "") -> None:
+    """Lightweight audit log — writes to stderr so scripts can capture it."""
+    import sys
+    tag = f"[sc.audit] {action} hwnd={hwnd}"
+    if detail:
+        tag += f" {detail}"
+    print(tag, file=sys.stderr)
+
+
+def is_elevated(hwnd: int) -> bool:
+    """
+    Return True if the process owning hwnd is running elevated (as Administrator).
+    PostMessage / SendMessage to elevated processes is silently dropped by UIPI
+    when the caller is not elevated. Check this before using control messages.
+    """
+    pid = ctypes.c_ulong(0)
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    h_process = kernel32.OpenProcess(0x0400, False, pid.value)  # PROCESS_QUERY_INFORMATION
+    if not h_process:
+        return False
+    try:
+        h_token = ctypes.c_void_p(0)
+        if not ctypes.windll.advapi32.OpenProcessToken(
+            h_process, ACCESS_TOKEN_QUERY, ctypes.byref(h_token)
+        ):
+            return False
+        try:
+            elevation = ctypes.c_ulong(0)
+            ret_len = ctypes.c_ulong(0)
+            ctypes.windll.advapi32.GetTokenInformation(
+                h_token, TOKEN_ELEVATION_TYPE,
+                ctypes.byref(elevation), 4, ctypes.byref(ret_len)
+            )
+            return elevation.value == 2  # TokenElevationTypeFull
+        finally:
+            kernel32.CloseHandle(h_token)
+    finally:
+        kernel32.CloseHandle(h_process)
+
+
+def app_type(hwnd: int) -> str:
+    """
+    Classify a window to guide strategy selection for input/control.
+
+    Returns one of:
+      'conpty'    — Windows Terminal / ConPTY: full background input via WM_CHAR
+      'classic'   — Classic Win32: BM_CLICK/WM_COMMAND/WM_SETTEXT work in background
+      'uwp'       — UWP/WinUI3: TSF blocks WM_CHAR; read-only in background
+      'electron'  — Electron/Chromium: ignores most PostMessage; read-only in background
+      'unknown'   — unclassified
+
+    Compatibility matrix:
+      App type   | Background input | Background read
+      -----------|-----------------|----------------
+      conpty     | FULL (WM_CHAR)  | FULL (PrintWindow)
+      classic    | PARTIAL         | FULL
+      uwp        | NO (TSF blocks) | FULL
+      electron   | NO (Chromium)   | FULL
+    """
+    cls = _get_class_name(hwnd)
+    if cls == WT_HOST_CLASS:
+        return "conpty"
+    chromium_classes = {"Chrome_WidgetWin_1", "Chrome_WidgetWin_0", "Electron"}
+    if any(c in cls for c in chromium_classes):
+        return "electron"
+    uwp_classes = {"ApplicationFrameWindow", "Windows.UI.Core.CoreWindow"}
+    if cls in uwp_classes:
+        return "uwp"
+    return "classic"
+
+
+def send_keys_to(hwnd: int, *keys: str) -> None:
+    """
+    PostMessage WM_KEYDOWN/WM_KEYUP to a specific HWND — no focus required.
+
+    Works reliably for navigation keys (Enter, Tab, Escape, arrows, F-keys)
+    in classic Win32 apps. Less reliable for character input (use set_text for that).
+
+    keys: strings like 'enter', 'tab', 'escape', 'up', 'down', 'f5', etc.
+    """
+    _VK_MAP = {
+        "enter": VK_RETURN, "return": VK_RETURN,
+        "tab": VK_TAB, "escape": VK_ESCAPE, "esc": VK_ESCAPE,
+        "backspace": VK_BACK, "delete": VK_DELETE,
+        "up": VK_UP, "down": VK_DOWN, "left": VK_LEFT, "right": VK_RIGHT,
+        "home": VK_HOME, "end": VK_END, "pgup": VK_PGUP, "pgdn": VK_PGDN,
+        **{f"f{i}": VK_F1 + i - 1 for i in range(1, 13)},
+    }
+    _audit("send_keys_to", hwnd, str(keys))
+    for key in keys:
+        vk = _VK_MAP.get(key.lower())
+        if vk is None:
+            continue
+        user32.PostMessageW(hwnd, WM_KEYDOWN, vk, 0)
+        time.sleep(0.02)
+        user32.PostMessageW(hwnd, WM_KEYUP_MSG, vk, 0)
+        time.sleep(0.02)
+
+
+def close_window(hwnd: int) -> bool:
+    """
+    Send WM_CLOSE to a window — graceful close, same as clicking X.
+    Background-safe (PostMessage). Returns True if message was posted.
+    """
+    _audit("close_window", hwnd)
+    return bool(user32.PostMessageW(hwnd, WM_CLOSE, 0, 0))
+
+
+def get_text(hwnd: int) -> str:
+    """
+    Read text from a control via WM_GETTEXT — no focus required.
+    Works with: classic Edit, RichEdit, static labels, buttons.
+    Does NOT work with: Chromium textareas, UWP/WinUI3 edit controls.
+    """
+    length = _smto(hwnd, WM_GETTEXTLENGTH, 0, 0)
+    if not length:
+        return ""
+    buf = ctypes.create_unicode_buffer(length + 2)
+    user32.SendMessageW(hwnd, WM_GETTEXT, length + 1, buf)
+    return buf.value
+
+
+def set_text(hwnd: int, text: str) -> bool:
+    """
+    Inject text into an edit control via WM_SETTEXT — no focus required.
+
+    Reliability by app type:
+      classic Edit / RichEdit20W  → FULL (replaces content instantly)
+      RichEditD2DPT (modern apps) → NO (ignored — use SendInput with focus)
+      Chromium / UWP              → NO (ignored)
+
+    Returns True if SendMessage succeeded (note: success ≠ text was accepted).
+    """
+    _audit("set_text", hwnd, repr(text[:40]))
+    result = _smto(hwnd, WM_SETTEXT, 0, ctypes.cast(
+        ctypes.create_unicode_buffer(text), ctypes.c_void_p
+    ).value or 0)
+    return bool(result)
+
+
+def click_button(parent_hwnd: int, button_text: str = "",
+                 button_class: str = "Button") -> bool:
+    """
+    Find a button child control by visible text and click it via BM_CLICK.
+    No focus required — works for classic Win32 buttons.
+
+    Reliability: app-dependent.
+      Classic Win32 (Button class)  → FULL background
+      UWP / Electron                → NO (use click_at with focus instead)
+
+    Returns True if a matching button was found and BM_CLICK was sent.
+    """
+    found = [False]
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+
+    def _cb(child_hwnd, _):
+        cls = _get_class_name(child_hwnd)
+        if button_class.lower() not in cls.lower():
+            return True
+        title = _get_window_title(child_hwnd)
+        if button_text and button_text.lower() not in title.lower():
+            return True
+        _audit("click_button", child_hwnd, f"text={title!r}")
+        _smto(child_hwnd, BM_CLICK, 0, 0)
+        found[0] = True
+        return False  # stop enumeration
+
+    cb = WNDENUMPROC(_cb)
+    user32.EnumChildWindows(parent_hwnd, cb, 0)
+    return found[0]
+
+
+def send_command(hwnd: int, command_id: int) -> bool:
+    """
+    Send WM_COMMAND to trigger a menu item or control notification.
+    No focus required — background-safe PostMessage.
+
+    command_id: the numeric ID of the menu item or control command.
+    Use get_menu_items() to discover menu IDs.
+    """
+    _audit("send_command", hwnd, f"cmd={command_id}")
+    return bool(user32.PostMessageW(hwnd, WM_COMMAND, command_id, 0))
+
+
+def select_combo(hwnd: int, index: int) -> bool:
+    """
+    Select an item in a ComboBox by zero-based index via CB_SETCURSEL.
+    Background-safe. Works with classic Win32 ComboBox controls.
+    """
+    _audit("select_combo", hwnd, f"index={index}")
+    result = _smto(hwnd, CB_SETCURSEL, index, 0)
+    return result != 0xFFFF  # CB_ERR = 0xFFFF (as unsigned)
+
+
+def select_listbox(hwnd: int, index: int) -> bool:
+    """
+    Select an item in a ListBox by zero-based index via LB_SETCURSEL.
+    Background-safe. Works with classic Win32 ListBox controls.
+    """
+    _audit("select_listbox", hwnd, f"index={index}")
+    result = _smto(hwnd, LB_SETCURSEL, index, 0)
+    return result != 0xFFFF
+
+
+def post_click(hwnd: int, x: int, y: int) -> None:
+    """
+    PostMessage a mouse click (WM_LBUTTONDOWN / WM_LBUTTONUP) to a window.
+    x, y are CLIENT coordinates relative to hwnd.
+
+    Background-safe but EXPERIMENTAL — reliability varies by app type:
+      Classic Win32  → PARTIAL (many apps respond; some require SetFocus first)
+      UWP / Electron → UNRELIABLE (Chromium ignores PostMessage mouse events)
+
+    For reliable clicking use click_at() with focus, or click_button() for buttons.
+    """
+    _audit("post_click", hwnd, f"({x},{y})")
+    lp = _makelparam(x, y)
+    user32.PostMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lp)
+    time.sleep(0.03)
+    user32.PostMessageW(hwnd, WM_LBUTTONUP, 0, lp)
+
+
+def list_child_controls(hwnd: int) -> list[dict]:
+    """
+    Enumerate all child controls of a window.
+    Returns list of dicts: {hwnd, class_name, text, rect: (x,y,w,h)}.
+    Critical for discovering what controls exist before targeting them.
+    """
+    results: list[dict] = []
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+
+    def _cb(child_hwnd, _):
+        cls = _get_class_name(child_hwnd)
+        text = _get_window_title(child_hwnd)
+        r = wintypes.RECT()
+        user32.GetWindowRect(child_hwnd, ctypes.byref(r))
+        results.append({
+            "hwnd": child_hwnd,
+            "class_name": cls,
+            "text": text,
+            "rect": (r.left, r.top, r.right - r.left, r.bottom - r.top),
+        })
+        return True
+
+    cb = WNDENUMPROC(_cb)
+    user32.EnumChildWindows(hwnd, cb, 0)
+    return results
+
+
+def find_child_by_text(hwnd: int, text: str, partial: bool = True) -> int:
+    """
+    Find a child control by its visible text. Returns child hwnd or 0.
+    partial=True: substring match (case-insensitive).
+    partial=False: exact match (case-insensitive).
+    """
+    found = [0]
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+    needle = text.lower()
+
+    def _cb(child_hwnd, _):
+        title = _get_window_title(child_hwnd).lower()
+        if partial and needle in title:
+            found[0] = child_hwnd
+            return False
+        if not partial and title == needle:
+            found[0] = child_hwnd
+            return False
+        return True
+
+    cb = WNDENUMPROC(_cb)
+    user32.EnumChildWindows(hwnd, cb, 0)
+    return found[0]
+
+
+def get_menu_items(hwnd: int) -> list[dict]:
+    """
+    Enumerate the top-level menu bar items and their submenus.
+    Returns list of dicts: {index, text, id, submenu: [{index, text, id}, ...]}.
+    Use the returned 'id' values with send_command() to trigger menu items.
+    """
+    h_menu = user32.GetMenu(hwnd)
+    if not h_menu:
+        return []
+
+    count = user32.GetMenuItemCount(h_menu)
+    items = []
+    for i in range(count):
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetMenuStringW(h_menu, i, buf, 256, 0x400)  # MF_BYPOSITION=0x400
+        cmd_id = user32.GetMenuItemID(h_menu, i)
+        h_sub = user32.GetSubMenu(h_menu, i)
+        sub_items = []
+        if h_sub:
+            sub_count = user32.GetMenuItemCount(h_sub)
+            for j in range(sub_count):
+                sbuf = ctypes.create_unicode_buffer(256)
+                user32.GetMenuStringW(h_sub, j, sbuf, 256, 0x400)
+                sub_id = user32.GetMenuItemID(h_sub, j)
+                sub_items.append({"index": j, "text": sbuf.value, "id": sub_id})
+        items.append({"index": i, "text": buf.value, "id": cmd_id, "submenu": sub_items})
+    return items
+
+
+def invoke_menu(hwnd: int, *path: str) -> bool:
+    """
+    Trigger a menu item by navigating a text path through the menu hierarchy.
+    Example: invoke_menu(hwnd, "File", "Save As")
+    Returns True if the menu item was found and WM_COMMAND was posted.
+    Matching is case-insensitive, partial substring.
+    """
+    items = get_menu_items(hwnd)
+    if not items:
+        return False
+
+    # Find top-level match
+    top_text = path[0].lower() if path else ""
+    top = next((m for m in items if top_text in m["text"].lower()), None)
+    if not top:
+        return False
+
+    if len(path) == 1:
+        if top["id"] and top["id"] != 0xFFFF:
+            return send_command(hwnd, top["id"])
+        return False
+
+    # Find submenu match
+    sub_text = path[1].lower()
+    sub = next((m for m in top["submenu"] if sub_text in m["text"].lower()), None)
+    if not sub or not sub["id"] or sub["id"] == 0xFFFF:
+        return False
+    return send_command(hwnd, sub["id"])
+
+
+def exclude_from_capture(hwnd: int) -> bool:
+    """
+    Make a window invisible to PrintWindow / BitBlt / screen capture.
+    Use to create "blinders" — hide sensitive windows so only the target is
+    visible to the AI's capture layer.
+    Requires the calling process to own the window.
+    Returns True on success.
+    """
+    _audit("exclude_from_capture", hwnd)
+    return bool(user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE))
+
+
+def include_in_capture(hwnd: int) -> bool:
+    """
+    Re-enable PrintWindow capture for a window previously excluded.
+    Reverses exclude_from_capture().
+    """
+    _audit("include_in_capture", hwnd)
+    return bool(user32.SetWindowDisplayAffinity(hwnd, WDA_NONE))
+
+
 # ── WindowPool ────────────────────────────────────────────────────────────────
 class WindowPool:
     """
@@ -808,6 +1225,20 @@ class WindowPool:
                 paths[name] = p
                 print(f"[pool] {name}: saved {img.size} -> {p}")
         return paths
+
+    def focus_only(self, name: str) -> bool:
+        """
+        Minimize all pool windows except the named target, then restore it.
+        Creates "blinders" — only the target window is active/visible.
+        Returns True if the target was found.
+        """
+        if name not in self.targets:
+            return False
+        for n, t in self.targets.items():
+            if n != name:
+                minimize_window(t.hwnd)
+        restore_window(self.targets[name].hwnd)
+        return True
 
     def status(self) -> "dict[str, bool]":
         """Check which registered windows are still valid (not closed)."""
