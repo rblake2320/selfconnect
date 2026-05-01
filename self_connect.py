@@ -30,7 +30,7 @@ Run as a script to list all visible windows:
   python self_connect.py
 """
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 __all__ = [
     # Core types
     "WindowTarget", "WindowPool",
@@ -66,12 +66,16 @@ __all__ = [
     "get_menu_items", "invoke_menu",
     # Focus isolation (v0.6.0)
     "exclude_from_capture", "include_in_capture",
+    # MessageListener (v0.7.0) — background receive loop
+    "parse_all_frames", "MessageListener",
 ]
 
 import ctypes
 import ctypes.wintypes as wintypes
 import time
 import os
+import collections
+import threading
 from dataclasses import dataclass
 from typing import Optional
 
@@ -1634,6 +1638,150 @@ def verify_delivery(target_hwnd: int, fingerprint: str | list[str],
     except Exception:
         pass
     return False
+
+
+# ── MessageListener (v0.7.0) ─────────────────────────────────────────────────
+#
+# Background receive loop for SelfConnect framed messages.
+#
+# Design:
+#   - Daemon thread polls own terminal text via get_text_uia() every `poll` sec
+#   - parse_all_frames() extracts every STX…ETX frame in the buffer (not just the first)
+#   - Dedup by message_id (bounded deque, 1024 IDs max)
+#   - Dispatches each new frame to all registered .on() callbacks
+#   - Thread-safe: callbacks run inside the poll thread; use queues for cross-thread work
+#
+# Usage:
+#   listener = MessageListener(own_hwnd=4854222)
+#   listener.on(lambda frame: print(f"[RX] {frame['payload']}"))
+#   listener.start()
+#   ...
+#   listener.stop()
+
+def parse_all_frames(raw: str) -> "list[dict]":
+    """
+    Extract every valid STX…ETX frame from raw buffer text.
+
+    Unlike parse_frame() which returns only the first match, this scans the
+    entire buffer and returns all valid frames in order. Use this when a burst
+    of messages may have been injected before the listener polled.
+
+    Returns a (possibly empty) list of frame dicts, each with keys:
+        from, to, seq, topic, len, message_id, payload, _raw_frame
+    """
+    frames = []
+    pos = 0
+    while True:
+        stx = raw.find(_STX, pos)
+        if stx == -1:
+            break
+        etx = raw.find(_ETX, stx + 1)
+        if etx == -1:
+            break
+        candidate = raw[stx:etx + 1]
+        frame = parse_frame(candidate)
+        if frame is not None:
+            frames.append(frame)
+        pos = etx + 1
+    return frames
+
+
+class MessageListener:
+    """
+    Background receive loop for SelfConnect framed messages (v0.7.0).
+
+    Polls own terminal text every `poll` seconds, extracts all frames,
+    deduplicates by message_id, and dispatches to registered handlers.
+
+    Args:
+        own_hwnd: hwnd of this agent's terminal window (the window to read)
+        poll:     seconds between read attempts (default 0.5)
+        max_seen: max message_ids to remember for dedup (default 1024)
+
+    Example::
+
+        listener = MessageListener(own_hwnd=4854222)
+        listener.on(lambda f: print(f"[RX from {f['from']}] {f['payload']}"))
+        listener.start()
+        time.sleep(30)
+        listener.stop()
+    """
+
+    def __init__(self, own_hwnd: int, poll: float = 0.5, max_seen: int = 1024):
+        self.own_hwnd = own_hwnd
+        self.poll = poll
+        self._handlers: "list" = []
+        self._seen: "collections.deque[str]" = collections.deque(maxlen=max_seen)
+        self._seen_set: "set[str]" = set()
+        self._thread: "threading.Thread | None" = None
+        self._stop_event = threading.Event()
+
+    def on(self, handler) -> "MessageListener":
+        """
+        Register a frame handler callback.
+
+        handler(frame: dict) is called for every new frame received.
+        Multiple handlers are called in registration order.
+        Returns self for chaining: listener.on(h1).on(h2).start()
+        """
+        self._handlers.append(handler)
+        return self
+
+    def start(self) -> "MessageListener":
+        """Start the background poll thread. Idempotent."""
+        if self._thread and self._thread.is_alive():
+            return self
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True,
+                                        name=f"MessageListener-{self.own_hwnd}")
+        self._thread.start()
+        return self
+
+    def stop(self, timeout: float | None = None) -> None:
+        """Signal the poll loop to stop and wait for the thread to exit."""
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=timeout if timeout is not None else self.poll * 4)
+
+    def is_running(self) -> bool:
+        """True if the background thread is alive."""
+        return self._thread is not None and self._thread.is_alive()
+
+    def _record_seen(self, msg_id: str) -> None:
+        """Add msg_id to seen set, evicting oldest if at capacity."""
+        if len(self._seen) == self._seen.maxlen:
+            evicted = self._seen[0]  # leftmost = oldest
+            self._seen_set.discard(evicted)
+        self._seen.append(msg_id)
+        self._seen_set.add(msg_id)
+
+    def _loop(self) -> None:
+        """Poll loop — runs in daemon thread."""
+        import pythoncom  # type: ignore
+        try:
+            pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
+        except Exception:
+            pass
+
+        while not self._stop_event.wait(self.poll):
+            try:
+                text = get_text_uia(self.own_hwnd)
+                if not text:
+                    continue
+                frames = parse_all_frames(text)
+                for frame in frames:
+                    msg_id = frame.get("message_id") or frame.get("id") or ""
+                    if msg_id and msg_id in self._seen_set:
+                        continue
+                    if msg_id:
+                        self._record_seen(msg_id)
+                    for handler in self._handlers:
+                        try:
+                            handler(frame)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
 
 # ── CLI: list windows ─────────────────────────────────────────────────────────
