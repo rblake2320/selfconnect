@@ -30,7 +30,7 @@ Run as a script to list all visible windows:
   python self_connect.py
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = [
     # Core types
     "WindowTarget", "WindowPool",
@@ -68,6 +68,8 @@ __all__ = [
     "exclude_from_capture", "include_in_capture",
     # MessageListener (v0.7.0) — background receive loop
     "parse_all_frames", "MessageListener",
+    # Layer 3 Supervisor (v0.8.0) — peer tracking, watchdog, approval gating
+    "PeerState", "PeerRecord", "AgentRegistry", "WatchdogLoop", "ApprovalRelay",
 ]
 
 import ctypes
@@ -75,8 +77,10 @@ import ctypes.wintypes as wintypes
 import time
 import os
 import collections
+import enum as _enum
+import hashlib as _hashlib
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 # ── Win32 constants ───────────────────────────────────────────────────────────
@@ -1782,6 +1786,398 @@ class MessageListener:
                             pass
             except Exception:
                 pass
+
+
+# ── Layer 3 Supervisor (v0.8.0) ───────────────────────────────────────────────
+#
+# Protocol stack:
+#   Layer 1 (Physical):    PostMessage(WM_CHAR) + PrintWindow
+#   Layer 2 (Framing):     STX|header|NUL|payload|ETX        (v0.5.0)
+#   Layer 2 receive:       MessageListener                    (v0.7.0)
+#   Layer 3 (Supervisor):  AgentRegistry + WatchdogLoop + ApprovalRelay  (v0.8.0)
+#
+# WatchdogLoop composes on top of MessageListener:
+#   - MessageListener fires when a peer SENDS us a frame  → evidence peer is alive
+#   - WatchdogLoop text-polls peer terminals               → classify READY/STALLED/etc.
+#
+# ApprovalRelay wraps send_frame() with allowlist + audit log + human override.
+
+
+class PeerState(_enum.Enum):
+    """Lifecycle state for a tracked peer agent."""
+    UNKNOWN          = "UNKNOWN"
+    READY            = "READY"            # clean, no pending unsubmitted prompt
+    PROMPT_DETECTED  = "PROMPT_DETECTED"  # input box has unsubmitted content
+    STALLED          = "STALLED"          # text unchanged for > stall_threshold sec
+    RESTARTED        = "RESTARTED"        # window title changed (new session)
+
+
+@dataclass
+class PeerRecord:
+    """Live snapshot of a peer agent's tracked state."""
+    hwnd:            int
+    label:           str
+    pid:             int       = 0
+    state:           PeerState = field(default=PeerState.UNKNOWN)
+    last_seen:       float     = field(default_factory=time.time)
+    last_text_hash:  str       = ""
+    last_title:      str       = ""
+    stall_since:     float     = 0.0   # epoch when text last changed; 0 = not yet set
+
+
+class AgentRegistry:
+    """
+    Central peer directory for the SelfConnect mesh.
+
+    Maintains ``{hwnd: PeerRecord}``. State is updated by WatchdogLoop
+    but can also be patched manually.
+
+    Usage::
+
+        reg = AgentRegistry()
+        reg.register(2820438, "A")
+        rec = reg.get(2820438)
+        print(rec.state)
+    """
+
+    def __init__(self) -> None:
+        self._peers: "dict[int, PeerRecord]" = {}
+        self._lock = threading.Lock()
+
+    def register(self, hwnd: int, label: str, pid: int = 0) -> PeerRecord:
+        """Add or replace a peer entry. Returns the new PeerRecord."""
+        rec = PeerRecord(hwnd=hwnd, label=label, pid=pid)
+        with self._lock:
+            self._peers[hwnd] = rec
+        return rec
+
+    def unregister(self, hwnd: int) -> None:
+        """Remove a peer from the registry."""
+        with self._lock:
+            self._peers.pop(hwnd, None)
+
+    def get(self, hwnd: int) -> "PeerRecord | None":
+        """Return the PeerRecord for hwnd, or None if not registered."""
+        with self._lock:
+            return self._peers.get(hwnd)
+
+    def all_peers(self) -> "list[PeerRecord]":
+        """Snapshot list of all registered PeerRecords."""
+        with self._lock:
+            return list(self._peers.values())
+
+    def update_state(self, hwnd: int, state: PeerState) -> None:
+        """Manually override a peer's state (useful for tests or human corrections)."""
+        with self._lock:
+            rec = self._peers.get(hwnd)
+            if rec:
+                rec.state = state
+                rec.last_seen = time.time()
+
+    def summary(self) -> str:
+        """One-line human-readable summary of all peers."""
+        with self._lock:
+            parts = [f"{r.label}({r.hwnd})={r.state.value}" for r in self._peers.values()]
+        return " | ".join(parts) if parts else "(empty)"
+
+
+class WatchdogLoop:
+    """
+    Background peer supervisor — polls registered agents, emits typed state-change events.
+
+    Composes MessageListener (receive side) with text-poll classification:
+    - MessageListener fires when a peer sends D a frame → evidence that peer is alive
+    - Text polling via get_text_uia() classifies: READY / PROMPT_DETECTED / STALLED / RESTARTED
+
+    Event dict keys: event, hwnd, label, old_state, new_state, timestamp
+
+    Args:
+        registry:        AgentRegistry to read/update
+        own_hwnd:        This agent's hwnd — used to receive inbound frames via MessageListener
+        poll:            Seconds between text-poll cycles (default 1.0)
+        stall_threshold: Seconds of unchanged text before STALLED (default 15.0)
+
+    Usage::
+
+        reg = AgentRegistry()
+        reg.register(2820438, "A")
+        dog = WatchdogLoop(reg, own_hwnd=4854222)
+        dog.on(lambda e: print(e["event"], e["label"]))
+        dog.start()
+        ...
+        dog.stop()
+    """
+
+    _PROMPT_PATTERNS = ("> ", "$ ", "% ", "❯ ")  # terminal prompt tail patterns
+
+    def __init__(self, registry: AgentRegistry,
+                 own_hwnd: int = 0,
+                 poll: float = 1.0,
+                 stall_threshold: float = 15.0) -> None:
+        self.registry = registry
+        self.own_hwnd = own_hwnd
+        self.poll = poll
+        self.stall_threshold = stall_threshold
+        self._handlers: list = []
+        self._thread: "threading.Thread | None" = None
+        self._stop_event = threading.Event()
+        # Compose MessageListener — inbound frame from peer X proves X is alive
+        self._listener: "MessageListener | None" = (
+            MessageListener(own_hwnd, poll=max(0.25, poll / 2))
+            .on(self._on_inbound_frame)
+            if own_hwnd else None
+        )
+
+    def on(self, handler) -> "WatchdogLoop":
+        """Register an event handler: handler(event: dict) -> None. Chainable."""
+        self._handlers.append(handler)
+        return self
+
+    def start(self) -> "WatchdogLoop":
+        """Start watchdog thread (and embedded MessageListener). Idempotent."""
+        if self._listener:
+            self._listener.start()
+        if self._thread and self._thread.is_alive():
+            return self
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True,
+                                        name="WatchdogLoop")
+        self._thread.start()
+        return self
+
+    def stop(self, timeout: "float | None" = None) -> None:
+        """Signal watchdog (and listener) to stop and wait for thread exit."""
+        self._stop_event.set()
+        if self._listener:
+            self._listener.stop(timeout=timeout)
+        if self._thread:
+            self._thread.join(timeout=timeout if timeout is not None else self.poll * 4)
+
+    def is_running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    # ── internal ──────────────────────────────────────────────────────────────
+
+    def _emit(self, event: str, rec: PeerRecord, old_state: PeerState) -> None:
+        payload = {
+            "event": event,
+            "hwnd": rec.hwnd,
+            "label": rec.label,
+            "old_state": old_state.value,
+            "new_state": rec.state.value,
+            "timestamp": time.time(),
+        }
+        for h in self._handlers:
+            try:
+                h(payload)
+            except Exception:
+                pass
+
+    def _on_inbound_frame(self, frame: dict) -> None:
+        """MessageListener callback — frame received from a peer proves they're active."""
+        from_hwnd = frame.get("from", 0)
+        rec = self.registry.get(from_hwnd)
+        if rec and rec.state in (PeerState.STALLED, PeerState.UNKNOWN):
+            old = rec.state
+            rec.state = PeerState.READY
+            rec.last_seen = time.time()
+            self._emit("PEER_READY", rec, old)
+
+    def _classify(self, text: str, rec: PeerRecord) -> PeerState:
+        """Classify state from extracted text. Updates stall timer in-place."""
+        text_hash = _hashlib.md5(text.encode("utf-8", "replace")).hexdigest()
+        now = time.time()
+        if text_hash != rec.last_text_hash:
+            rec.last_text_hash = text_hash
+            rec.stall_since = now
+        if rec.stall_since > 0 and (now - rec.stall_since) > self.stall_threshold:
+            return PeerState.STALLED
+        tail = text[-200:] if len(text) > 200 else text
+        stripped = tail.rstrip(" \t\n")
+        for pat in self._PROMPT_PATTERNS:
+            if stripped.endswith(pat.rstrip()):
+                return PeerState.PROMPT_DETECTED
+        return PeerState.READY
+
+    def _poll_peer(self, rec: PeerRecord) -> None:
+        """Poll one peer: title check → text classification → emit on change."""
+        try:
+            current_title = _get_window_title(rec.hwnd)
+        except Exception:
+            return
+        # Title change → RESTARTED (new session)
+        if rec.last_title and current_title != rec.last_title:
+            old = rec.state
+            rec.state = PeerState.RESTARTED
+            rec.last_title = current_title
+            rec.last_seen = time.time()
+            self._emit("PEER_RESTARTED", rec, old)
+            return
+        if not rec.last_title:
+            rec.last_title = current_title
+        # Text-poll → classify
+        try:
+            text = get_text_uia(rec.hwnd) or ""
+        except Exception:
+            return
+        new_state = self._classify(text, rec)
+        rec.last_seen = time.time()
+        if new_state != rec.state:
+            old = rec.state
+            rec.state = new_state
+            self._emit(f"PEER_{new_state.value}", rec, old)
+
+    def _loop(self) -> None:
+        try:
+            import pythoncom  # type: ignore
+            pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
+        except Exception:
+            pass
+        while not self._stop_event.wait(self.poll):
+            for rec in self.registry.all_peers():
+                try:
+                    self._poll_peer(rec)
+                except Exception:
+                    pass
+
+
+class ApprovalRelay:
+    """
+    Policy-gated send layer — allowlists + prompt fingerprinting + audit log + human override.
+
+    Wraps send_frame() with policy checking before delivery. Blocked frames are
+    queued and await ``approve()`` or ``deny()`` from a human or supervisor agent.
+
+    Allowlist rules: ``(topic_pattern, from_hwnd_or_wildcard)`` tuples.
+    Use ``"*"`` as wildcard for either field.
+
+    Audit log: JSONL file, one entry per SEND/BLOCKED/APPROVED/DENIED action.
+
+    Usage::
+
+        relay = ApprovalRelay(audit_log_path="proofs/audit_log.jsonl")
+        relay.allow("*", "*")                          # open mode: allow all
+        relay.allow("status", 4854222)                 # or: only status frames from D
+
+        relay.on_blocked(lambda p: print("Needs approval:", p["frame_id"]))
+
+        result = relay.send(target, from_hwnd=4854222, payload="hello", topic="status")
+        # result["sent"] is True if allowed, False if blocked
+
+        relay.approve(frame_id)   # human approves → frame sent
+        relay.deny(frame_id)      # human denies  → frame dropped
+    """
+
+    def __init__(self, audit_log_path: str = "proofs/audit_log.jsonl") -> None:
+        self.audit_log_path = audit_log_path
+        self._allowlist: "list[tuple[str, str]]" = []
+        self._pending:   "dict[str, dict]"        = {}
+        self._seen_fingerprints: "collections.deque[str]" = collections.deque(maxlen=256)
+        self._block_handlers: list = []
+        self._lock = threading.Lock()
+
+    def allow(self, topic: str = "*", from_hwnd: "int | str" = "*") -> "ApprovalRelay":
+        """Add an allowlist rule. Use '*' as wildcard. Chainable."""
+        self._allowlist.append((str(topic), str(from_hwnd)))
+        return self
+
+    def on_blocked(self, handler) -> "ApprovalRelay":
+        """Register callback for frames needing human approval. Chainable."""
+        self._block_handlers.append(handler)
+        return self
+
+    def _is_allowed(self, topic: str, from_hwnd: int) -> bool:
+        for t_pat, h_pat in self._allowlist:
+            if (t_pat == "*" or t_pat == topic) and (h_pat == "*" or h_pat == str(from_hwnd)):
+                return True
+        return False
+
+    def _fingerprint(self, payload: str) -> str:
+        """SHA-256 of first 64 chars — identifies suspiciously repeated payloads."""
+        return _hashlib.sha256(payload[:64].encode("utf-8", "replace")).hexdigest()[:16]
+
+    def _audit(self, entry: dict) -> None:
+        import json as _j
+        try:
+            with open(self.audit_log_path, "a", encoding="utf-8") as f:
+                f.write(_j.dumps(entry) + "\n")
+        except Exception:
+            pass
+
+    def send(self, target, from_hwnd: int, payload: str,
+             topic: str = "default",
+             seq: "int | None" = None,
+             char_delay: float = 0.03) -> dict:
+        """
+        Gate-checked send. Returns ``{"sent": bool, "frame_id": str, "allowed": bool, "fingerprint": str}``.
+
+        If allowed → sends via send_frame(), writes SEND to audit log.
+        If blocked → queues for human approval, fires on_blocked handlers, writes BLOCKED.
+        """
+        # Build frame to extract message_id for tracking
+        frame_str = build_frame(from_hwnd, target.hwnd, payload, topic=topic, seq=seq)
+        parsed    = parse_frame(frame_str)
+        frame_id  = (parsed or {}).get("message_id", "")
+        fp        = self._fingerprint(payload)
+        allowed   = self._is_allowed(topic, from_hwnd)
+
+        base = {"ts": time.time(), "frame_id": frame_id,
+                "from_hwnd": from_hwnd, "to_hwnd": target.hwnd,
+                "topic": topic, "fingerprint": fp, "payload_len": len(payload)}
+
+        if allowed:
+            send_frame(target, from_hwnd=from_hwnd, payload=payload,
+                       topic=topic, seq=seq, char_delay=char_delay)
+            self._seen_fingerprints.append(fp)
+            self._audit({**base, "action": "SEND"})
+            return {"sent": True, "frame_id": frame_id, "allowed": True, "fingerprint": fp}
+
+        # Blocked — queue for human review
+        pending = {**base, "target": target, "payload": payload,
+                   "seq": seq, "char_delay": char_delay}
+        with self._lock:
+            self._pending[frame_id] = pending
+        self._audit({**base, "action": "BLOCKED"})
+        for h in self._block_handlers:
+            try:
+                h(pending)
+            except Exception:
+                pass
+        return {"sent": False, "frame_id": frame_id, "allowed": False, "fingerprint": fp}
+
+    def approve(self, frame_id: str) -> bool:
+        """Human approves a blocked frame → sends it. Returns False if not found."""
+        with self._lock:
+            p = self._pending.pop(frame_id, None)
+        if not p:
+            return False
+        send_frame(p["target"], from_hwnd=p["from_hwnd"], payload=p["payload"],
+                   topic=p["topic"], seq=p["seq"], char_delay=p["char_delay"])
+        self._audit({"ts": time.time(), "action": "APPROVED", "frame_id": frame_id,
+                     "from_hwnd": p["from_hwnd"], "to_hwnd": p["to_hwnd"],
+                     "topic": p["topic"], "fingerprint": p["fingerprint"]})
+        return True
+
+    def deny(self, frame_id: str) -> bool:
+        """Human denies a blocked frame → drops it silently. Returns False if not found."""
+        with self._lock:
+            p = self._pending.pop(frame_id, None)
+        if not p:
+            return False
+        self._audit({"ts": time.time(), "action": "DENIED", "frame_id": frame_id,
+                     "from_hwnd": p["from_hwnd"], "to_hwnd": p["to_hwnd"],
+                     "topic": p["topic"], "fingerprint": p["fingerprint"]})
+        return True
+
+    def pending_count(self) -> int:
+        """Number of frames currently queued awaiting human approval."""
+        with self._lock:
+            return len(self._pending)
+
+    def pending_ids(self) -> "list[str]":
+        """Frame IDs currently queued for approval."""
+        with self._lock:
+            return list(self._pending.keys())
 
 
 # ── CLI: list windows ─────────────────────────────────────────────────────────
