@@ -1,0 +1,852 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SelfConnect Vision Agent</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  html, body, #root { height: 100%; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: #09090b;
+    color: #e4e4e7;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+  /* phosphor accent */
+  :root {
+    --acc: oklch(0.78 0.16 145);    /* phosphor green */
+    --acc-dim: oklch(0.55 0.13 145);
+    --acc-bg: oklch(0.78 0.16 145 / 0.12);
+    --warn: oklch(0.78 0.15 75);
+    --bad: oklch(0.68 0.20 25);
+    --info: oklch(0.72 0.13 230);
+    --gray: oklch(0.65 0.01 250);
+    --yellow: oklch(0.85 0.16 95);
+  }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+
+  /* subtle scanline on capture viewer */
+  .scanlines::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(255,255,255,0) 0px,
+      rgba(255,255,255,0) 2px,
+      rgba(255,255,255,0.02) 3px
+    );
+    pointer-events: none;
+    mix-blend-mode: overlay;
+  }
+
+  /* live dot pulse */
+  @keyframes livepulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.85); }
+  }
+  .live-dot { animation: livepulse 1.4s ease-in-out infinite; }
+
+  /* recording pulse */
+  @keyframes recpulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
+    50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+  }
+  .rec-pulse { animation: recpulse 1.6s ease-out infinite; }
+
+  /* bounding box flicker on hover */
+  .bbox { transition: filter 120ms, background-color 120ms; }
+  .bbox:hover { filter: brightness(1.4); }
+
+  /* reticle */
+  @keyframes reticleSpin { to { transform: rotate(360deg); } }
+  .reticle-spin { animation: reticleSpin 8s linear infinite; }
+
+  /* tab underline */
+  .tab-active { box-shadow: inset 0 -2px 0 0 var(--acc); color: #fafafa; }
+
+  /* tiny grid pattern */
+  .grid-bg {
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  /* subtle inset border on cards */
+  .card {
+    background: #18181b;
+    border: 1px solid #27272a;
+    border-radius: 8px;
+  }
+  .card-header {
+    border-bottom: 1px solid #27272a;
+    padding: 10px 12px;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #a1a1aa;
+    font-weight: 600;
+  }
+
+  button:focus-visible, input:focus-visible { outline: 1px solid var(--acc); outline-offset: 1px; }
+
+  /* range slider */
+  input[type=range] { accent-color: oklch(0.78 0.16 145); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+// ---------- icons (inline svgs, simple) ----------
+const Icon = ({ d, size=14, className="", strokeWidth=1.6 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" className={className}>
+    {d}
+  </svg>
+);
+const I = {
+  play: <Icon d={<polygon points="6 4 20 12 6 20 6 4" fill="currentColor" stroke="none" />} />,
+  pause: <Icon d={<><rect x="6" y="4" width="4" height="16" fill="currentColor" stroke="none"/><rect x="14" y="4" width="4" height="16" fill="currentColor" stroke="none"/></>} />,
+  stop: <Icon d={<rect x="5" y="5" width="14" height="14" fill="currentColor" stroke="none" />} />,
+  rec: <Icon d={<circle cx="12" cy="12" r="6" fill="currentColor" stroke="none" />} />,
+  x: <Icon d={<><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></>} />,
+  gear: <Icon d={<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></>} />,
+  eye: <Icon d={<><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>} />,
+  target: <Icon d={<><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></>} />,
+  mouse: <Icon d={<><path d="M3 3l7 17 2.5-7.5L20 10z"/></>} />,
+  keyboard: <Icon d={<><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></>} />,
+  camera: <Icon d={<><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></>} />,
+  send: <Icon d={<><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></>} />,
+  arrowRight: <Icon d={<><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></>} />,
+  trash: <Icon d={<><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></>} />,
+  copy: <Icon d={<><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>} />,
+  cpu: <Icon d={<><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></>} />,
+  brain: <Icon d={<><path d="M9 3a3 3 0 0 0-3 3v.5A2.5 2.5 0 0 0 4 9a2.5 2.5 0 0 0 1 4 2.5 2.5 0 0 0 0 4 2.5 2.5 0 0 0 2 4 3 3 0 0 0 6 0V3a3 3 0 0 0-3-3z" transform="translate(0 1)"/><path d="M15 3a3 3 0 0 1 3 3v.5A2.5 2.5 0 0 1 20 9a2.5 2.5 0 0 1-1 4 2.5 2.5 0 0 1 0 4 2.5 2.5 0 0 1-2 4 3 3 0 0 1-6 0" transform="translate(0 1)"/></>} />,
+  window: <Icon d={<><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></>} />,
+  refresh: <Icon d={<><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></>} />,
+  search: <Icon d={<><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></>} />,
+  zap: <Icon d={<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" fill="currentColor" stroke="none"/>} />,
+};
+
+// ---------- mock data ----------
+const initialDetections = [
+  // values in 0..1 (relative to capture)
+  { id:'d1', cls:'button',     label:'Submit',         conf:0.94, x:0.62, y:0.66, w:0.18, h:0.07 },
+  { id:'d2', cls:'text_field', label:'email',          conf:0.91, x:0.20, y:0.40, w:0.60, h:0.06 },
+  { id:'d3', cls:'text_field', label:'password',       conf:0.89, x:0.20, y:0.51, w:0.60, h:0.06 },
+  { id:'d4', cls:'label',      label:'Welcome back',   conf:0.82, x:0.34, y:0.20, w:0.32, h:0.05 },
+  { id:'d5', cls:'label',      label:'Forgot password?', conf:0.77, x:0.20, y:0.76, w:0.20, h:0.03 },
+  { id:'d6', cls:'image',      label:'logo.png',       conf:0.86, x:0.44, y:0.10, w:0.12, h:0.06 },
+];
+
+const clsStyle = {
+  button:     { stroke:'rgb(34 197 94)',  fill:'rgba(34,197,94,0.10)',  text:'text-emerald-400', name:'BUTTON' },
+  text_field: { stroke:'rgb(59 130 246)', fill:'rgba(59,130,246,0.10)', text:'text-blue-400',    name:'TEXT_FIELD' },
+  label:      { stroke:'rgb(161 161 170)',fill:'rgba(161,161,170,0.10)',text:'text-zinc-400',   name:'LABEL' },
+  image:      { stroke:'rgb(234 179 8)',  fill:'rgba(234,179,8,0.10)',  text:'text-yellow-400',  name:'IMAGE' },
+};
+
+const initialWindows = [
+  { hwnd:'0x000A4F12', title:'Login — Acme Corp Portal',          exe:'msedge.exe',     active:true  },
+  { hwnd:'0x0011BC03', title:'Inbox (24) — work@acme.io',          exe:'outlook.exe',    active:false },
+  { hwnd:'0x002378A1', title:'PyCharm — vision_agent/main.py',     exe:'pycharm64.exe',  active:false },
+  { hwnd:'0x0089FE54', title:'Slack | #vision-team | acme',         exe:'slack.exe',      active:false },
+  { hwnd:'0x00C12099', title:'Figma — Vision Dashboard',            exe:'figma.exe',      active:false },
+  { hwnd:'0x00FF0102', title:'C:\\Users\\dev\\Documents',          exe:'explorer.exe',   active:false },
+];
+
+const initialQueue = [
+  { id:'q1', kind:'click',    target:'TEXT_FIELD #email',     value:'',                     state:'running' },
+  { id:'q2', kind:'type',     target:'TEXT_FIELD #email',     value:'test@example.com',     state:'pending' },
+  { id:'q3', kind:'click',    target:'TEXT_FIELD #password',  value:'',                     state:'pending' },
+  { id:'q4', kind:'type',     target:'TEXT_FIELD #password',  value:'••••••••',             state:'pending' },
+  { id:'q5', kind:'click',    target:'BUTTON #submit',        value:'',                     state:'pending' },
+];
+
+const initialLog = [
+  { t:'14:22:01.084', kind:'capture',  status:'ok',   msg:'Captured frame 4823 (1920×1080)' },
+  { t:'14:22:01.092', kind:'yolo',     status:'ok',   msg:'YOLO inference 14.2ms · 6 detections' },
+  { t:'14:22:01.310', kind:'vl',       status:'ok',   msg:'VL describe complete (118 tok)' },
+  { t:'14:22:01.420', kind:'click',    status:'ok',   msg:'Clicked TEXT_FIELD #email at (964, 442)' },
+  { t:'14:22:01.620', kind:'type',     status:'pending',msg:'Typing "test@example.com"…' },
+  { t:'14:22:00.011', kind:'system',   status:'fail', msg:'Window 0x00C12099 not focused — retried' },
+];
+
+const initialMacros = [
+  { t:'+0.000s', action:'capture',  target:'window',          value:'0x000A4F12' },
+  { t:'+0.142s', action:'click',    target:'TEXT_FIELD#email',value:'(964, 442)' },
+  { t:'+0.580s', action:'type',     target:'TEXT_FIELD#email',value:'test@example.com' },
+  { t:'+1.210s', action:'tab',      target:'-',               value:'1' },
+  { t:'+1.418s', action:'type',     target:'TEXT_FIELD#pw',   value:'••••••••' },
+];
+
+// ---------- top bar ----------
+function TopBar({ fps, modelStatus }) {
+  return (
+    <div className="h-12 shrink-0 flex items-center justify-between px-4 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur">
+      <div className="flex items-center gap-3">
+        <div className="w-7 h-7 rounded-md flex items-center justify-center"
+             style={{background:'linear-gradient(135deg, oklch(0.78 0.16 145 / 0.20), oklch(0.78 0.16 145 / 0.05))', border:'1px solid oklch(0.78 0.16 145 / 0.4)'}}>
+          <div className="reticle-spin">{I.target}</div>
+        </div>
+        <div className="flex items-baseline gap-2">
+          <span className="text-sm font-semibold tracking-tight">SelfConnect Vision Agent</span>
+          <span className="mono text-[10px] text-zinc-500">v0.1.3</span>
+        </div>
+        <span className="mono text-[10px] px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-400 ml-2">DEV</span>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 px-2.5 py-1 rounded-md border border-zinc-800 bg-zinc-900/60">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 live-dot"></span>
+          <span className="mono text-[11px] text-zinc-300">{fps.toFixed(1)}<span className="text-zinc-500"> fps</span></span>
+        </div>
+        <ModelBadge name="YOLO"   status={modelStatus.yolo} detail="60fps" />
+        <ModelBadge name="VL"     status={modelStatus.vl}   detail="8fps" />
+        <ModelBadge name="Claude" status={modelStatus.claude} detail={modelStatus.claude==='ok'?'connected':'disconnected'} />
+        <button className="ml-1 w-8 h-8 rounded-md border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 flex items-center justify-center text-zinc-400">
+          {I.gear}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ModelBadge({ name, status, detail }) {
+  const dot = status==='ok' ? 'bg-emerald-400' : status==='warn' ? 'bg-amber-400' : 'bg-rose-500';
+  return (
+    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-zinc-800 bg-zinc-900/60">
+      <span className={`w-1.5 h-1.5 rounded-full ${dot}`}></span>
+      <span className="mono text-[11px] text-zinc-300">{name}</span>
+      <span className="mono text-[10px] text-zinc-500">{detail}</span>
+    </div>
+  );
+}
+
+// ---------- left: capture viewer ----------
+function CaptureViewer({ detections, frame, hovered, onHover, onClick, paused, onTogglePause }) {
+  return (
+    <div className="card flex flex-col h-full">
+      <div className="card-header">
+        <div className="flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 live-dot"></span>
+          <span>Window Capture</span>
+          <span className="mono normal-case tracking-normal text-[10px] text-zinc-500">· hwnd 0x000A4F12</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button onClick={onTogglePause}
+            className="mono text-[10px] px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 flex items-center gap-1">
+            {paused ? I.play : I.pause}
+            {paused ? 'RESUME' : 'PAUSE'}
+          </button>
+          <button className="mono text-[10px] px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300">
+            FIT
+          </button>
+        </div>
+      </div>
+
+      {/* viewer */}
+      <div className="relative flex-1 m-2 rounded-md overflow-hidden bg-black scanlines border border-zinc-800">
+        <MockScreen frame={frame} />
+        <DetectionLayer detections={detections} hovered={hovered} onHover={onHover} onClick={onClick} />
+        {/* HUD corners */}
+        <Reticle />
+        <div className="absolute top-2 left-2 mono text-[10px] text-emerald-400/80 flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 live-dot"></span>
+          REC · 1920×1080 · BGRA
+        </div>
+        <div className="absolute top-2 right-2 mono text-[10px] text-zinc-300/80">
+          frame #{frame.toString().padStart(5,'0')}
+        </div>
+        <div className="absolute bottom-2 left-2 mono text-[10px] text-zinc-400">
+          {detections.length} detections · YOLOv8m · conf≥0.55
+        </div>
+        <div className="absolute bottom-2 right-2 mono text-[10px] text-zinc-400">
+          tap a box →
+        </div>
+      </div>
+
+      {/* legend */}
+      <div className="px-3 pb-3 pt-1 flex items-center gap-3 flex-wrap">
+        {Object.entries(clsStyle).map(([k,v]) => (
+          <div key={k} className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded-sm border" style={{borderColor:v.stroke, background:v.fill}}/>
+            <span className="mono text-[10px] text-zinc-400">{v.name}</span>
+          </div>
+        ))}
+        <div className="flex-1" />
+        <span className="mono text-[10px] text-zinc-500">DXGI · DPI 100% · monitor 1</span>
+      </div>
+    </div>
+  );
+}
+
+function Reticle() {
+  return (
+    <>
+      {[
+        'top-0 left-0 border-t-2 border-l-2',
+        'top-0 right-0 border-t-2 border-r-2',
+        'bottom-0 left-0 border-b-2 border-l-2',
+        'bottom-0 right-0 border-b-2 border-r-2',
+      ].map((c,i)=>(
+        <div key={i} className={`absolute ${c} w-3 h-3`} style={{borderColor:'oklch(0.78 0.16 145 / 0.5)'}}/>
+      ))}
+    </>
+  );
+}
+
+function MockScreen({ frame }) {
+  // a simulated "login screen" rendered as DOM so the bounding boxes line up with something convincing
+  const flicker = (frame % 60) / 60;
+  return (
+    <div className="absolute inset-0">
+      {/* fake desktop chrome */}
+      <div className="absolute inset-0" style={{background:'linear-gradient(180deg, #1c1f24 0%, #0f1115 100%)'}} />
+      <div className="absolute top-0 left-0 right-0 h-6 bg-zinc-900/80 border-b border-zinc-800 flex items-center px-2 gap-1.5">
+        <div className="flex gap-1">
+          <span className="w-2 h-2 rounded-full bg-rose-500/80"></span>
+          <span className="w-2 h-2 rounded-full bg-amber-400/80"></span>
+          <span className="w-2 h-2 rounded-full bg-emerald-500/80"></span>
+        </div>
+        <div className="ml-2 mono text-[9px] text-zinc-500 truncate">Login — Acme Corp Portal</div>
+      </div>
+      {/* card */}
+      <div className="absolute" style={{left:'18%', top:'14%', right:'18%', bottom:'14%', background:'#fafafa', borderRadius:8, boxShadow:'0 30px 60px rgba(0,0,0,0.6)'}}>
+        <div className="absolute left-0 right-0 flex justify-center" style={{top:'8%'}}>
+          <div className="w-16 h-7 rounded-sm" style={{background:'linear-gradient(135deg,#3b82f6,#8b5cf6)'}}>
+            <div className="text-white text-[11px] font-bold flex items-center justify-center h-full mono tracking-wider">ACME</div>
+          </div>
+        </div>
+        <div className="absolute text-zinc-800 font-semibold text-center left-0 right-0" style={{top:'18%', fontSize:14}}>Welcome back</div>
+        <div className="absolute text-zinc-500 text-center left-0 right-0 mono" style={{top:'25%', fontSize:9}}>Sign in to continue</div>
+        <div className="absolute" style={{left:'10%', right:'10%', top:'37%'}}>
+          <div className="text-[8px] text-zinc-500 mono mb-0.5">EMAIL</div>
+          <div className="h-5 bg-white border border-zinc-300 rounded-sm px-1.5 text-[10px] text-zinc-700 flex items-center">test@example.com<span className="ml-0.5 w-px h-3 bg-zinc-700" style={{opacity: flicker>0.5?1:0}}></span></div>
+        </div>
+        <div className="absolute" style={{left:'10%', right:'10%', top:'48%'}}>
+          <div className="text-[8px] text-zinc-500 mono mb-0.5">PASSWORD</div>
+          <div className="h-5 bg-white border border-zinc-300 rounded-sm px-1.5 text-[10px] text-zinc-700 flex items-center">••••••••</div>
+        </div>
+        <div className="absolute flex" style={{left:'10%', right:'10%', top:'63%'}}>
+          <div className="rounded-sm text-white font-medium text-[10px] flex items-center justify-center" style={{background:'#2563eb', width:'100%', height:18}}>Submit</div>
+        </div>
+        <div className="absolute mono text-[8px] text-blue-700 underline" style={{left:'10%', top:'76%'}}>Forgot password?</div>
+      </div>
+    </div>
+  );
+}
+
+function DetectionLayer({ detections, hovered, onHover, onClick }) {
+  return (
+    <div className="absolute inset-0">
+      {detections.map(d => {
+        const s = clsStyle[d.cls];
+        const isHovered = hovered === d.id;
+        return (
+          <button
+            key={d.id}
+            className="bbox absolute group"
+            onMouseEnter={() => onHover(d.id)}
+            onMouseLeave={() => onHover(null)}
+            onClick={() => onClick(d)}
+            style={{
+              left: `${d.x*100}%`, top: `${d.y*100}%`,
+              width: `${d.w*100}%`, height: `${d.h*100}%`,
+              border: `${isHovered?2:1.5}px solid ${s.stroke}`,
+              background: isHovered ? s.fill.replace('0.10','0.25') : s.fill,
+              borderRadius: 2,
+              cursor: 'pointer',
+            }}>
+            <div className="absolute -top-[15px] left-0 mono text-[9px] px-1 py-px rounded-sm whitespace-nowrap"
+                 style={{background:s.stroke, color:'#0a0a0a', fontWeight:600}}>
+              {s.name} · {d.label} · {(d.conf*100).toFixed(0)}%
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------- center: AI understanding ----------
+function AIUnderstanding({ text, tokens, ms }) {
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div className="flex items-center gap-2">
+          <span style={{color:'var(--acc)'}}>{I.brain}</span>
+          <span>AI Understanding</span>
+        </div>
+        <div className="flex items-center gap-2 mono text-[10px] text-zinc-500 normal-case tracking-normal">
+          <span>llava:13b</span>·<span>{tokens} tok</span>·<span>{ms}ms</span>
+        </div>
+      </div>
+      <div className="p-3">
+        <div className="mono text-[10px] text-zinc-500 mb-1.5">▌ description</div>
+        <p className="text-[13px] leading-relaxed text-zinc-200" style={{textWrap:'pretty'}}>
+          {text}
+        </p>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {['login_form','authentication','submit_action','low_density','english_lang'].map(t=>(
+            <span key={t} className="mono text-[10px] px-1.5 py-0.5 rounded border border-zinc-800 bg-zinc-950 text-zinc-400">{t}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- center: action queue ----------
+function ActionQueue({ queue, onAction }) {
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div className="flex items-center gap-2"><span style={{color:'var(--acc)'}}>{I.zap}</span><span>Action Queue</span><span className="mono normal-case tracking-normal text-[10px] text-zinc-500">{queue.length} queued</span></div>
+        <div className="flex items-center gap-1">
+          <button onClick={()=>onAction('play')}  className="mono text-[10px] px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-emerald-400 flex items-center gap-1">{I.play} RUN</button>
+          <button onClick={()=>onAction('pause')} className="mono text-[10px] px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-amber-400 flex items-center gap-1">{I.pause} HOLD</button>
+          <button onClick={()=>onAction('clear')} className="mono text-[10px] px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 flex items-center gap-1">{I.x} CLEAR</button>
+        </div>
+      </div>
+      <div className="px-1 py-1 max-h-[180px] overflow-auto">
+        {queue.map((q, i) => (
+          <QueueRow key={q.id} q={q} idx={i} onAction={onAction} />
+        ))}
+        {queue.length === 0 && (
+          <div className="mono text-[11px] text-zinc-500 text-center py-6">queue empty</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function QueueRow({ q, idx, onAction }) {
+  const stateColor = q.state==='running' ? 'text-emerald-400' : q.state==='pending' ? 'text-zinc-400' : 'text-rose-400';
+  const stateBg = q.state==='running' ? 'bg-emerald-500/10 border-emerald-500/30'
+                : q.state==='pending' ? 'bg-zinc-900 border-zinc-800'
+                : 'bg-rose-500/10 border-rose-500/30';
+  const kindIcon = q.kind==='click' ? I.mouse : q.kind==='type' ? I.keyboard : I.arrowRight;
+  return (
+    <div className={`flex items-center gap-2 mx-1 my-0.5 px-2 py-1.5 rounded border ${stateBg}`}>
+      <div className="mono text-[10px] text-zinc-500 w-6">{String(idx+1).padStart(2,'0')}</div>
+      <div className={`${stateColor}`}>{kindIcon}</div>
+      <div className="mono text-[11px] text-zinc-300 uppercase w-12">{q.kind}</div>
+      <div className="mono text-[11px] text-zinc-400 flex-1 truncate">{q.target}{q.value ? <span className="text-zinc-500"> · "{q.value}"</span> : null}</div>
+      <div className={`mono text-[10px] uppercase ${stateColor} w-16 text-right`}>
+        {q.state==='running' && <span className="inline-flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 live-dot"></span>running</span>}
+        {q.state!=='running' && q.state}
+      </div>
+      <button onClick={()=>onAction('cancel', q.id)} className="text-zinc-500 hover:text-rose-400">{I.x}</button>
+    </div>
+  );
+}
+
+// ---------- center: macro recorder ----------
+function MacroRecorder({ recording, onToggle, onReplay, macros, elapsed }) {
+  return (
+    <div className="card flex flex-col">
+      <div className="card-header">
+        <div className="flex items-center gap-2">
+          <span className={recording ? 'text-rose-500' : 'text-zinc-400'}>{I.rec}</span>
+          <span>Macro Recorder</span>
+          {recording && <span className="mono normal-case tracking-normal text-[10px] text-rose-400">REC · {elapsed}</span>}
+        </div>
+        <div className="flex items-center gap-1">
+          <button onClick={onToggle}
+                  className={`mono text-[10px] px-2 py-1 rounded border flex items-center gap-1 ${recording
+                    ? 'border-rose-500/40 bg-rose-500/10 text-rose-400 rec-pulse'
+                    : 'border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300'}`}>
+            {recording ? I.stop : I.rec}
+            {recording ? 'STOP' : 'RECORD'}
+          </button>
+          <button onClick={onReplay} className="mono text-[10px] px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 flex items-center gap-1">{I.play} REPLAY</button>
+          <button className="mono text-[10px] px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 flex items-center gap-1">{I.copy} EXPORT</button>
+        </div>
+      </div>
+      <div className="px-1 py-1 flex-1 overflow-auto" style={{minHeight:120, maxHeight:200}}>
+        <table className="w-full mono text-[11px]">
+          <thead>
+            <tr className="text-zinc-500 text-left">
+              <th className="font-normal py-1 px-2 w-16">t</th>
+              <th className="font-normal py-1 px-2 w-20">action</th>
+              <th className="font-normal py-1 px-2">target</th>
+              <th className="font-normal py-1 px-2">value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {macros.map((m,i)=>(
+              <tr key={i} className="border-t border-zinc-900 hover:bg-zinc-900/50">
+                <td className="py-1 px-2 text-zinc-500">{m.t}</td>
+                <td className="py-1 px-2 text-emerald-400">{m.action}</td>
+                <td className="py-1 px-2 text-zinc-300 truncate">{m.target}</td>
+                <td className="py-1 px-2 text-zinc-400 truncate">{m.value}</td>
+              </tr>
+            ))}
+            {macros.length===0 && (
+              <tr><td colSpan="4" className="text-center py-6 text-zinc-500">no events recorded</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ---------- right: target windows ----------
+function TargetWindows({ windows, onSelect, onRefresh }) {
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div className="flex items-center gap-2"><span className="text-zinc-400">{I.window}</span><span>Target Windows</span><span className="mono normal-case tracking-normal text-[10px] text-zinc-500">{windows.length}</span></div>
+        <button onClick={onRefresh} className="mono text-[10px] px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 flex items-center gap-1">{I.refresh} RESCAN</button>
+      </div>
+      <div className="px-1 py-1 max-h-[220px] overflow-auto">
+        {windows.map(w => (
+          <div key={w.hwnd}
+               className={`group mx-1 my-0.5 px-2 py-1.5 rounded border ${w.active
+                 ? 'border-emerald-500/40 bg-emerald-500/[0.06]'
+                 : 'border-zinc-800 bg-zinc-950/40 hover:bg-zinc-900'}`}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[12px] text-zinc-200 truncate">{w.title}</div>
+                <div className="mono text-[10px] text-zinc-500 truncate">{w.hwnd} · {w.exe}</div>
+              </div>
+              <button onClick={()=>onSelect(w.hwnd)}
+                      className={`mono text-[10px] px-2 py-1 rounded border whitespace-nowrap ${w.active
+                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                        : 'border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300'}`}>
+                {w.active ? '◉ ATTACHED' : 'ATTACH'}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- right: action log ----------
+function ActionLog({ log, onClear }) {
+  const ref = useRef(null);
+  useEffect(() => { if (ref.current) ref.current.scrollTop = 0; }, [log.length]);
+  const statusColor = (s) => s==='ok' ? 'text-emerald-400' : s==='fail' ? 'text-rose-400' : 'text-amber-400';
+  const statusGlyph = (s) => s==='ok' ? '✓' : s==='fail' ? '✗' : '◌';
+  return (
+    <div className="card flex flex-col flex-1 min-h-0">
+      <div className="card-header">
+        <div className="flex items-center gap-2">
+          <span style={{color:'var(--acc)'}}>{I.zap}</span>
+          <span>Action Log</span>
+          <span className="mono normal-case tracking-normal text-[10px] text-zinc-500">{log.length} events</span>
+        </div>
+        <button onClick={onClear} className="mono text-[10px] px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-400">CLEAR</button>
+      </div>
+      <div ref={ref} className="flex-1 overflow-auto px-2 py-1 mono text-[11px] leading-[1.4] min-h-0">
+        {log.map((l, i) => (
+          <div key={i} className="flex gap-2 py-0.5 border-b border-zinc-900/60">
+            <span className="text-zinc-500 w-[88px] shrink-0">{l.t}</span>
+            <span className={`w-3 shrink-0 ${statusColor(l.status)}`}>{statusGlyph(l.status)}</span>
+            <span className="text-zinc-500 w-[58px] shrink-0 uppercase">{l.kind}</span>
+            <span className="text-zinc-300 truncate">{l.msg}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- right: connection status ----------
+function ConnectionStatus({ status }) {
+  const services = [
+    { key:'sdk',    name:'SelfConnect SDK',  detail:'127.0.0.1:7421',           icon:I.cpu },
+    { key:'yolo',   name:'YOLO Model',        detail:'yolov8m-ui.pt · CUDA 12.4', icon:I.target },
+    { key:'vl',     name:'VL Model (Ollama)', detail:'llava:13b · localhost:11434', icon:I.eye },
+    { key:'claude', name:'Claude API',        detail:'claude-sonnet-4-5',         icon:I.brain },
+  ];
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div className="flex items-center gap-2"><span style={{color:'var(--acc)'}}>{I.cpu}</span><span>Connections</span></div>
+        <span className="mono normal-case tracking-normal text-[10px] text-zinc-500">heartbeat 2s</span>
+      </div>
+      <div className="p-2 space-y-1">
+        {services.map(s => {
+          const st = status[s.key];
+          const dot = st==='ok'?'bg-emerald-400':st==='warn'?'bg-amber-400':'bg-rose-500';
+          const label = st==='ok'?'connected':st==='warn'?'degraded':'disconnected';
+          const labelColor = st==='ok'?'text-emerald-400':st==='warn'?'text-amber-400':'text-rose-400';
+          return (
+            <div key={s.key} className="flex items-center gap-2 px-2 py-1.5 rounded border border-zinc-800 bg-zinc-950/40">
+              <div className="text-zinc-500">{s.icon}</div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[12px] text-zinc-200 truncate">{s.name}</div>
+                <div className="mono text-[10px] text-zinc-500 truncate">{s.detail}</div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className={`w-1.5 h-1.5 rounded-full ${dot} ${st==='ok'?'live-dot':''}`}></span>
+                <span className={`mono text-[10px] uppercase ${labelColor}`}>{label}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------- bottom bar ----------
+function BottomBar({ onQuick, onSubmit }) {
+  const [val, setVal] = useState('');
+  const submit = () => { if (val.trim()) { onSubmit(val.trim()); setVal(''); } };
+  const quicks = [
+    { k:'look',     label:'Look',              icon:I.eye },
+    { k:'find',     label:'Find Element',      icon:I.search },
+    { k:'click',    label:'Click At',          icon:I.mouse },
+    { k:'type',     label:'Type Text',         icon:I.keyboard },
+    { k:'capture',  label:'Capture Screenshot',icon:I.camera },
+  ];
+  return (
+    <div className="h-14 shrink-0 flex items-center gap-3 px-3 border-t border-zinc-800 bg-zinc-950/80 backdrop-blur">
+      <div className="flex items-center gap-1">
+        {quicks.map(q => (
+          <button key={q.k} onClick={()=>onQuick(q.k)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 hover:border-zinc-700 text-zinc-300">
+            <span className="text-zinc-400">{q.icon}</span>
+            <span className="text-[11px] font-medium">{q.label}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="flex-1 flex items-center gap-2 pl-2">
+        <div className="flex-1 flex items-center gap-2 px-3 h-9 rounded-md border bg-zinc-900"
+             style={{borderColor:'oklch(0.78 0.16 145 / 0.35)'}}>
+          <span className="mono text-[12px]" style={{color:'var(--acc)'}}>›</span>
+          <input
+            value={val}
+            onChange={e=>setVal(e.target.value)}
+            onKeyDown={e=>e.key==='Enter' && submit()}
+            placeholder='click the Submit button   |   fill in the email field with test@example.com'
+            className="flex-1 bg-transparent outline-none text-[13px] text-zinc-200 placeholder:text-zinc-600"
+          />
+          <span className="mono text-[10px] text-zinc-500">⌘ + ↵</span>
+        </div>
+        <button onClick={submit}
+                className="h-9 px-3 rounded-md flex items-center gap-1.5 text-[12px] font-medium"
+                style={{background:'oklch(0.78 0.16 145 / 0.18)', color:'oklch(0.85 0.16 145)', border:'1px solid oklch(0.78 0.16 145 / 0.4)'}}>
+          {I.send} EXECUTE
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- helper: format time ----------
+function nowStamp() {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  const ss = String(d.getSeconds()).padStart(2,'0');
+  const ms = String(d.getMilliseconds()).padStart(3,'0');
+  return `${hh}:${mm}:${ss}.${ms}`;
+}
+
+// ---------- app ----------
+function App() {
+  // capture
+  const [paused, setPaused] = useState(false);
+  const [frame, setFrame] = useState(4823);
+  const [fps, setFps] = useState(58.2);
+  const [hovered, setHovered] = useState(null);
+
+  // detections (jitter slightly to simulate live updates)
+  const [detections, setDetections] = useState(initialDetections);
+
+  // queue + log
+  const [queue, setQueue] = useState(initialQueue);
+  const [log, setLog] = useState(initialLog);
+
+  // windows
+  const [windows, setWindows] = useState(initialWindows);
+
+  // macro
+  const [recording, setRecording] = useState(false);
+  const [macros, setMacros] = useState(initialMacros);
+  const [recStart, setRecStart] = useState(null);
+  const [recElapsed, setRecElapsed] = useState('00:00.00');
+
+  // models
+  const [modelStatus] = useState({ yolo:'ok', vl:'ok', claude:'ok' });
+  const [connStatus] = useState({ sdk:'ok', yolo:'ok', vl:'ok', claude:'warn' });
+
+  // VL description state
+  const [vlText] = useState('I see a centered authentication card on a dark desktop. The card contains the Acme logo, a header reading "Welcome back," followed by two text inputs labeled EMAIL (currently containing "test@example.com") and PASSWORD (masked). Below them is a primary blue Submit button and a small "Forgot password?" link aligned to the bottom-left of the form.');
+
+  const pushLog = useCallback((entry) => {
+    setLog(l => [{ t: nowStamp(), ...entry }, ...l].slice(0, 200));
+  }, []);
+
+  // simulate frame ticker
+  useEffect(() => {
+    if (paused) return;
+    const id = setInterval(() => {
+      setFrame(f => f + 1);
+      setFps(prev => Math.max(45, Math.min(62, prev + (Math.random()-0.5)*2)));
+      // small jitter on detections
+      setDetections(prev => prev.map(d => ({
+        ...d,
+        x: Math.max(0, Math.min(0.9, d.x + (Math.random()-0.5)*0.0015)),
+        y: Math.max(0, Math.min(0.9, d.y + (Math.random()-0.5)*0.0015)),
+        conf: Math.max(0.55, Math.min(0.99, d.conf + (Math.random()-0.5)*0.01)),
+      })));
+    }, 1000/30);
+    return () => clearInterval(id);
+  }, [paused]);
+
+  // queue progression simulation
+  useEffect(() => {
+    const id = setInterval(() => {
+      setQueue(q => {
+        if (!q.length) return q;
+        const idx = q.findIndex(x => x.state === 'running');
+        if (idx === -1) return q;
+        // move forward sometimes
+        if (Math.random() < 0.35) {
+          const next = q.slice(1);
+          if (next.length && next[0].state === 'pending') next[0] = { ...next[0], state:'running' };
+          pushLog({ kind: q[idx].kind, status:'ok',
+                    msg:`${q[idx].kind.toUpperCase()} ${q[idx].target}${q[idx].value?` "${q[idx].value}"`:''} → ok` });
+          return next;
+        }
+        return q;
+      });
+    }, 2200);
+    return () => clearInterval(id);
+  }, [pushLog]);
+
+  // recording timer
+  useEffect(() => {
+    if (!recording || !recStart) return;
+    const id = setInterval(() => {
+      const ms = Date.now() - recStart;
+      const s = Math.floor(ms/1000);
+      const cs = Math.floor((ms % 1000)/10);
+      setRecElapsed(`${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}.${String(cs).padStart(2,'0')}`);
+    }, 50);
+    return () => clearInterval(id);
+  }, [recording, recStart]);
+
+  // handlers
+  const onDetectionClick = (d) => {
+    pushLog({ kind:'select', status:'ok', msg:`Selected ${clsStyle[d.cls].name} "${d.label}" (conf ${(d.conf*100).toFixed(0)}%) bbox ${(d.x*1920|0)},${(d.y*1080|0)} ${Math.round(d.w*1920)}×${Math.round(d.h*1080)}` });
+    if (recording) {
+      setMacros(m => [...m, { t:`+${((Date.now()-recStart)/1000).toFixed(3)}s`, action:'inspect', target:`${clsStyle[d.cls].name}#${d.label}`, value:`(${(d.x*1920|0)},${(d.y*1080|0)})` }]);
+    }
+  };
+
+  const onQueueAction = (action, id) => {
+    if (action === 'play')  pushLog({ kind:'queue', status:'ok',   msg:'Queue resumed' });
+    if (action === 'pause') pushLog({ kind:'queue', status:'pending', msg:'Queue paused' });
+    if (action === 'clear'){ setQueue([]); pushLog({ kind:'queue', status:'ok', msg:'Queue cleared' }); }
+    if (action === 'cancel'){
+      setQueue(q => q.filter(x => x.id !== id));
+      pushLog({ kind:'cancel', status:'fail', msg:`Cancelled action ${id}` });
+    }
+  };
+
+  const onSelectWindow = (hwnd) => {
+    setWindows(ws => ws.map(w => ({ ...w, active: w.hwnd === hwnd })));
+    pushLog({ kind:'attach', status:'ok', msg:`Attached to window ${hwnd}` });
+  };
+
+  const onRefreshWindows = () => pushLog({ kind:'enum', status:'ok', msg:`Window enumeration: ${initialWindows.length} top-level windows` });
+
+  const toggleRecord = () => {
+    if (!recording) {
+      setRecording(true);
+      setMacros([]);
+      setRecStart(Date.now());
+      pushLog({ kind:'macro', status:'ok', msg:'Macro recording started' });
+    } else {
+      setRecording(false);
+      pushLog({ kind:'macro', status:'ok', msg:`Macro recording stopped · ${macros.length} events captured` });
+    }
+  };
+  const replayMacro = () => pushLog({ kind:'macro', status:'pending', msg:`Replaying macro · ${macros.length} events` });
+
+  const onQuick = (k) => {
+    const labels = { look:'LOOK invoked', find:'FIND_ELEMENT prompt opened', click:'CLICK_AT awaiting coords', type:'TYPE_TEXT awaiting payload', capture:'Screenshot captured' };
+    pushLog({ kind:k, status: k==='capture' ? 'ok' : 'pending', msg: labels[k] });
+  };
+  const onCommand = (text) => {
+    pushLog({ kind:'nl', status:'pending', msg:`NL → "${text}" · planning…` });
+    setQueue(q => [...q, { id:`q${Date.now()}`, kind:'click', target:'(planned)', value:text, state:'pending' }]);
+  };
+
+  return (
+    <div className="h-full w-full flex flex-col">
+      <TopBar fps={fps} modelStatus={modelStatus} />
+
+      <div className="flex-1 min-h-0 grid gap-3 p-3 grid-bg" style={{gridTemplateColumns:'40fr 35fr 25fr'}}>
+        {/* LEFT */}
+        <div className="min-h-0 flex flex-col gap-3">
+          <CaptureViewer
+            detections={detections}
+            frame={frame}
+            hovered={hovered}
+            onHover={setHovered}
+            onClick={onDetectionClick}
+            paused={paused}
+            onTogglePause={()=>setPaused(p=>!p)}
+          />
+        </div>
+
+        {/* CENTER */}
+        <div className="min-h-0 flex flex-col gap-3 overflow-auto">
+          <AIUnderstanding text={vlText} tokens={132} ms={284} />
+          <ActionQueue queue={queue} onAction={onQueueAction} />
+          <MacroRecorder
+            recording={recording}
+            onToggle={toggleRecord}
+            onReplay={replayMacro}
+            macros={macros}
+            elapsed={recElapsed}
+          />
+        </div>
+
+        {/* RIGHT */}
+        <div className="min-h-0 flex flex-col gap-3">
+          <TargetWindows windows={windows} onSelect={onSelectWindow} onRefresh={onRefreshWindows} />
+          <ActionLog log={log} onClear={()=>setLog([])} />
+          <ConnectionStatus status={connStatus} />
+        </div>
+      </div>
+
+      <BottomBar onQuick={onQuick} onSubmit={onCommand} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
