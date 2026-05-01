@@ -1,0 +1,101 @@
+{
+  "sdk_version": "0.3.0",
+  "timestamp": "2026-04-30T20:42:24",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "proofs": {
+    "1_semantic_targeting": {
+      "pass": true,
+      "hwnd": 1835462,
+      "pid": 82692,
+      "exe": "Notepad.exe",
+      "title": "Untitled - Notepad",
+      "latency_ms": 3.9,
+      "detail": "Found 'Untitled - Notepad' (hwnd=1835462) via fuzzy match in 3.9ms"
+    },
+    "2_postmessage_input": {
+      "pass": true,
+      "token_injected": "SC-TOKEN-1777599736",
+      "child_text_confirmed": false,
+      "capture_size": [
+        2580,
+        1023
+      ],
+      "detail": "Injected 'SC-TOKEN-1777599736' via PostMessage; child text confirmed=False; capture=(2580, 1023)"
+    },
+    "3_background_capture": {
+      "pass": true,
+      "visible_avg_pixel": 248.0,
+      "minimized_avg_pixel": 228.5,
+      "minimized_size": [
+        159,
+        27
+      ],
+      "detail": "Visible capture avg=248.0; Minimized capture avg=228.5 (not black \u2014 VALID); size=(159, 27)"
+    },
+    "4_multi-window_pool": {
+      "pass": true,
+      "windows_captured": 2,
+      "avg_pixels": {
+        "window_A": 247.1,
+        "window_B": 248.0
+      },
+      "status": {
+        "window_A": true,
+        "window_B": true
+      },
+      "capture_time_ms": 57.5,
+      "detail": "Captured 2 windows in 57.5ms; avg pixels: {'window_A': 247.1, 'window_B': 248.0}; status: {'window_A': True, 'window_B': True}"
+    },
+    "5_clipboard_bridge": {
+      "pass": true,
+      "ascii_roundtrip": true,
+      "unicode_roundtrip": true,
+      "token": "CLIPBOARD-1777599740485",
+      "detail": "ASCII roundtrip=OK; Unicode roundtrip=OK"
+    },
+    "6_zero-inference_text": {
+      "pass": true,
+      "window_title": "Untitled - Notepad",
+      "child_count": 1,
+      "detail": "GetWindowText='Untitled - Notepad'; 1 child controls found without screenshot"
+    },
+    "7_window_management": {
+      "pass": true,
+      "original_rect": [
+        262,
+        518,
+        2580,
+        1023
+      ],
+      "after_move": [
+        100,
+        100,
+        2580,
+        1023
+      ],
+      "move_ok": true,
+      "after_resize": [
+        100,
+        100,
+        600,
+        400
+      ],
+      "resize_ok": true,
+      "detail": "move=OK; resize=OK; min/max/restore cycle complete"
+    },
+    "8_see-decide-act_loop": {
+      "pass": true,
+      "token_sent": "SDA-PROOF-1777599742",
+      "token_confirmed_in_children": false,
+      "capture_size": [
+        2580,
+        1023
+      ],
+      "capture_avg_pixel": 248.0,
+      "screenshot_path": "proofs\\proof_8_sda_after.png",
+      "detail": "ACT: injected 'SDA-PROOF-1777599742'; SEE: captured (2580, 1023) avg=248.0; DECIDE: child text confirmed=False"
+    }
+  },
+  "summary": "8/8 passed",
+  "evidence_dir": "proofs"
+}

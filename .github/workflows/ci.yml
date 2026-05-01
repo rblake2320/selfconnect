@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  lint-python:
+    name: Python syntax + imports
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install ruff Pillow psutil
+
+      - name: Ruff lint
+        run: ruff check self_connect.py
+
+      - name: Syntax check
+        run: python -m py_compile self_connect.py
+
+      - name: Import check (no Win32 display needed)
+        run: |
+          python -c "
+          import sys, ctypes, types
+          if not hasattr(ctypes, 'windll'):
+              ctypes.windll = types.SimpleNamespace(
+                  user32=types.SimpleNamespace(
+                      EnumWindows=lambda *a: None,
+                      IsWindowVisible=lambda *a: False,
+                  ),
+                  kernel32=types.SimpleNamespace(GetConsoleWindow=lambda: 0),
+                  gdi32=types.SimpleNamespace(),
+              )
+          import ast, pathlib
+          tree = ast.parse(pathlib.Path('self_connect.py').read_text(encoding='utf-8'))
+          funcs = [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+          required = ['list_windows','find_target','focus_window','send_string',
+                      'capture_window','save_capture','build_frame','parse_frame',
+                      'send_frame','verify_delivery']
+          missing = [f for f in required if f not in funcs]
+          if missing:
+              print(f'MISSING: {missing}'); sys.exit(1)
+          print(f'All {len(required)} required functions present')
+          "
+
+      - name: Version check
+        run: python -c "import ast,pathlib; tree=ast.parse(pathlib.Path('self_connect.py').read_text(encoding='utf-8')); [print('Version:', n.value.s) for n in ast.walk(tree) if isinstance(n, ast.Assign) and any(getattr(t,'id','') == '__version__' for t in n.targets)]"
