@@ -2344,6 +2344,12 @@ class MigrationCoordinator:
         """
         Update context counter. Triggers migration when current/capacity >= threshold.
 
+        Migration sequence (all three phases run synchronously):
+          1. Write checkpoint to disk
+          2. Spawn successor terminal → get successor hwnd
+          3. Broadcast PEER_MIGRATING (with successor hwnd) to all peers
+             using verify_delivery() per peer; failed peers logged in meta
+
         Args:
             current: Current context usage (same units as capacity)
             pending: Optional task state to carry forward in checkpoint
@@ -2371,19 +2377,37 @@ class MigrationCoordinator:
         )
         path = write_checkpoint(cp, self.checkpoint_path)
 
-        # Broadcast PEER_MIGRATING to all registered peers
-        for rec in self.registry.all_peers():
-            try:
-                target = next((w for w in list_windows() if w.hwnd == rec.hwnd), None)
-                if target:
-                    send_frame(target, self.own_hwnd,
-                               f"PEER_MIGRATING role={self.role} checkpoint={path}",
-                               topic="migration")
-            except Exception:
-                pass
+        # Step 1: Spawn successor first — so we have the hwnd before broadcasting
+        successor_hwnd = self._spawn_successor(cp, path)
 
-        # Spawn successor
-        self._spawn_successor(cp, path)
+        # Step 2: Broadcast PEER_MIGRATING with successor hwnd + verify per peer
+        failed_peers = []
+        current_windows = list_windows()
+        for rec in self.registry.all_peers():
+            target = next((w for w in current_windows if w.hwnd == rec.hwnd), None)
+            if not target:
+                failed_peers.append({"hwnd": rec.hwnd, "label": rec.label,
+                                     "reason": "window_not_found"})
+                continue
+            payload = (f"PEER_MIGRATING role={self.role} "
+                       f"checkpoint={path} "
+                       f"successor_hwnd={successor_hwnd or 'pending'}")
+            try:
+                send_frame(target, self.own_hwnd, payload, topic="migration")
+                confirmed = verify_delivery(
+                    target.hwnd, "PEER_MIGRATING", timeout=5.0, poll=0.3
+                )
+                if not confirmed:
+                    failed_peers.append({"hwnd": rec.hwnd, "label": rec.label,
+                                         "reason": "verify_timeout"})
+            except Exception as exc:
+                failed_peers.append({"hwnd": rec.hwnd, "label": rec.label,
+                                     "reason": str(exc)})
+
+        # Persist delivery failures into checkpoint meta for the record
+        if failed_peers:
+            cp.meta["broadcast_failures"] = failed_peers
+            write_checkpoint(cp, path)
 
         for h in self._handlers:
             try:
@@ -2393,54 +2417,114 @@ class MigrationCoordinator:
 
         return True
 
-    def _spawn_successor(self, cp: Checkpoint, checkpoint_path: str) -> None:
-        """
-        Open a new Windows Terminal tab and launch claude with a continuation briefing.
+    # ── internal helpers ──────────────────────────────────────────────────────
 
-        The briefing injected into the new session instructs it to:
-        1. Read the checkpoint at checkpoint_path
-        2. Re-register with all peers in cp.peers
-        3. Resume the same role
-        4. Run the standing protocol
+    def _find_new_hwnd(self, before: "set[int]",
+                       timeout: float = 8.0, poll: float = 0.4) -> "int | None":
+        """Poll until a new terminal HWND appears that wasn't in ``before``."""
+        _user32 = ctypes.windll.user32
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            time.sleep(poll)
+            for w in list_windows():
+                if w.hwnd in before:
+                    continue
+                cls_buf = ctypes.create_unicode_buffer(256)
+                _user32.GetClassNameW(w.hwnd, cls_buf, 256)
+                cls = cls_buf.value.upper()
+                if any(k in cls for k in ("CONSOLE", "TERMINAL", "CASCADIA")):
+                    return w.hwnd
+                if w.exe_name and any(
+                    k in w.exe_name.lower() for k in ("cmd", "conhost", "wt", "terminal")
+                ):
+                    return w.hwnd
+        return None
+
+    def _spawn_successor(self, cp: Checkpoint, checkpoint_path: str) -> "int | None":
+        """
+        Spawn a new terminal, launch claude, inject the continuation briefing via
+        send_string (PostMessage WM_CHAR) — NOT stdin redirect, which Claude Code
+        silently ignores (requires real TTY).
+
+        Returns the new terminal's HWND so the coordinator can include it in the
+        PEER_MIGRATING broadcast. Returns None if spawn or hwnd detection fails.
+
+        Successor's first required action (embedded in briefing):
+          Announce own hwnd to all peers via send_string so peers can update routing.
         """
         peers_text = "\n".join(
             f"  - {p['label']} hwnd={p['hwnd']} state={p['state']}"
             for p in cp.peers
+        )
+        peers_sc_lines = "\n".join(
+            f"  send_string(next(w for w in list_windows() if w.hwnd=={p['hwnd']}), "
+            f"'PEER_READY role={cp.role} successor_hwnd=MY_OWN_HWND\\n')"
+            for p in cp.peers
+        )
+        workdir = os.path.abspath(
+            os.path.dirname(checkpoint_path) or "."
         )
         briefing = (
             f"[CONTINUATION BRIEFING — Role Migration]\n"
             f"You are resuming role '{cp.role}' (previous hwnd={cp.own_hwnd}).\n"
             f"Checkpoint: {checkpoint_path}\n\n"
             f"Mesh peers at migration time:\n{peers_text}\n\n"
-            f"Steps to resume:\n"
-            f"1. Run: python -c \"from self_connect import read_checkpoint; "
-            f"cp = read_checkpoint(r'{checkpoint_path}'); print(cp.role, cp.peers)\"\n"
-            f"2. Re-register with each peer via send_string()\n"
-            f"3. Resume pending work: {_json.dumps(cp.pending)}\n"
-            f"4. Standing protocol: capture all peers via PrintWindow, "
-            f"confirm Enter on any pending response.\n"
+            f"FIRST ACTION — announce your hwnd to all peers so they update routing:\n"
+            f"import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace')\n"
+            f"from self_connect import list_windows, send_string, get_own_terminal_pid\n"
+            f"import ctypes; hwnd = next(\n"
+            f"  w.hwnd for w in list_windows()\n"
+            f"  if w.pid == get_own_terminal_pid()), None)\n"
+            f"# Then for each peer:\n"
+            f"{peers_sc_lines}\n\n"
+            f"THEN resume pending work: {_json.dumps(cp.pending)}\n\n"
+            f"Standing protocol before idle:\n"
+            f"1. Capture all peers via save_capture(hwnd)\n"
+            f"2. Check for pending prompts\n"
+            f"3. Confirm Enter is hit on any pending response\n"
         )
         if self.continuation:
             briefing += f"\n{self.continuation}\n"
 
-        # Write briefing to a temp file so it survives the shell spawn
-        briefing_path = os.path.abspath(
-            f"proofs/briefing_successor_{self.role}_{int(time.time())}.txt"
-        )
         os.makedirs("proofs", exist_ok=True)
-        with open(briefing_path, "w", encoding="utf-8") as f:
-            f.write(briefing)
 
-        # Launch new terminal → claude → pipe briefing
-        # wt.exe new-tab: works on Windows 11 with Windows Terminal installed
-        cmd = (
-            f'wt.exe new-tab -- cmd /k '
-            f'"claude < \"{briefing_path}\""'
-        )
+        # Snapshot existing windows before spawn
+        before = {w.hwnd for w in list_windows()}
+
+        # Open new console window — use CREATE_NEW_CONSOLE so it gets its own hwnd
+        workdir_safe = workdir.replace('"', '\\"')
         try:
-            _subprocess.Popen(cmd, shell=True)
+            _subprocess.Popen(
+                ["cmd.exe", "/k", f'cd /d "{workdir_safe}"'],
+                creationflags=_subprocess.CREATE_NEW_CONSOLE,
+            )
         except Exception:
-            pass  # Best-effort — migration coordinator logs via on_migrate handler
+            return None
+
+        # Wait for new terminal hwnd to appear
+        new_hwnd = self._find_new_hwnd(before, timeout=8.0)
+        if not new_hwnd:
+            return None
+
+        # Let the terminal settle, then restore and inject
+        time.sleep(1.0)
+        try:
+            ctypes.windll.user32.ShowWindow(new_hwnd, 9)  # SW_RESTORE
+            time.sleep(0.3)
+            new_win = next((w for w in list_windows() if w.hwnd == new_hwnd), None)
+            if not new_win:
+                return new_hwnd
+            # Launch claude in the new terminal
+            send_string(new_win, "claude\r")
+            time.sleep(12.0)   # wait for Claude Code to initialize
+            # Inject briefing via PostMessage WM_CHAR (no stdin redirect — needs TTY)
+            send_string(new_win, briefing)
+            time.sleep(0.5)
+            send_string(new_win, "\r")
+        except Exception:
+            pass  # hwnd captured — caller has it for broadcast even if inject failed
+
+        return new_hwnd
 
     @property
     def has_migrated(self) -> bool:
