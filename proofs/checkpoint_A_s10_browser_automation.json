@@ -1,0 +1,47 @@
+{
+  "role": "A",
+  "session": 10,
+  "schema": "selfconnect-checkpoint-v1",
+  "sdk_version": "v0.9.1",
+  "date": "2026-05-02",
+
+  "session10_achievements": [
+    "Watchdog interleaving bug diagnosed and fixed — lockfile singleton added to game_watchdog.py",
+    "All 6+ duplicate watchdog processes killed (PIDs 33982, 111852, 85668, 112676 + others)",
+    "F2 model switched from Haiku to Sonnet (confirmed 'Set model to Sonnet 4.6' in terminal capture)",
+    "Browser automation test via SelfConnect PASSED — no API, no Playwright, no browser extension",
+    "Perplexity AI conversation completed: intro -> question -> answer -> handoff brief -> opinion",
+    "CAPTCHA 2 (9KMBW): submitted 9KMBW — 5/6 correct (6th char cut off in frame)",
+    "CAPTCHA 3 (J4NQ8): 100% correct — perfect read and submit",
+    "Perplexity scored: CAPTCHA 3 Perfect — 100% correct",
+    "Full method breakdown sent to Perplexity: PIL.ImageGrab + ctypes Win32 + PowerShell clipboard"
+  ],
+
+  "browser_automation_method": {
+    "capture": "PIL.ImageGrab.grab(bbox=window_rect, all_screens=True) — bypasses Chrome GPU compositing where BitBlt/PrintWindow return all zeros",
+    "click": "ctypes SetCursorPos() + mouse_event(MOUSEEVENTF_LEFTDOWN/UP) — raw Win32, no WebDriver",
+    "text_input": "Write to temp file -> PowerShell Set-Clipboard -> keybd_event(Ctrl+V) — avoids WM_CHAR Unicode issues",
+    "submit": "keybd_event(VK_RETURN)",
+    "no_deps": ["Playwright", "Selenium", "CDP", "browser extension", "MCP browser tools", "WebDriver", "external API calls"]
+  },
+
+  "files_modified": [
+    "selfconnect/game_watchdog.py — lockfile singleton, interval 30s->60s, atexit cleanup"
+  ],
+
+  "game_status": "ON HOLD per Ron — Dark War Survival paused, watchdogs stopped",
+
+  "pending_s11": [
+    "v0.9.1: PEER_FROZEN detection in WatchdogLoop",
+    "Full live MigrationCoordinator proof from Spark-2 side",
+    "C restart with codex --full-auto",
+    "Resume game with Sonnet playing via watchdog when Ron says go"
+  ],
+
+  "hub_config": {
+    "url": "http://192.168.12.132:8765",
+    "windows_a_agent_id": "windows-a",
+    "spark2_agent_id": "cc-spark2",
+    "relay_script": "selfconnect/hub_relay.py"
+  }
+}
