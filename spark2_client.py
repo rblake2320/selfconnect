@@ -26,7 +26,7 @@ import urllib.error
 from dataclasses import dataclass
 from typing import Optional
 
-HUB = "http://10.0.0.2:8765"
+HUB = "http://192.168.12.132:8765"  # Spark-1 direct — reachable from both Windows and Spark-2
 ME = "cc-spark2"
 TARGET = "windows-a"
 REPLY_TIMEOUT = 45   # seconds to wait for Windows-A reply

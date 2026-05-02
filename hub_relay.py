@@ -35,7 +35,7 @@ from self_connect import (
     build_frame, parse_frame
 )
 
-HUB = "http://localhost:18765"  # SSH tunnel: ssh -L 18765:10.0.0.2:8765 spark1
+HUB = "http://192.168.12.132:8765"  # Spark-1 direct — no tunnel needed
 FROM_AGENT = "windows-a"
 REMOTE_AGENT = "cc-spark2"
 POLL_INTERVAL = 30  # seconds
