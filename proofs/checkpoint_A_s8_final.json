@@ -1,0 +1,60 @@
+{
+  "role": "A",
+  "own_hwnd": 6756828,
+  "peers": [
+    {
+      "hwnd": 3546648,
+      "label": "B",
+      "state": "PROMPT_DETECTED",
+      "note": "accept edits on - needs manual Enter"
+    },
+    {
+      "hwnd": 6624714,
+      "label": "C",
+      "state": "PROMPT_DETECTED",
+      "note": "Codex permission gate - needs --full-auto"
+    },
+    {
+      "hwnd": 4854222,
+      "label": "D",
+      "state": "READY"
+    },
+    {
+      "hwnd": 12585234,
+      "label": "E",
+      "state": "READY"
+    },
+    {
+      "hwnd": 8848514,
+      "label": "test-spawn",
+      "state": "READY",
+      "note": "MigrationCoordinator test artifact - safe to close"
+    }
+  ],
+  "pending": {
+    "spark2_briefing": "Hub message delivery failed (webhook); try direct ssh claude or ai-army-responder route",
+    "hub_url": "http://10.0.0.2:8765 (via Spark-1 SSH)",
+    "windows_a_registered": "yes, agent_id=windows-a on Hub",
+    "b_unblock": "B needs manual Enter on ai-to-ai-bidirectional-chat tab",
+    "session9_goal": "v0.9.1 PEER_FROZEN detection + live MigrationCoordinator proof",
+    "v091_items": "add PEER_FROZEN state (accept edits on pattern), TUI deadlock detection, add to WatchdogLoop"
+  },
+  "meta": {
+    "sdk": "v0.9.0",
+    "commit": "bf54567",
+    "exports": 60,
+    "tests": "11/11",
+    "hub_agents_online": 5,
+    "hub_conversations": 15,
+    "spark2_agent_ids": [
+      "ai-army-responder",
+      "cc-spark2",
+      "spark2-reviewer"
+    ],
+    "old_a_hwnd": 2820438,
+    "old_a_status": "FROZEN - pending Ron close",
+    "session": 8
+  },
+  "written_at": 1777683456.0712278,
+  "schema": "selfconnect-checkpoint-v1"
+}

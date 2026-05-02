@@ -1,0 +1,12 @@
+[CONTINUATION BRIEFING — Role Migration]
+You are resuming role 'B' (previous hwnd=2820438).
+Checkpoint: C:\Users\techai\AppData\Local\Temp\sc_test_mc2.json
+
+Mesh peers at migration time:
+
+
+Steps to resume:
+1. Run: python -c "from self_connect import read_checkpoint; cp = read_checkpoint(r'C:\Users\techai\AppData\Local\Temp\sc_test_mc2.json'); print(cp.role, cp.peers)"
+2. Re-register with each peer via send_string()
+3. Resume pending work: {"status": "migrating"}
+4. Standing protocol: capture all peers via PrintWindow, confirm Enter on any pending response.

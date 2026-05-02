@@ -1,0 +1,45 @@
+{
+  "role": "A",
+  "own_hwnd": 6756828,
+  "session": 9,
+  "schema": "selfconnect-checkpoint-v1",
+  "sdk_version": "v0.9.0",
+  "commit": "d9fb4d8",
+  "peers": [
+    {"hwnd": 3546648,   "label": "B",          "state": "IDLE",    "note": "Ran migration test live, awaiting next task"},
+    {"hwnd": 6624714,   "label": "C",          "state": "STALLED", "note": "Codex permission gate, needs --full-auto"},
+    {"hwnd": 4854222,   "label": "D",          "state": "READY"},
+    {"hwnd": 12585234,  "label": "E",          "state": "READY"},
+    {"hwnd": 22610408,  "label": "F1",         "state": "READY",   "note": "Migration successor 1 - PASS, all 3 briefing fragments received"},
+    {"hwnd": 378079626, "label": "F2",         "state": "READY",   "note": "Migration successor 2 - checkpoint migrating->active, ready for s9"},
+    {"label": "spark2", "hub_agent": "cc-spark2", "state": "CONNECTED", "note": "Remote peer via Hub relay - confirmed working"}
+  ],
+  "session9_achievements": [
+    "hub_relay.py built and running (http://192.168.12.132:8765 direct, no SSH tunnel)",
+    "spark2_client.py built — Linux RPC client mirroring self_connect.py API",
+    "Spark-2 (cc-spark2) joined mesh as remote peer via Hub relay",
+    "Spark-2 sent CMD:list_windows() — got real live Windows window data back",
+    "Spark-2 appeared in A chat directly: 'Hi Session A - Spark2 here. hub_relay running. MESH_STATUS confirmed all 5 nodes ONLINE.'",
+    "KEY PROOF: Spark-2 (Linux aarch64, GB10 119.7GB) can inject lines and see Windows mesh state",
+    "B ran MigrationCoordinator live: checkpoint sc_test_mc2.json written, F1+F2 spawned, PASS",
+    "PEER_FROZEN concept identified for v0.9.1",
+    "SelfConnect guide + GitHub link sent to cc-spark2 via Hub"
+  ],
+  "new_files": [
+    "selfconnect/hub_relay.py — Windows-A Hub relay loop (CMD: executor)",
+    "selfconnect/spark2_client.py — Linux RPC client wrapper"
+  ],
+  "pending_s10": [
+    "v0.9.1: PEER_FROZEN detection in WatchdogLoop",
+    "Full live MigrationCoordinator proof from Spark-2 side",
+    "C restart with codex --full-auto",
+    "Close old test-spawn window hwnd=8848514"
+  ],
+  "hub_config": {
+    "url": "http://192.168.12.132:8765",
+    "windows_a_agent_id": "windows-a",
+    "spark2_agent_id": "cc-spark2",
+    "relay_script": "selfconnect/hub_relay.py",
+    "poll_interval_s": 30
+  }
+}
