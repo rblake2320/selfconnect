@@ -13,7 +13,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from vision_server import config
 from vision_server.routers import windows, capture, detections, vl, actions, macros, health, search, events
@@ -100,7 +101,7 @@ app.add_middleware(
 
 # ── Auth middleware ────────────────────────────────────────────────────────────
 
-UNPROTECTED = {"/", "/api/health", "/docs", "/openapi.json", "/redoc"}
+UNPROTECTED = {"/", "/api/health", "/docs", "/openapi.json", "/redoc", "/dashboard"}
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
@@ -151,4 +152,13 @@ async def root():
         "version": "1.0.0",
         "docs": "/docs",
         "health": "/api/health",
+        "dashboard": "/dashboard",
     }
+
+
+@app.get("/dashboard")
+async def dashboard():
+    """Serve the Vision Agent dashboard (same-origin — no CORS needed)."""
+    html_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "vision_agent_dashboard.html")
+    return FileResponse(html_path, media_type="text/html")

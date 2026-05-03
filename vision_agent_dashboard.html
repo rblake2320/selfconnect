@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>SelfConnect Vision Agent</title>
+<title>SelfConnect</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -117,7 +117,14 @@
 const { useState, useEffect, useRef, useCallback } = React;
 
 // ── API config ──────────────────────────────────────────────────────────────
-const API = 'http://localhost:7421';
+// Auto-detect: if served from the vision server itself use current origin,
+// otherwise fall back to stored value or default.
+const _origin = window.location.origin;
+const _isVisionServer = _origin.includes('7421');
+const API = _isVisionServer
+  ? _origin
+  : (localStorage.getItem('sc_api') || 'http://127.0.0.1:7421');
+const WS_BASE = API.replace(/^http/, 'ws');
 
 async function apiFetch(method, path, token, body) {
   const r = await fetch(`${API}${path}`, {
@@ -184,7 +191,7 @@ function TopBar({ fps, modelStatus, wsConn, onConfig }) {
           <div className="reticle-spin">{I.target}</div>
         </div>
         <div className="flex items-baseline gap-2">
-          <span className="text-sm font-semibold tracking-tight">SelfConnect Vision Agent</span>
+          <span className="text-sm font-semibold tracking-tight">SelfConnect</span>
           <span className="mono text-[10px] text-zinc-500">v1.0.0</span>
         </div>
         <span className="mono text-[10px] px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-400 ml-2">LOCAL</span>
@@ -568,7 +575,7 @@ function ConnectionStatus({ status, wsConn }) {
     { key:'sdk',   name:'SelfConnect SDK',   detail:'127.0.0.1:7421',            icon:I.cpu },
     { key:'yolo',  name:'Detection',          detail:'win32 + llava structured',  icon:I.target },
     { key:'vl',    name:'VL (Ollama)',         detail:'llava:7b · :11434',         icon:I.eye },
-    { key:'ws',    name:'Event Stream',       detail:'ws://localhost:7421/ws',    icon:I.zap },
+    { key:'ws',    name:'Event Stream',       detail:`${WS_BASE}/ws`,            icon:I.zap },
   ];
   const statusMap = { ...status, ws: wsConn === 'connected' ? 'ok' : wsConn === 'reconnecting' ? 'degraded' : 'down' };
   return (
@@ -707,7 +714,7 @@ function App() {
     capDead.current = false;
     function connect() {
       if (capDead.current) return;
-      const ws = new WebSocket('ws://localhost:7421/ws/capture');
+      const ws = new WebSocket(`${WS_BASE}/ws/capture`);
       ws.binaryType = 'arraybuffer';
       wsCapRef.current = ws;
       ws.onopen  = () => pushLog({ kind:'ws', status:'ok', msg:'Capture stream connected' });
@@ -742,7 +749,7 @@ function App() {
     function connect() {
       if (evtDead.current) return;
       setWsConn('reconnecting');
-      const ws = new WebSocket('ws://localhost:7421/ws/events');
+      const ws = new WebSocket(`${WS_BASE}/ws/events`);
       wsEvtRef.current = ws;
       ws.onopen = () => {
         setWsConn('connected');
