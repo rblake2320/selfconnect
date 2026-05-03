@@ -41,7 +41,6 @@ async def detect(hwnd: int, frame_jpeg: bytes | None = None) -> list:
     """
     Run detection on hwnd. Returns list of Detection dicts.
     Tries Win32 child controls first; falls back to llava if browser window.
-    Agent C: implement this.
     """
     global _latest
     from concurrent.futures import ThreadPoolExecutor

@@ -41,3 +41,4 @@ MACRO_EXPORT_DIR = "macros"
 import os
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SDK_PATH = BASE_DIR
+YOLO_MODEL_PATH = os.environ.get("SC_YOLO_MODEL", os.path.join(BASE_DIR, "models", "ui_yolo.pt"))

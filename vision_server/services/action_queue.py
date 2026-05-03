@@ -173,12 +173,36 @@ async def enqueue_command(text: str) -> dict:
     """Parse natural language command and enqueue appropriate action."""
     text_lower = text.lower().strip()
 
-    # Simple pattern matching — expand as needed
     if text_lower.startswith("click "):
         label = text[6:].strip()
-        # For now enqueue as a type request for human review
+        from vision_server.services.detection_service import get_latest_detections
         from vision_server.models.schemas import ActionRequest
-        req = ActionRequest(kind="click", target=label, value="0,0")
+        import ctypes, ctypes.wintypes
+        from vision_server import config
+
+        detections = get_latest_detections()
+        # Exact label match first, then partial
+        match = next((d for d in detections if d.label.lower() == label.lower()), None)
+        if match is None:
+            match = next((d for d in detections if label.lower() in d.label.lower()), None)
+        if match is None:
+            raise ValueError(
+                f"Label '{label}' not found in current detections "
+                f"({len(detections)} element(s) visible — run RESCAN or LOOK first)"
+            )
+
+        hwnd = config.active_hwnd
+        if not hwnd:
+            raise ValueError("No active window attached — use ATTACH first")
+
+        prect = ctypes.wintypes.RECT()
+        ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(prect))
+        pw = max(prect.right - prect.left, 1)
+        ph = max(prect.bottom - prect.top, 1)
+        cx = prect.left + int((match.x + match.w / 2) * pw)
+        cy = prect.top  + int((match.y + match.h / 2) * ph)
+
+        req = ActionRequest(kind="click", target=match.label, x=float(cx), y=float(cy))
         return await enqueue(req)
 
     elif text_lower.startswith("type "):

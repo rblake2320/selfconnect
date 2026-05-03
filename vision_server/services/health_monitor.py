@@ -26,6 +26,19 @@ async def _check_sdk() -> str:
         return "down"
 
 
+def _check_yolo() -> str:
+    """degraded if no custom UI-YOLO model file present; ok if file exists."""
+    import os
+    from vision_server.config import YOLO_MODEL_PATH
+    return "ok" if os.path.isfile(YOLO_MODEL_PATH) else "degraded"
+
+
+def _check_claude() -> str:
+    """ok if SC_TOKEN env var is set (server is auth-enabled); degraded otherwise."""
+    import os
+    return "ok" if os.environ.get("SC_TOKEN") else "degraded"
+
+
 async def _check_vl() -> str:
     try:
         import httpx
@@ -43,8 +56,8 @@ async def _monitor_loop():
     while True:
         _status["sdk"] = await _check_sdk()
         _status["vl"] = await _check_vl()
-        _status["yolo"] = "degraded"   # no custom model in v1
-        _status["claude"] = "ok"       # API key presence check only
+        _status["yolo"] = _check_yolo()
+        _status["claude"] = _check_claude()
 
         await publish("health", dict(_status))
         await asyncio.sleep(5)

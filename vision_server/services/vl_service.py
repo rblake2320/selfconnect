@@ -40,7 +40,6 @@ async def describe_frame(jpeg_bytes: bytes):
     """
     Call Ollama llava with the given JPEG bytes.
     Returns VLDescription.
-    Agent B: implement this function.
     """
     from vision_server.models.schemas import VLDescription
     from vision_server.config import OLLAMA_URL, OLLAMA_VL_MODEL, OLLAMA_VL_TIMEOUT
