@@ -114,9 +114,27 @@
 <div id="root"></div>
 
 <script type="text/babel" data-presets="env,react">
-const { useState, useEffect, useRef, useMemo, useCallback } = React;
+const { useState, useEffect, useRef, useCallback } = React;
 
-// ---------- icons (inline svgs, simple) ----------
+// ── API config ──────────────────────────────────────────────────────────────
+const API = 'http://localhost:7421';
+
+async function apiFetch(method, path, token, body) {
+  const r = await fetch(`${API}${path}`, {
+    method,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      ...(body != null ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body != null ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error(`${r.status}`);
+  return r.json();
+}
+const apiGet  = (path, token)        => apiFetch('GET',  path, token, null);
+const apiPost = (path, token, body)  => apiFetch('POST', path, token, body ?? {});
+
+// ── icons (inline svgs) ─────────────────────────────────────────────────────
 const Icon = ({ d, size=14, className="", strokeWidth=1.6 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
        strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -147,17 +165,7 @@ const I = {
   zap: <Icon d={<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" fill="currentColor" stroke="none"/>} />,
 };
 
-// ---------- mock data ----------
-const initialDetections = [
-  // values in 0..1 (relative to capture)
-  { id:'d1', cls:'button',     label:'Submit',         conf:0.94, x:0.62, y:0.66, w:0.18, h:0.07 },
-  { id:'d2', cls:'text_field', label:'email',          conf:0.91, x:0.20, y:0.40, w:0.60, h:0.06 },
-  { id:'d3', cls:'text_field', label:'password',       conf:0.89, x:0.20, y:0.51, w:0.60, h:0.06 },
-  { id:'d4', cls:'label',      label:'Welcome back',   conf:0.82, x:0.34, y:0.20, w:0.32, h:0.05 },
-  { id:'d5', cls:'label',      label:'Forgot password?', conf:0.77, x:0.20, y:0.76, w:0.20, h:0.03 },
-  { id:'d6', cls:'image',      label:'logo.png',       conf:0.86, x:0.44, y:0.10, w:0.12, h:0.06 },
-];
-
+// ── detection class styles ───────────────────────────────────────────────────
 const clsStyle = {
   button:     { stroke:'rgb(34 197 94)',  fill:'rgba(34,197,94,0.10)',  text:'text-emerald-400', name:'BUTTON' },
   text_field: { stroke:'rgb(59 130 246)', fill:'rgba(59,130,246,0.10)', text:'text-blue-400',    name:'TEXT_FIELD' },
@@ -165,42 +173,9 @@ const clsStyle = {
   image:      { stroke:'rgb(234 179 8)',  fill:'rgba(234,179,8,0.10)',  text:'text-yellow-400',  name:'IMAGE' },
 };
 
-const initialWindows = [
-  { hwnd:'0x000A4F12', title:'Login — Acme Corp Portal',          exe:'msedge.exe',     active:true  },
-  { hwnd:'0x0011BC03', title:'Inbox (24) — work@acme.io',          exe:'outlook.exe',    active:false },
-  { hwnd:'0x002378A1', title:'PyCharm — vision_agent/main.py',     exe:'pycharm64.exe',  active:false },
-  { hwnd:'0x0089FE54', title:'Slack | #vision-team | acme',         exe:'slack.exe',      active:false },
-  { hwnd:'0x00C12099', title:'Figma — Vision Dashboard',            exe:'figma.exe',      active:false },
-  { hwnd:'0x00FF0102', title:'C:\\Users\\dev\\Documents',          exe:'explorer.exe',   active:false },
-];
-
-const initialQueue = [
-  { id:'q1', kind:'click',    target:'TEXT_FIELD #email',     value:'',                     state:'running' },
-  { id:'q2', kind:'type',     target:'TEXT_FIELD #email',     value:'test@example.com',     state:'pending' },
-  { id:'q3', kind:'click',    target:'TEXT_FIELD #password',  value:'',                     state:'pending' },
-  { id:'q4', kind:'type',     target:'TEXT_FIELD #password',  value:'••••••••',             state:'pending' },
-  { id:'q5', kind:'click',    target:'BUTTON #submit',        value:'',                     state:'pending' },
-];
-
-const initialLog = [
-  { t:'14:22:01.084', kind:'capture',  status:'ok',   msg:'Captured frame 4823 (1920×1080)' },
-  { t:'14:22:01.092', kind:'yolo',     status:'ok',   msg:'YOLO inference 14.2ms · 6 detections' },
-  { t:'14:22:01.310', kind:'vl',       status:'ok',   msg:'VL describe complete (118 tok)' },
-  { t:'14:22:01.420', kind:'click',    status:'ok',   msg:'Clicked TEXT_FIELD #email at (964, 442)' },
-  { t:'14:22:01.620', kind:'type',     status:'pending',msg:'Typing "test@example.com"…' },
-  { t:'14:22:00.011', kind:'system',   status:'fail', msg:'Window 0x00C12099 not focused — retried' },
-];
-
-const initialMacros = [
-  { t:'+0.000s', action:'capture',  target:'window',          value:'0x000A4F12' },
-  { t:'+0.142s', action:'click',    target:'TEXT_FIELD#email',value:'(964, 442)' },
-  { t:'+0.580s', action:'type',     target:'TEXT_FIELD#email',value:'test@example.com' },
-  { t:'+1.210s', action:'tab',      target:'-',               value:'1' },
-  { t:'+1.418s', action:'type',     target:'TEXT_FIELD#pw',   value:'••••••••' },
-];
-
-// ---------- top bar ----------
-function TopBar({ fps, modelStatus }) {
+// ── top bar ─────────────────────────────────────────────────────────────────
+function TopBar({ fps, modelStatus, wsConn, onConfig }) {
+  const connDot = wsConn === 'connected' ? 'bg-emerald-400 live-dot' : wsConn === 'reconnecting' ? 'bg-amber-400' : 'bg-rose-500';
   return (
     <div className="h-12 shrink-0 flex items-center justify-between px-4 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur">
       <div className="flex items-center gap-3">
@@ -210,20 +185,19 @@ function TopBar({ fps, modelStatus }) {
         </div>
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold tracking-tight">SelfConnect Vision Agent</span>
-          <span className="mono text-[10px] text-zinc-500">v0.1.3</span>
+          <span className="mono text-[10px] text-zinc-500">v1.0.0</span>
         </div>
-        <span className="mono text-[10px] px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-400 ml-2">DEV</span>
+        <span className="mono text-[10px] px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-400 ml-2">LOCAL</span>
       </div>
-
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-2 px-2.5 py-1 rounded-md border border-zinc-800 bg-zinc-900/60">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 live-dot"></span>
-          <span className="mono text-[11px] text-zinc-300">{fps.toFixed(1)}<span className="text-zinc-500"> fps</span></span>
+          <span className={`w-1.5 h-1.5 rounded-full ${connDot}`}></span>
+          <span className="mono text-[11px] text-zinc-300">{fps > 0 ? fps.toFixed(1) : '—'}<span className="text-zinc-500"> fps</span></span>
         </div>
-        <ModelBadge name="YOLO"   status={modelStatus.yolo} detail="60fps" />
-        <ModelBadge name="VL"     status={modelStatus.vl}   detail="8fps" />
-        <ModelBadge name="Claude" status={modelStatus.claude} detail={modelStatus.claude==='ok'?'connected':'disconnected'} />
-        <button className="ml-1 w-8 h-8 rounded-md border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 flex items-center justify-center text-zinc-400">
+        <ModelBadge name="DETECT" status={modelStatus.yolo}   detail="win32+vl" />
+        <ModelBadge name="VL"     status={modelStatus.vl}     detail="llava:7b" />
+        <ModelBadge name="SDK"    status={modelStatus.sdk}    detail={modelStatus.sdk==='ok'?'connected':'offline'} />
+        <button onClick={onConfig} className="ml-1 w-8 h-8 rounded-md border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 flex items-center justify-center text-zinc-400">
           {I.gear}
         </button>
       </div>
@@ -232,7 +206,7 @@ function TopBar({ fps, modelStatus }) {
 }
 
 function ModelBadge({ name, status, detail }) {
-  const dot = status==='ok' ? 'bg-emerald-400' : status==='warn' ? 'bg-amber-400' : 'bg-rose-500';
+  const dot = status==='ok' ? 'bg-emerald-400' : status==='degraded' ? 'bg-amber-400' : 'bg-rose-500';
   return (
     <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-zinc-800 bg-zinc-900/60">
       <span className={`w-1.5 h-1.5 rounded-full ${dot}`}></span>
@@ -242,15 +216,73 @@ function ModelBadge({ name, status, detail }) {
   );
 }
 
-// ---------- left: capture viewer ----------
-function CaptureViewer({ detections, frame, hovered, onHover, onClick, paused, onTogglePause }) {
+// ── config panel (gear button) ───────────────────────────────────────────────
+function ConfigPanel({ token, onToken, onClose, wsConn }) {
+  const [draft, setDraft] = useState(token);
+  const connLabel = wsConn === 'connected' ? 'connected' : wsConn === 'reconnecting' ? 'reconnecting…' : 'not connected';
+  const connDot   = wsConn === 'connected' ? 'bg-emerald-400' : wsConn === 'reconnecting' ? 'bg-amber-400' : 'bg-rose-500';
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="card w-80 p-4 space-y-3" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-semibold">Connection Config</span>
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300">{I.x}</button>
+        </div>
+        <div>
+          <div className="mono text-[10px] text-zinc-500 mb-1 uppercase">Server URL</div>
+          <div className="mono text-[12px] text-zinc-400 px-2 py-1.5 rounded border border-zinc-800 bg-zinc-950">{API}</div>
+        </div>
+        <div>
+          <div className="mono text-[10px] text-zinc-500 mb-1 uppercase">Session Token</div>
+          <input
+            type="text"
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && (onToken(draft.trim()), onClose())}
+            placeholder="paste token from server terminal"
+            className="w-full mono text-[12px] px-2 py-1.5 rounded border border-zinc-700 bg-zinc-950 text-zinc-200 outline-none"
+          />
+          <div className="mono text-[10px] text-zinc-600 mt-1">Printed at startup: python run_server.py</div>
+        </div>
+        <button
+          onClick={() => { onToken(draft.trim()); onClose(); }}
+          className="w-full py-2 rounded text-[12px] font-medium"
+          style={{background:'oklch(0.78 0.16 145 / 0.18)', color:'oklch(0.85 0.16 145)', border:'1px solid oklch(0.78 0.16 145 / 0.4)'}}>
+          Connect
+        </button>
+        <div className="flex items-center gap-2 justify-center">
+          <span className={`w-1.5 h-1.5 rounded-full ${connDot}`}></span>
+          <span className="mono text-[10px] text-zinc-500">{connLabel}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── live capture (replaces MockScreen) ──────────────────────────────────────
+function LiveCapture({ frameUrl }) {
+  if (!frameUrl) {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center bg-zinc-950">
+        <div className="text-center space-y-1">
+          <div className="mono text-[11px] text-zinc-500">no capture stream</div>
+          <div className="mono text-[10px] text-zinc-600">attach a window to start · gear → token</div>
+        </div>
+      </div>
+    );
+  }
+  return <img src={frameUrl} className="absolute inset-0 w-full h-full object-contain" alt="" draggable="false" />;
+}
+
+// ── capture viewer ────────────────────────────────────────────────────────────
+function CaptureViewer({ detections, frameUrl, frameCount, activeHwnd, hovered, onHover, onClick, paused, onTogglePause }) {
   return (
     <div className="card flex flex-col h-full">
       <div className="card-header">
         <div className="flex items-center gap-2">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 live-dot"></span>
+          <span className={`w-1.5 h-1.5 rounded-full ${frameUrl ? 'bg-emerald-400 live-dot' : 'bg-zinc-600'}`}></span>
           <span>Window Capture</span>
-          <span className="mono normal-case tracking-normal text-[10px] text-zinc-500">· hwnd 0x000A4F12</span>
+          <span className="mono normal-case tracking-normal text-[10px] text-zinc-500">· {activeHwnd || 'no window attached'}</span>
         </div>
         <div className="flex items-center gap-1">
           <button onClick={onTogglePause}
@@ -258,34 +290,27 @@ function CaptureViewer({ detections, frame, hovered, onHover, onClick, paused, o
             {paused ? I.play : I.pause}
             {paused ? 'RESUME' : 'PAUSE'}
           </button>
-          <button className="mono text-[10px] px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300">
-            FIT
-          </button>
+          <button className="mono text-[10px] px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300">FIT</button>
         </div>
       </div>
-
-      {/* viewer */}
       <div className="relative flex-1 m-2 rounded-md overflow-hidden bg-black scanlines border border-zinc-800">
-        <MockScreen frame={frame} />
+        <LiveCapture frameUrl={frameUrl} />
         <DetectionLayer detections={detections} hovered={hovered} onHover={onHover} onClick={onClick} />
-        {/* HUD corners */}
         <Reticle />
         <div className="absolute top-2 left-2 mono text-[10px] text-emerald-400/80 flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 live-dot"></span>
-          REC · 1920×1080 · BGRA
+          <span className={`w-1.5 h-1.5 rounded-full ${frameUrl ? 'bg-emerald-400 live-dot' : 'bg-zinc-600'}`}></span>
+          {frameUrl ? 'LIVE · JPEG · WS' : 'STANDBY'}
         </div>
         <div className="absolute top-2 right-2 mono text-[10px] text-zinc-300/80">
-          frame #{frame.toString().padStart(5,'0')}
+          frame #{String(frameCount).padStart(5,'0')}
         </div>
         <div className="absolute bottom-2 left-2 mono text-[10px] text-zinc-400">
-          {detections.length} detections · YOLOv8m · conf≥0.55
+          {detections.length} detections · win32+vl · conf≥0.70
         </div>
         <div className="absolute bottom-2 right-2 mono text-[10px] text-zinc-400">
           tap a box →
         </div>
       </div>
-
-      {/* legend */}
       <div className="px-3 pb-3 pt-1 flex items-center gap-3 flex-wrap">
         {Object.entries(clsStyle).map(([k,v]) => (
           <div key={k} className="flex items-center gap-1.5">
@@ -294,7 +319,7 @@ function CaptureViewer({ detections, frame, hovered, onHover, onClick, paused, o
           </div>
         ))}
         <div className="flex-1" />
-        <span className="mono text-[10px] text-zinc-500">DXGI · DPI 100% · monitor 1</span>
+        <span className="mono text-[10px] text-zinc-500">PrintWindow · ImageGrab fallback</span>
       </div>
     </div>
   );
@@ -315,52 +340,11 @@ function Reticle() {
   );
 }
 
-function MockScreen({ frame }) {
-  // a simulated "login screen" rendered as DOM so the bounding boxes line up with something convincing
-  const flicker = (frame % 60) / 60;
-  return (
-    <div className="absolute inset-0">
-      {/* fake desktop chrome */}
-      <div className="absolute inset-0" style={{background:'linear-gradient(180deg, #1c1f24 0%, #0f1115 100%)'}} />
-      <div className="absolute top-0 left-0 right-0 h-6 bg-zinc-900/80 border-b border-zinc-800 flex items-center px-2 gap-1.5">
-        <div className="flex gap-1">
-          <span className="w-2 h-2 rounded-full bg-rose-500/80"></span>
-          <span className="w-2 h-2 rounded-full bg-amber-400/80"></span>
-          <span className="w-2 h-2 rounded-full bg-emerald-500/80"></span>
-        </div>
-        <div className="ml-2 mono text-[9px] text-zinc-500 truncate">Login — Acme Corp Portal</div>
-      </div>
-      {/* card */}
-      <div className="absolute" style={{left:'18%', top:'14%', right:'18%', bottom:'14%', background:'#fafafa', borderRadius:8, boxShadow:'0 30px 60px rgba(0,0,0,0.6)'}}>
-        <div className="absolute left-0 right-0 flex justify-center" style={{top:'8%'}}>
-          <div className="w-16 h-7 rounded-sm" style={{background:'linear-gradient(135deg,#3b82f6,#8b5cf6)'}}>
-            <div className="text-white text-[11px] font-bold flex items-center justify-center h-full mono tracking-wider">ACME</div>
-          </div>
-        </div>
-        <div className="absolute text-zinc-800 font-semibold text-center left-0 right-0" style={{top:'18%', fontSize:14}}>Welcome back</div>
-        <div className="absolute text-zinc-500 text-center left-0 right-0 mono" style={{top:'25%', fontSize:9}}>Sign in to continue</div>
-        <div className="absolute" style={{left:'10%', right:'10%', top:'37%'}}>
-          <div className="text-[8px] text-zinc-500 mono mb-0.5">EMAIL</div>
-          <div className="h-5 bg-white border border-zinc-300 rounded-sm px-1.5 text-[10px] text-zinc-700 flex items-center">test@example.com<span className="ml-0.5 w-px h-3 bg-zinc-700" style={{opacity: flicker>0.5?1:0}}></span></div>
-        </div>
-        <div className="absolute" style={{left:'10%', right:'10%', top:'48%'}}>
-          <div className="text-[8px] text-zinc-500 mono mb-0.5">PASSWORD</div>
-          <div className="h-5 bg-white border border-zinc-300 rounded-sm px-1.5 text-[10px] text-zinc-700 flex items-center">••••••••</div>
-        </div>
-        <div className="absolute flex" style={{left:'10%', right:'10%', top:'63%'}}>
-          <div className="rounded-sm text-white font-medium text-[10px] flex items-center justify-center" style={{background:'#2563eb', width:'100%', height:18}}>Submit</div>
-        </div>
-        <div className="absolute mono text-[8px] text-blue-700 underline" style={{left:'10%', top:'76%'}}>Forgot password?</div>
-      </div>
-    </div>
-  );
-}
-
 function DetectionLayer({ detections, hovered, onHover, onClick }) {
   return (
     <div className="absolute inset-0">
       {detections.map(d => {
-        const s = clsStyle[d.cls];
+        const s = clsStyle[d.cls] || clsStyle.label;
         const isHovered = hovered === d.id;
         return (
           <button
@@ -388,8 +372,8 @@ function DetectionLayer({ detections, hovered, onHover, onClick }) {
   );
 }
 
-// ---------- center: AI understanding ----------
-function AIUnderstanding({ text, tokens, ms }) {
+// ── AI understanding ─────────────────────────────────────────────────────────
+function AIUnderstanding({ text, tokens, ms, tags }) {
   return (
     <div className="card">
       <div className="card-header">
@@ -398,25 +382,27 @@ function AIUnderstanding({ text, tokens, ms }) {
           <span>AI Understanding</span>
         </div>
         <div className="flex items-center gap-2 mono text-[10px] text-zinc-500 normal-case tracking-normal">
-          <span>llava:13b</span>·<span>{tokens} tok</span>·<span>{ms}ms</span>
+          <span>llava:7b</span>·<span>{tokens||0} tok</span>·<span>{ms||0}ms</span>
         </div>
       </div>
       <div className="p-3">
         <div className="mono text-[10px] text-zinc-500 mb-1.5">▌ description</div>
         <p className="text-[13px] leading-relaxed text-zinc-200" style={{textWrap:'pretty'}}>
-          {text}
+          {text || <span className="text-zinc-500 italic">Click "Look" to describe the current window.</span>}
         </p>
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {['login_form','authentication','submit_action','low_density','english_lang'].map(t=>(
-            <span key={t} className="mono text-[10px] px-1.5 py-0.5 rounded border border-zinc-800 bg-zinc-950 text-zinc-400">{t}</span>
-          ))}
-        </div>
+        {tags && tags.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {tags.map(t=>(
+              <span key={t} className="mono text-[10px] px-1.5 py-0.5 rounded border border-zinc-800 bg-zinc-950 text-zinc-400">{t}</span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-// ---------- center: action queue ----------
+// ── action queue ─────────────────────────────────────────────────────────────
 function ActionQueue({ queue, onAction }) {
   return (
     <div className="card">
@@ -429,9 +415,7 @@ function ActionQueue({ queue, onAction }) {
         </div>
       </div>
       <div className="px-1 py-1 max-h-[180px] overflow-auto">
-        {queue.map((q, i) => (
-          <QueueRow key={q.id} q={q} idx={i} onAction={onAction} />
-        ))}
+        {queue.map((q, i) => <QueueRow key={q.id} q={q} idx={i} onAction={onAction} />)}
         {queue.length === 0 && (
           <div className="mono text-[11px] text-zinc-500 text-center py-6">queue empty</div>
         )}
@@ -442,9 +426,9 @@ function ActionQueue({ queue, onAction }) {
 
 function QueueRow({ q, idx, onAction }) {
   const stateColor = q.state==='running' ? 'text-emerald-400' : q.state==='pending' ? 'text-zinc-400' : 'text-rose-400';
-  const stateBg = q.state==='running' ? 'bg-emerald-500/10 border-emerald-500/30'
-                : q.state==='pending' ? 'bg-zinc-900 border-zinc-800'
-                : 'bg-rose-500/10 border-rose-500/30';
+  const stateBg    = q.state==='running' ? 'bg-emerald-500/10 border-emerald-500/30'
+                   : q.state==='pending' ? 'bg-zinc-900 border-zinc-800'
+                   : 'bg-rose-500/10 border-rose-500/30';
   const kindIcon = q.kind==='click' ? I.mouse : q.kind==='type' ? I.keyboard : I.arrowRight;
   return (
     <div className={`flex items-center gap-2 mx-1 my-0.5 px-2 py-1.5 rounded border ${stateBg}`}>
@@ -461,8 +445,8 @@ function QueueRow({ q, idx, onAction }) {
   );
 }
 
-// ---------- center: macro recorder ----------
-function MacroRecorder({ recording, onToggle, onReplay, macros, elapsed }) {
+// ── macro recorder ───────────────────────────────────────────────────────────
+function MacroRecorder({ recording, onToggle, onReplay, onExport, macros, elapsed }) {
   return (
     <div className="card flex flex-col">
       <div className="card-header">
@@ -480,7 +464,7 @@ function MacroRecorder({ recording, onToggle, onReplay, macros, elapsed }) {
             {recording ? 'STOP' : 'RECORD'}
           </button>
           <button onClick={onReplay} className="mono text-[10px] px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 flex items-center gap-1">{I.play} REPLAY</button>
-          <button className="mono text-[10px] px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 flex items-center gap-1">{I.copy} EXPORT</button>
+          <button onClick={onExport} className="mono text-[10px] px-2 py-1 rounded border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 flex items-center gap-1">{I.copy} EXPORT</button>
         </div>
       </div>
       <div className="px-1 py-1 flex-1 overflow-auto" style={{minHeight:120, maxHeight:200}}>
@@ -512,7 +496,7 @@ function MacroRecorder({ recording, onToggle, onReplay, macros, elapsed }) {
   );
 }
 
-// ---------- right: target windows ----------
+// ── target windows ────────────────────────────────────────────────────────────
 function TargetWindows({ windows, onSelect, onRefresh }) {
   return (
     <div className="card">
@@ -540,12 +524,15 @@ function TargetWindows({ windows, onSelect, onRefresh }) {
             </div>
           </div>
         ))}
+        {windows.length === 0 && (
+          <div className="mono text-[11px] text-zinc-500 text-center py-6">no windows · click RESCAN</div>
+        )}
       </div>
     </div>
   );
 }
 
-// ---------- right: action log ----------
+// ── action log ───────────────────────────────────────────────────────────────
 function ActionLog({ log, onClear }) {
   const ref = useRef(null);
   useEffect(() => { if (ref.current) ref.current.scrollTop = 0; }, [log.length]);
@@ -575,26 +562,27 @@ function ActionLog({ log, onClear }) {
   );
 }
 
-// ---------- right: connection status ----------
-function ConnectionStatus({ status }) {
+// ── connection status ─────────────────────────────────────────────────────────
+function ConnectionStatus({ status, wsConn }) {
   const services = [
-    { key:'sdk',    name:'SelfConnect SDK',  detail:'127.0.0.1:7421',           icon:I.cpu },
-    { key:'yolo',   name:'YOLO Model',        detail:'yolov8m-ui.pt · CUDA 12.4', icon:I.target },
-    { key:'vl',     name:'VL Model (Ollama)', detail:'llava:13b · localhost:11434', icon:I.eye },
-    { key:'claude', name:'Claude API',        detail:'claude-sonnet-4-5',         icon:I.brain },
+    { key:'sdk',   name:'SelfConnect SDK',   detail:'127.0.0.1:7421',            icon:I.cpu },
+    { key:'yolo',  name:'Detection',          detail:'win32 + llava structured',  icon:I.target },
+    { key:'vl',    name:'VL (Ollama)',         detail:'llava:7b · :11434',         icon:I.eye },
+    { key:'ws',    name:'Event Stream',       detail:'ws://localhost:7421/ws',    icon:I.zap },
   ];
+  const statusMap = { ...status, ws: wsConn === 'connected' ? 'ok' : wsConn === 'reconnecting' ? 'degraded' : 'down' };
   return (
     <div className="card">
       <div className="card-header">
         <div className="flex items-center gap-2"><span style={{color:'var(--acc)'}}>{I.cpu}</span><span>Connections</span></div>
-        <span className="mono normal-case tracking-normal text-[10px] text-zinc-500">heartbeat 2s</span>
+        <span className="mono normal-case tracking-normal text-[10px] text-zinc-500">heartbeat 5s</span>
       </div>
       <div className="p-2 space-y-1">
         {services.map(s => {
-          const st = status[s.key];
-          const dot = st==='ok'?'bg-emerald-400':st==='warn'?'bg-amber-400':'bg-rose-500';
-          const label = st==='ok'?'connected':st==='warn'?'degraded':'disconnected';
-          const labelColor = st==='ok'?'text-emerald-400':st==='warn'?'text-amber-400':'text-rose-400';
+          const st = statusMap[s.key] || 'down';
+          const dot        = st==='ok'?'bg-emerald-400':st==='degraded'?'bg-amber-400':'bg-rose-500';
+          const label      = st==='ok'?'connected':st==='degraded'?'degraded':'disconnected';
+          const labelColor = st==='ok'?'text-emerald-400':st==='degraded'?'text-amber-400':'text-rose-400';
           return (
             <div key={s.key} className="flex items-center gap-2 px-2 py-1.5 rounded border border-zinc-800 bg-zinc-950/40">
               <div className="text-zinc-500">{s.icon}</div>
@@ -614,16 +602,16 @@ function ConnectionStatus({ status }) {
   );
 }
 
-// ---------- bottom bar ----------
+// ── bottom bar ────────────────────────────────────────────────────────────────
 function BottomBar({ onQuick, onSubmit }) {
   const [val, setVal] = useState('');
   const submit = () => { if (val.trim()) { onSubmit(val.trim()); setVal(''); } };
   const quicks = [
-    { k:'look',     label:'Look',              icon:I.eye },
-    { k:'find',     label:'Find Element',      icon:I.search },
-    { k:'click',    label:'Click At',          icon:I.mouse },
-    { k:'type',     label:'Type Text',         icon:I.keyboard },
-    { k:'capture',  label:'Capture Screenshot',icon:I.camera },
+    { k:'look',    label:'Look',               icon:I.eye },
+    { k:'find',    label:'Find Element',       icon:I.search },
+    { k:'click',   label:'Click At',           icon:I.mouse },
+    { k:'type',    label:'Type Text',          icon:I.keyboard },
+    { k:'capture', label:'Capture Screenshot', icon:I.camera },
   ];
   return (
     <div className="h-14 shrink-0 flex items-center gap-3 px-3 border-t border-zinc-800 bg-zinc-950/80 backdrop-blur">
@@ -636,7 +624,6 @@ function BottomBar({ onQuick, onSubmit }) {
           </button>
         ))}
       </div>
-
       <div className="flex-1 flex items-center gap-2 pl-2">
         <div className="flex-1 flex items-center gap-2 px-3 h-9 rounded-md border bg-zinc-900"
              style={{borderColor:'oklch(0.78 0.16 145 / 0.35)'}}>
@@ -645,10 +632,10 @@ function BottomBar({ onQuick, onSubmit }) {
             value={val}
             onChange={e=>setVal(e.target.value)}
             onKeyDown={e=>e.key==='Enter' && submit()}
-            placeholder='click the Submit button   |   fill in the email field with test@example.com'
+            placeholder='click the Submit button   |   type "hello world" in the email field'
             className="flex-1 bg-transparent outline-none text-[13px] text-zinc-200 placeholder:text-zinc-600"
           />
-          <span className="mono text-[10px] text-zinc-500">⌘ + ↵</span>
+          <span className="mono text-[10px] text-zinc-500">↵</span>
         </div>
         <button onClick={submit}
                 className="h-9 px-3 rounded-md flex items-center gap-1.5 text-[12px] font-medium"
@@ -660,184 +647,297 @@ function BottomBar({ onQuick, onSubmit }) {
   );
 }
 
-// ---------- helper: format time ----------
+// ── helpers ───────────────────────────────────────────────────────────────────
 function nowStamp() {
   const d = new Date();
-  const hh = String(d.getHours()).padStart(2,'0');
-  const mm = String(d.getMinutes()).padStart(2,'0');
-  const ss = String(d.getSeconds()).padStart(2,'0');
-  const ms = String(d.getMilliseconds()).padStart(3,'0');
-  return `${hh}:${mm}:${ss}.${ms}`;
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}.${String(d.getMilliseconds()).padStart(3,'0')}`;
 }
 
-// ---------- app ----------
+// ── app ────────────────────────────────────────────────────────────────────────
 function App() {
+  // connection
+  const [token, setToken]         = useState(() => localStorage.getItem('sc_token') || '');
+  const [showConfig, setShowConfig] = useState(() => !localStorage.getItem('sc_token'));
+  const [wsConn, setWsConn]       = useState('disconnected');
+  const wsCapRef  = useRef(null);
+  const wsEvtRef  = useRef(null);
+  const capDead   = useRef(false);
+  const evtDead   = useRef(false);
+
   // capture
-  const [paused, setPaused] = useState(false);
-  const [frame, setFrame] = useState(4823);
-  const [fps, setFps] = useState(58.2);
-  const [hovered, setHovered] = useState(null);
+  const [frameUrl, setFrameUrl]     = useState(null);
+  const [frameCount, setFrameCount] = useState(0);
+  const [fps, setFps]               = useState(0);
+  const [paused, setPaused]         = useState(false);
+  const pausedRef     = useRef(false);
+  const lastFrameMs   = useRef(0);
+  const fpsAccum      = useRef([]);
+  const [hovered, setHovered]       = useState(null);
+  const [activeHwnd, setActiveHwnd] = useState('');
 
-  // detections (jitter slightly to simulate live updates)
-  const [detections, setDetections] = useState(initialDetections);
-
-  // queue + log
-  const [queue, setQueue] = useState(initialQueue);
-  const [log, setLog] = useState(initialLog);
-
-  // windows
-  const [windows, setWindows] = useState(initialWindows);
+  // live data
+  const [detections, setDetections] = useState([]);
+  const [windows, setWindows]       = useState([]);
+  const [queue, setQueue]           = useState([]);
+  const [log, setLog]               = useState([]);
+  const [vl, setVL]                 = useState({ text:'', tags:[], tokens:0, ms:0 });
+  const [health, setHealth]         = useState({ sdk:'down', yolo:'down', vl:'down' });
 
   // macro
-  const [recording, setRecording] = useState(false);
-  const [macros, setMacros] = useState(initialMacros);
-  const [recStart, setRecStart] = useState(null);
+  const [recording, setRecording]   = useState(false);
+  const [macros, setMacros]         = useState([]);
+  const [recStart, setRecStart]     = useState(null);
   const [recElapsed, setRecElapsed] = useState('00:00.00');
-
-  // models
-  const [modelStatus] = useState({ yolo:'ok', vl:'ok', claude:'ok' });
-  const [connStatus] = useState({ sdk:'ok', yolo:'ok', vl:'ok', claude:'warn' });
-
-  // VL description state
-  const [vlText] = useState('I see a centered authentication card on a dark desktop. The card contains the Acme logo, a header reading "Welcome back," followed by two text inputs labeled EMAIL (currently containing "test@example.com") and PASSWORD (masked). Below them is a primary blue Submit button and a small "Forgot password?" link aligned to the bottom-left of the form.');
 
   const pushLog = useCallback((entry) => {
     setLog(l => [{ t: nowStamp(), ...entry }, ...l].slice(0, 200));
   }, []);
 
-  // simulate frame ticker
-  useEffect(() => {
-    if (paused) return;
-    const id = setInterval(() => {
-      setFrame(f => f + 1);
-      setFps(prev => Math.max(45, Math.min(62, prev + (Math.random()-0.5)*2)));
-      // small jitter on detections
-      setDetections(prev => prev.map(d => ({
-        ...d,
-        x: Math.max(0, Math.min(0.9, d.x + (Math.random()-0.5)*0.0015)),
-        y: Math.max(0, Math.min(0.9, d.y + (Math.random()-0.5)*0.0015)),
-        conf: Math.max(0.55, Math.min(0.99, d.conf + (Math.random()-0.5)*0.01)),
-      })));
-    }, 1000/30);
-    return () => clearInterval(id);
-  }, [paused]);
+  const applyToken = useCallback((t) => {
+    setToken(t);
+    localStorage.setItem('sc_token', t);
+  }, []);
 
-  // queue progression simulation
+  // keep pausedRef in sync so WS onmessage can read it without stale closure
+  useEffect(() => { pausedRef.current = paused; }, [paused]);
+
+  // ── WS capture ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    const id = setInterval(() => {
-      setQueue(q => {
-        if (!q.length) return q;
-        const idx = q.findIndex(x => x.state === 'running');
-        if (idx === -1) return q;
-        // move forward sometimes
-        if (Math.random() < 0.35) {
-          const next = q.slice(1);
-          if (next.length && next[0].state === 'pending') next[0] = { ...next[0], state:'running' };
-          pushLog({ kind: q[idx].kind, status:'ok',
-                    msg:`${q[idx].kind.toUpperCase()} ${q[idx].target}${q[idx].value?` "${q[idx].value}"`:''} → ok` });
-          return next;
+    if (!token) return;
+    capDead.current = false;
+    function connect() {
+      if (capDead.current) return;
+      const ws = new WebSocket('ws://localhost:7421/ws/capture');
+      ws.binaryType = 'arraybuffer';
+      wsCapRef.current = ws;
+      ws.onopen  = () => pushLog({ kind:'ws', status:'ok', msg:'Capture stream connected' });
+      ws.onmessage = (e) => {
+        if (pausedRef.current) return;
+        const blob = new Blob([e.data], { type: 'image/jpeg' });
+        const url  = URL.createObjectURL(blob);
+        setFrameUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url; });
+        setFrameCount(n => n + 1);
+        const now = Date.now();
+        if (lastFrameMs.current) {
+          fpsAccum.current.push(1000 / (now - lastFrameMs.current));
+          if (fpsAccum.current.length >= 8) {
+            setFps(fpsAccum.current.reduce((a,b)=>a+b,0) / fpsAccum.current.length);
+            fpsAccum.current = [];
+          }
         }
-        return q;
-      });
-    }, 2200);
-    return () => clearInterval(id);
-  }, [pushLog]);
+        lastFrameMs.current = now;
+      };
+      ws.onclose = () => { if (!capDead.current) setTimeout(connect, 2000); };
+      ws.onerror = () => ws.close();
+    }
+    connect();
+    return () => { capDead.current = true; wsCapRef.current?.close(); };
+  }, [token, pushLog]);
 
-  // recording timer
+  // ── WS events ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!token) return;
+    evtDead.current = false;
+    let delay = 1000;
+    function connect() {
+      if (evtDead.current) return;
+      setWsConn('reconnecting');
+      const ws = new WebSocket('ws://localhost:7421/ws/events');
+      wsEvtRef.current = ws;
+      ws.onopen = () => {
+        setWsConn('connected');
+        delay = 1000;
+        pushLog({ kind:'ws', status:'ok', msg:'Events bus connected' });
+        apiGet('/api/windows', token).then(d => setWindows(d)).catch(() => {});
+      };
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          switch (msg.channel) {
+            case 'detections': setDetections(msg.data || []); break;
+            case 'log':        pushLog(msg.data); break;
+            case 'queue':      setQueue(msg.data || []); break;
+            case 'health':     setHealth(msg.data || {}); break;
+            case 'windows':    setWindows(msg.data || []); break;
+            case 'vl':         setVL(msg.data || {}); break;
+          }
+        } catch (_) {}
+      };
+      ws.onclose = () => {
+        if (evtDead.current) return;
+        setWsConn('disconnected');
+        delay = Math.min(delay * 2, 30000);
+        setTimeout(connect, delay);
+      };
+      ws.onerror = () => ws.close();
+    }
+    connect();
+    return () => { evtDead.current = true; wsEvtRef.current?.close(); };
+  }, [token, pushLog]);
+
+  // ── recording timer ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!recording || !recStart) return;
     const id = setInterval(() => {
       const ms = Date.now() - recStart;
-      const s = Math.floor(ms/1000);
-      const cs = Math.floor((ms % 1000)/10);
+      const s  = Math.floor(ms / 1000);
+      const cs = Math.floor((ms % 1000) / 10);
       setRecElapsed(`${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}.${String(cs).padStart(2,'0')}`);
     }, 50);
     return () => clearInterval(id);
   }, [recording, recStart]);
 
-  // handlers
+  // ── handlers ────────────────────────────────────────────────────────────────
   const onDetectionClick = (d) => {
-    pushLog({ kind:'select', status:'ok', msg:`Selected ${clsStyle[d.cls].name} "${d.label}" (conf ${(d.conf*100).toFixed(0)}%) bbox ${(d.x*1920|0)},${(d.y*1080|0)} ${Math.round(d.w*1920)}×${Math.round(d.h*1080)}` });
-    if (recording) {
-      setMacros(m => [...m, { t:`+${((Date.now()-recStart)/1000).toFixed(3)}s`, action:'inspect', target:`${clsStyle[d.cls].name}#${d.label}`, value:`(${(d.x*1920|0)},${(d.y*1080|0)})` }]);
+    const style = clsStyle[d.cls] || clsStyle.label;
+    pushLog({ kind:'select', status:'ok', msg:`${style.name} "${d.label}" conf ${(d.conf*100).toFixed(0)}%` });
+  };
+
+  const onSelectWindow = async (hwnd) => {
+    try {
+      await apiPost(`/api/windows/${hwnd}/attach`, token, null);
+      setWindows(ws => ws.map(w => ({ ...w, active: w.hwnd === hwnd })));
+      setActiveHwnd(hwnd);
+      pushLog({ kind:'attach', status:'ok', msg:`Attached to ${hwnd}` });
+    } catch (e) {
+      pushLog({ kind:'attach', status:'fail', msg:`Attach failed: ${e.message}` });
     }
   };
 
-  const onQueueAction = (action, id) => {
-    if (action === 'play')  pushLog({ kind:'queue', status:'ok',   msg:'Queue resumed' });
-    if (action === 'pause') pushLog({ kind:'queue', status:'pending', msg:'Queue paused' });
-    if (action === 'clear'){ setQueue([]); pushLog({ kind:'queue', status:'ok', msg:'Queue cleared' }); }
-    if (action === 'cancel'){
+  const onRefreshWindows = async () => {
+    try {
+      const data = await apiGet('/api/windows', token);
+      setWindows(data);
+      pushLog({ kind:'enum', status:'ok', msg:`Found ${data.length} windows` });
+    } catch (e) {
+      pushLog({ kind:'enum', status:'fail', msg:`Scan failed — check token (${e.message})` });
+    }
+  };
+
+  const onQueueAction = async (action, id) => {
+    if (action === 'play') {
+      try {
+        await apiPost('/api/actions/run', token, null);
+        pushLog({ kind:'queue', status:'ok', msg:'Queue executing' });
+      } catch (e) {
+        pushLog({ kind:'queue', status:'fail', msg:`Run failed: ${e.message}` });
+      }
+    } else if (action === 'pause') {
+      pushLog({ kind:'queue', status:'pending', msg:'Pause not yet implemented server-side' });
+    } else if (action === 'clear') {
+      setQueue([]);
+      pushLog({ kind:'queue', status:'ok', msg:'Queue cleared' });
+    } else if (action === 'cancel') {
       setQueue(q => q.filter(x => x.id !== id));
-      pushLog({ kind:'cancel', status:'fail', msg:`Cancelled action ${id}` });
     }
   };
 
-  const onSelectWindow = (hwnd) => {
-    setWindows(ws => ws.map(w => ({ ...w, active: w.hwnd === hwnd })));
-    pushLog({ kind:'attach', status:'ok', msg:`Attached to window ${hwnd}` });
-  };
-
-  const onRefreshWindows = () => pushLog({ kind:'enum', status:'ok', msg:`Window enumeration: ${initialWindows.length} top-level windows` });
-
-  const toggleRecord = () => {
+  const toggleRecord = async () => {
     if (!recording) {
-      setRecording(true);
-      setMacros([]);
-      setRecStart(Date.now());
-      pushLog({ kind:'macro', status:'ok', msg:'Macro recording started' });
+      try {
+        await apiPost('/api/macros/start', token, null);
+        setRecording(true);
+        setMacros([]);
+        setRecStart(Date.now());
+        pushLog({ kind:'macro', status:'ok', msg:'Recording started' });
+      } catch (e) {
+        pushLog({ kind:'macro', status:'fail', msg:`Start failed: ${e.message}` });
+      }
     } else {
-      setRecording(false);
-      pushLog({ kind:'macro', status:'ok', msg:`Macro recording stopped · ${macros.length} events captured` });
+      try {
+        const data = await apiPost('/api/macros/stop', token, null);
+        setRecording(false);
+        setMacros(data.steps || []);
+        pushLog({ kind:'macro', status:'ok', msg:`Stopped · ${(data.steps||[]).length} steps` });
+      } catch (e) {
+        setRecording(false);
+        pushLog({ kind:'macro', status:'fail', msg:`Stop failed: ${e.message}` });
+      }
     }
   };
-  const replayMacro = () => pushLog({ kind:'macro', status:'pending', msg:`Replaying macro · ${macros.length} events` });
 
-  const onQuick = (k) => {
-    const labels = { look:'LOOK invoked', find:'FIND_ELEMENT prompt opened', click:'CLICK_AT awaiting coords', type:'TYPE_TEXT awaiting payload', capture:'Screenshot captured' };
-    pushLog({ kind:k, status: k==='capture' ? 'ok' : 'pending', msg: labels[k] });
+  const replayMacro = async () => {
+    try {
+      await apiPost('/api/macros/replay', token, null);
+      pushLog({ kind:'macro', status:'ok', msg:`Replaying ${macros.length} steps` });
+    } catch (e) {
+      pushLog({ kind:'macro', status:'fail', msg:`Replay failed: ${e.message}` });
+    }
   };
-  const onCommand = (text) => {
-    pushLog({ kind:'nl', status:'pending', msg:`NL → "${text}" · planning…` });
-    setQueue(q => [...q, { id:`q${Date.now()}`, kind:'click', target:'(planned)', value:text, state:'pending' }]);
+
+  const exportMacro = async () => {
+    try {
+      const data = await apiPost('/api/macros/export', token, null);
+      pushLog({ kind:'macro', status:'ok', msg:`Exported: ${data.path}` });
+    } catch (e) {
+      pushLog({ kind:'macro', status:'fail', msg:`Export failed: ${e.message}` });
+    }
   };
+
+  const onQuick = async (k) => {
+    if (k === 'look') {
+      pushLog({ kind:'vl', status:'pending', msg:'Requesting VL description…' });
+      try {
+        const data = await apiPost('/api/vl/describe', token, null);
+        setVL(data);
+        pushLog({ kind:'vl', status:'ok', msg:`${data.tokens} tokens · ${data.ms}ms` });
+      } catch (e) {
+        pushLog({ kind:'vl', status:'fail', msg:`VL failed: ${e.message}` });
+      }
+      return;
+    }
+    const labels = { find:'Describe the element you want to find below', click:'Type target coords or element name below', type:'Type your text below and press EXECUTE', capture:'Capture triggered via server' };
+    pushLog({ kind:k, status:'pending', msg: labels[k] || k });
+  };
+
+  const onCommand = async (text) => {
+    pushLog({ kind:'nl', status:'pending', msg:`Queuing: "${text}"` });
+    try {
+      const data = await apiPost('/api/actions', token, { command: text });
+      if (data.items) setQueue(data.items);
+      pushLog({ kind:'nl', status:'ok', msg:`Queued ${(data.items||[]).length} action(s)` });
+    } catch (e) {
+      pushLog({ kind:'nl', status:'fail', msg:`Failed: ${e.message}` });
+    }
+  };
+
+  const modelStatus = { yolo: health.yolo || 'down', vl: health.vl || 'down', sdk: health.sdk || 'down' };
 
   return (
     <div className="h-full w-full flex flex-col">
-      <TopBar fps={fps} modelStatus={modelStatus} />
+      {showConfig && (
+        <ConfigPanel token={token} onToken={applyToken} onClose={() => setShowConfig(false)} wsConn={wsConn} />
+      )}
+      <TopBar fps={fps} modelStatus={modelStatus} wsConn={wsConn} onConfig={() => setShowConfig(true)} />
 
       <div className="flex-1 min-h-0 grid gap-3 p-3 grid-bg" style={{gridTemplateColumns:'40fr 35fr 25fr'}}>
         {/* LEFT */}
         <div className="min-h-0 flex flex-col gap-3">
           <CaptureViewer
             detections={detections}
-            frame={frame}
+            frameUrl={frameUrl}
+            frameCount={frameCount}
+            activeHwnd={activeHwnd}
             hovered={hovered}
             onHover={setHovered}
             onClick={onDetectionClick}
             paused={paused}
-            onTogglePause={()=>setPaused(p=>!p)}
+            onTogglePause={() => setPaused(p => !p)}
           />
         </div>
 
         {/* CENTER */}
         <div className="min-h-0 flex flex-col gap-3 overflow-auto">
-          <AIUnderstanding text={vlText} tokens={132} ms={284} />
+          <AIUnderstanding text={vl.text} tokens={vl.tokens} ms={vl.ms} tags={vl.tags} />
           <ActionQueue queue={queue} onAction={onQueueAction} />
-          <MacroRecorder
-            recording={recording}
-            onToggle={toggleRecord}
-            onReplay={replayMacro}
-            macros={macros}
-            elapsed={recElapsed}
-          />
+          <MacroRecorder recording={recording} onToggle={toggleRecord} onReplay={replayMacro} onExport={exportMacro} macros={macros} elapsed={recElapsed} />
         </div>
 
         {/* RIGHT */}
         <div className="min-h-0 flex flex-col gap-3">
           <TargetWindows windows={windows} onSelect={onSelectWindow} onRefresh={onRefreshWindows} />
-          <ActionLog log={log} onClear={()=>setLog([])} />
-          <ConnectionStatus status={connStatus} />
+          <ActionLog log={log} onClear={() => setLog([])} />
+          <ConnectionStatus status={health} wsConn={wsConn} />
         </div>
       </div>
 
