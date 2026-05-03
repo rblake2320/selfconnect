@@ -42,3 +42,5 @@ import os
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SDK_PATH = BASE_DIR
 YOLO_MODEL_PATH = os.environ.get("SC_YOLO_MODEL", os.path.join(BASE_DIR, "models", "ui_yolo.pt"))
+LOG_DIR = os.environ.get("SC_LOG_DIR", os.path.join(BASE_DIR, "logs"))
+ERROR_LOG_PATH = os.environ.get("SC_ERROR_LOG", os.path.join(LOG_DIR, "vision_server_error.log"))

@@ -6,6 +6,7 @@ Port 7421 (matches dashboard default).
 import sys
 import os
 import logging
+from logging.handlers import RotatingFileHandler
 from contextlib import asynccontextmanager
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -17,7 +18,39 @@ from fastapi.responses import JSONResponse
 from vision_server import config
 from vision_server.routers import windows, capture, detections, vl, actions, macros, health, search, events
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(name)s: %(message)s")
+def _configure_logging() -> None:
+    """Configure console logging plus a durable rotating error log."""
+    os.makedirs(config.LOG_DIR, exist_ok=True)
+    formatter = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+
+    if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
+        console = logging.StreamHandler()
+        console.setLevel(logging.INFO)
+        console.setFormatter(formatter)
+        root.addHandler(console)
+
+    abs_error_log = os.path.abspath(config.ERROR_LOG_PATH)
+    if not any(
+        isinstance(h, RotatingFileHandler)
+        and os.path.abspath(getattr(h, "baseFilename", "")) == abs_error_log
+        for h in root.handlers
+    ):
+        file_handler = RotatingFileHandler(
+            abs_error_log,
+            maxBytes=1_000_000,
+            backupCount=5,
+            encoding="utf-8",
+        )
+        file_handler.setLevel(logging.ERROR)
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
+
+
+_configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -56,6 +89,8 @@ app.add_middleware(
         f"http://127.0.0.1:{config.PORT}",
         "http://localhost:5500",        # VS Code Live Server
         "http://127.0.0.1:5500",
+        "http://localhost:8080",        # python -m http.server
+        "http://127.0.0.1:8080",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -70,6 +105,8 @@ UNPROTECTED = {"/", "/api/health", "/docs", "/openapi.json", "/redoc"}
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     """Require Bearer token on all routes except health and docs."""
+    if request.method == "OPTIONS":
+        return await call_next(request)
     if request.url.path in UNPROTECTED or request.url.path.startswith("/ws"):
         return await call_next(request)
     auth = request.headers.get("Authorization", "")
@@ -79,6 +116,19 @@ async def auth_middleware(request: Request, call_next):
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
     return await call_next(request)
+
+
+@app.middleware("http")
+async def error_logging_middleware(request: Request, call_next):
+    """Log unhandled server exceptions to the durable error log."""
+    try:
+        return await call_next(request)
+    except Exception:
+        logger.exception("Unhandled request error: %s %s", request.method, request.url.path)
+        return JSONResponse(
+            {"detail": "Internal server error. See server error log."},
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
