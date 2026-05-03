@@ -23,7 +23,7 @@ active_hwnd: int = 0
 
 # Ollama
 OLLAMA_URL = "http://localhost:11434"
-OLLAMA_VL_MODEL = "llava:13b"
+OLLAMA_VL_MODEL = os.environ.get("SC_VL_MODEL", "llava:7b")
 OLLAMA_VL_TIMEOUT = 30     # seconds
 
 # Detection
