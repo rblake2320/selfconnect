@@ -24,7 +24,7 @@ active_hwnd: int = 0
 # Ollama
 OLLAMA_URL = "http://localhost:11434"
 OLLAMA_VL_MODEL = os.environ.get("SC_VL_MODEL", "llava:7b")
-OLLAMA_VL_TIMEOUT = 30     # seconds
+OLLAMA_VL_TIMEOUT = 300    # seconds (llava cold-start on first load can take 120-180s)
 
 # Detection
 DETECTION_WIN32_CONFIDENCE = 0.90  # Win32 controls are exact, high confidence
