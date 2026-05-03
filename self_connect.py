@@ -31,7 +31,7 @@ Run as a script to list all visible windows:
 """
 
 __version__ = "0.9.0"
-__all__ = [
+__all__ = [  # noqa: RUF022  # grouped by version/category, not alphabetical
     # Core types
     "WindowTarget", "WindowPool",
     # Window discovery
@@ -74,17 +74,18 @@ __all__ = [
     "Checkpoint", "write_checkpoint", "read_checkpoint", "MigrationCoordinator",
 ]
 
+import collections
 import ctypes
 import ctypes.wintypes as wintypes
-import time
-import os
-import json as _json
-import subprocess as _subprocess
-import collections
 import enum as _enum
 import hashlib as _hashlib
+import json as _json
+import os
+import subprocess as _subprocess
 import threading
-from dataclasses import dataclass, field, asdict
+import time
+import uuid as _uuid
+from dataclasses import asdict, dataclass, field
 from typing import Optional
 
 # ── Win32 constants ───────────────────────────────────────────────────────────
@@ -181,7 +182,7 @@ class KEYBDINPUT(ctypes.Structure):
     ]
 
 class _INPUT_UNION(ctypes.Union):
-    _fields_ = [("ki", KEYBDINPUT), ("_pad", ctypes.c_byte * 24)]
+    _fields_ = [("ki", KEYBDINPUT), ("_pad", ctypes.c_byte * 24)]  # noqa: RUF012
 
 class INPUT(ctypes.Structure):
     _fields_ = [("type", ctypes.c_ulong), ("u", _INPUT_UNION)]
@@ -530,8 +531,8 @@ def get_text_uia(hwnd: int) -> str:
     """
     # Strategy 1: pywinauto
     try:
-        from pywinauto import Desktop as _PwaDesktop  # type: ignore
         import pythoncom as _pcom  # type: ignore
+        from pywinauto import Desktop as _PwaDesktop  # type: ignore
         try:
             _pcom.CoInitializeEx(_pcom.COINIT_MULTITHREADED)
         except Exception:
@@ -712,8 +713,11 @@ def capture_window(hwnd: int):
         if user32.PrintWindow(hwnd, hdc_mem, PW_RENDERFULLCONTENT):
             bih = BITMAPINFOHEADER()
             bih.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-            bih.biWidth = w; bih.biHeight = -h
-            bih.biPlanes = 1; bih.biBitCount = 32; bih.biCompression = 0
+            bih.biWidth = w
+            bih.biHeight = -h
+            bih.biPlanes = 1
+            bih.biBitCount = 32
+            bih.biCompression = 0
             bih.biSizeImage = w * h * 4
             buf = ctypes.create_string_buffer(w * h * 4)
             if gdi32.GetDIBits(hdc_mem, hbmp, 0, h, buf, ctypes.byref(bih), 0):
@@ -726,8 +730,11 @@ def capture_window(hwnd: int):
             gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, rect.left, rect.top, SRCCOPY)
             bih2 = BITMAPINFOHEADER()
             bih2.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-            bih2.biWidth = w; bih2.biHeight = -h
-            bih2.biPlanes = 1; bih2.biBitCount = 32; bih2.biCompression = 0
+            bih2.biWidth = w
+            bih2.biHeight = -h
+            bih2.biPlanes = 1
+            bih2.biBitCount = 32
+            bih2.biCompression = 0
             bih2.biSizeImage = w * h * 4
             buf2 = ctypes.create_string_buffer(w * h * 4)
             if gdi32.GetDIBits(hdc_mem, hbmp, 0, h, buf2, ctypes.byref(bih2), 0):
@@ -743,17 +750,19 @@ def capture_window(hwnd: int):
 def crop_to_client(hwnd: int, img):
     """Crop a full-window image to just the client area (removes title bar, chrome)."""
     try:
-        from PIL import Image as _I
         cr = wintypes.RECT()
         user32.GetClientRect(hwnd, ctypes.byref(cr))
         pt = wintypes.POINT(0, 0)
         user32.ClientToScreen(hwnd, ctypes.byref(pt))
         wr = wintypes.RECT()
         user32.GetWindowRect(hwnd, ctypes.byref(wr))
-        ox = pt.x - wr.left; oy = pt.y - wr.top
+        ox = pt.x - wr.left
+        oy = pt.y - wr.top
         iw, ih = img.size
-        l = max(0, ox); t = max(0, oy)
-        r = min(iw, ox + cr.right); b = min(ih, oy + cr.bottom)
+        l = max(0, ox)
+        t = max(0, oy)
+        r = min(iw, ox + cr.right)
+        b = min(ih, oy + cr.bottom)
         return img.crop((l, t, r, b)) if r > l and b > t else img
     except Exception:
         return img
@@ -1383,8 +1392,6 @@ def click_window(target: WindowTarget, client_x: int, client_y: int,
 # - JSON header is parseable by any language / any LLM vendor
 # - PrintWindow ACK closes the feedback loop without new transport
 
-import json as _json
-import uuid as _uuid
 
 _STX = "\x02"
 _ETX = "\x03"
@@ -1526,7 +1533,7 @@ def send_frame(target, from_hwnd: int, payload: str,
         return header
     # ACK loop: verify delivery, retry on failure
     fingerprint = _make_fingerprint(payload, header.get("seq"), header.get("topic"))
-    for attempt in range(1, retries + 1):
+    for _attempt in range(1, retries + 1):
         if verify_delivery(to_hwnd, fingerprint, timeout=ack_timeout):
             header["acked"] = True
             return header
@@ -1587,7 +1594,6 @@ def verify_delivery(target_hwnd: int, fingerprint: str | list[str],
 
     Returns: True if fingerprint found in receiver's visible text
     """
-    import re
     fingerprints = fingerprint if isinstance(fingerprint, list) else [fingerprint]
     norm_fps = [_normalize_text(fp) for fp in fingerprints if fp]
     deadline = time.time() + timeout
@@ -1718,10 +1724,10 @@ class MessageListener:
     def __init__(self, own_hwnd: int, poll: float = 0.5, max_seen: int = 1024):
         self.own_hwnd = own_hwnd
         self.poll = poll
-        self._handlers: "list" = []
-        self._seen: "collections.deque[str]" = collections.deque(maxlen=max_seen)
-        self._seen_set: "set[str]" = set()
-        self._thread: "threading.Thread | None" = None
+        self._handlers: list = []
+        self._seen: collections.deque[str] = collections.deque(maxlen=max_seen)
+        self._seen_set: set[str] = set()
+        self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
     def on(self, handler) -> "MessageListener":
@@ -1845,7 +1851,7 @@ class AgentRegistry:
     """
 
     def __init__(self) -> None:
-        self._peers: "dict[int, PeerRecord]" = {}
+        self._peers: dict[int, PeerRecord] = {}
         self._lock = threading.Lock()
 
     def register(self, hwnd: int, label: str, pid: int = 0) -> PeerRecord:
@@ -1912,7 +1918,7 @@ class WatchdogLoop:
         dog.stop()
     """
 
-    _PROMPT_PATTERNS = ("> ", "$ ", "% ", "❯ ")  # terminal prompt tail patterns
+    _PROMPT_PATTERNS = ("> ", "$ ", "% ", "❯ ")  # noqa: RUF001  # terminal prompt tail patterns
 
     def __init__(self, registry: AgentRegistry,
                  own_hwnd: int = 0,
@@ -1923,10 +1929,10 @@ class WatchdogLoop:
         self.poll = poll
         self.stall_threshold = stall_threshold
         self._handlers: list = []
-        self._thread: "threading.Thread | None" = None
+        self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         # Compose MessageListener — inbound frame from peer X proves X is alive
-        self._listener: "MessageListener | None" = (
+        self._listener: MessageListener | None = (
             MessageListener(own_hwnd, poll=max(0.25, poll / 2))
             .on(self._on_inbound_frame)
             if own_hwnd else None
@@ -2074,9 +2080,9 @@ class ApprovalRelay:
 
     def __init__(self, audit_log_path: str = "proofs/audit_log.jsonl") -> None:
         self.audit_log_path = audit_log_path
-        self._allowlist: "list[tuple[str, str]]" = []
-        self._pending:   "dict[str, dict]"        = {}
-        self._seen_fingerprints: "collections.deque[str]" = collections.deque(maxlen=256)
+        self._allowlist: list[tuple[str, str]] = []
+        self._pending:   dict[str, dict]        = {}
+        self._seen_fingerprints: collections.deque[str] = collections.deque(maxlen=256)
         self._block_handlers: list = []
         self._lock = threading.Lock()
 
