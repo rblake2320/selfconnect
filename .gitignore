@@ -6,3 +6,18 @@ dist/
 build/
 *.egg-info/
 .env
+
+# Runtime artifacts
+logs/
+macros/
+*.log
+
+# Agent proof screenshots (session artifacts, not source)
+proofs/
+
+# Agent briefing files (ephemeral session state)
+briefing_*.md
+
+# OS
+.DS_Store
+Thumbs.db

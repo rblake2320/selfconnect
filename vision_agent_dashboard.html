@@ -900,7 +900,7 @@ function App() {
   const onCommand = async (text) => {
     pushLog({ kind:'nl', status:'pending', msg:`Queuing: "${text}"` });
     try {
-      const data = await apiPost('/api/actions', token, { command: text });
+      const data = await apiPost('/api/command', token, { text });
       if (data.items) setQueue(data.items);
       pushLog({ kind:'nl', status:'ok', msg:`Queued ${(data.items||[]).length} action(s)` });
     } catch (e) {
