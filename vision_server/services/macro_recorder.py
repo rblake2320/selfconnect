@@ -82,7 +82,7 @@ def export_json() -> str:
     os.makedirs(MACRO_EXPORT_DIR, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = os.path.join(MACRO_EXPORT_DIR, f"macro_{ts}.json")
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump({
             "schema": "selfconnect-macro-v1",
             "recorded": ts,
@@ -90,3 +90,25 @@ def export_json() -> str:
         }, f, indent=2)
     logger.info(f"[macro] exported to {path}")
     return path
+
+
+def load_json(path: str) -> list:
+    """Load a previously exported macro JSON file into the active step buffer."""
+    global _steps
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if data.get("schema") != "selfconnect-macro-v1":
+        raise ValueError(f"Unsupported macro schema: {data.get('schema')!r}")
+    steps = data.get("steps", [])
+    if not isinstance(steps, list):
+        raise ValueError("Macro steps must be a list")
+    _steps = [
+        {
+            "t": str(step.get("t", "+0.000s")),
+            "action": str(step.get("action", "")),
+            "target": str(step.get("target", "")),
+            "value": str(step.get("value", "")),
+        }
+        for step in steps
+    ]
+    return list(_steps)

@@ -26,7 +26,6 @@ llava structured prompt for browsers:
 """
 import asyncio
 import logging
-import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,6 @@ async def detect(hwnd: int, frame_jpeg: bytes | None = None) -> list:
     Agent C: implement this.
     """
     global _latest
-    from vision_server.models.schemas import Detection
     from concurrent.futures import ThreadPoolExecutor
 
     results = []
@@ -65,7 +63,15 @@ async def detect(hwnd: int, frame_jpeg: bytes | None = None) -> list:
     except Exception as e:
         logger.debug(f"[detect] Win32 failed: {e}")
 
-    # --- Strategy 2: llava for browser windows ---
+    # --- Strategy 2: llava for browser/Electron/terminal rendering surfaces ---
+    if frame_jpeg is None:
+        try:
+            from vision_server.services.capture_service import _capture_one
+            loop = asyncio.get_event_loop()
+            frame_jpeg = await loop.run_in_executor(None, _capture_one, hwnd)
+        except Exception as e:
+            logger.debug(f"[detect] capture fallback failed: {e}")
+
     if frame_jpeg:
         try:
             results = await _detect_via_llava(frame_jpeg)
@@ -83,7 +89,9 @@ def _get_win32_controls(hwnd: int) -> list:
     import sys, os
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+    from vision_server import config
     from vision_server.models.schemas import Detection
+    from self_connect import list_child_controls
     import ctypes, ctypes.wintypes
 
     # Get parent window rect for normalization
@@ -93,17 +101,8 @@ def _get_win32_controls(hwnd: int) -> list:
     pw = max(prect.right - prect.left, 1)
     ph = max(prect.bottom - prect.top, 1)
 
-    # Enumerate child windows
     results = []
-    child_hwnds = []
-
-    def enum_cb(child_hwnd, _):
-        child_hwnds.append(child_hwnd)
-        return True
-
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
-    cb = WNDENUMPROC(enum_cb)
-    user32.EnumChildWindows(hwnd, cb, 0)
+    controls = list_child_controls(hwnd)
 
     CLASS_MAP = {
         "button": "button",
@@ -112,14 +111,16 @@ def _get_win32_controls(hwnd: int) -> list:
         "combobox": "text_field",
         "listbox": "label",
         "richedit": "text_field",
+        "inputsite": "text_field",
+        "desktopwindowcontentsource": "image",
+        "desktopwindowcontentbridge": "image",
     }
 
-    for child in child_hwnds[:50]:  # cap at 50
+    for control in controls[:50]:  # cap at 50
         try:
-            # Get class name
-            cls_buf = ctypes.create_unicode_buffer(256)
-            user32.GetClassNameW(child, cls_buf, 256)
-            cls_name = cls_buf.value.lower()
+            child = int(control.get("hwnd", 0))
+            cls_raw = str(control.get("class_name", ""))
+            cls_name = cls_raw.lower()
 
             mapped = None
             for key, val in CLASS_MAP.items():
@@ -129,26 +130,19 @@ def _get_win32_controls(hwnd: int) -> list:
             if not mapped:
                 continue
 
-            # Get rect
-            rect = ctypes.wintypes.RECT()
-            user32.GetWindowRect(child, ctypes.byref(rect))
+            left, top, w, h = control.get("rect", (0, 0, 0, 0))
 
             # Skip invisible/zero-size
             if not user32.IsWindowVisible(child):
                 continue
-            w = rect.right - rect.left
-            h = rect.bottom - rect.top
             if w < 5 or h < 5:
                 continue
 
-            # Get text
-            text_buf = ctypes.create_unicode_buffer(256)
-            user32.GetWindowTextW(child, text_buf, 256)
-            label = text_buf.value.strip() or cls_name
+            label = str(control.get("text", "")).strip() or cls_raw or f"hwnd {child}"
 
             # Normalize to 0..1 relative to parent
-            x = (rect.left - prect.left) / pw
-            y = (rect.top - prect.top) / ph
+            x = (left - prect.left) / pw
+            y = (top - prect.top) / ph
             nw = w / pw
             nh = h / ph
 
@@ -156,16 +150,20 @@ def _get_win32_controls(hwnd: int) -> list:
                 id=f"d{child}",
                 cls=mapped,
                 label=label[:40],
-                conf=0.95,
-                x=round(x, 4),
-                y=round(y, 4),
-                w=round(nw, 4),
-                h=round(nh, 4),
+                conf=config.DETECTION_WIN32_CONFIDENCE,
+                x=round(_clamp01(x), 4),
+                y=round(_clamp01(y), 4),
+                w=round(_clamp01(nw), 4),
+                h=round(_clamp01(nh), 4),
             ))
         except Exception:
             continue
 
     return results
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
 
 
 async def _detect_via_llava(frame_jpeg: bytes) -> list:
@@ -198,19 +196,26 @@ async def _detect_via_llava(frame_jpeg: bytes) -> list:
     items = json.loads(text[start:end])
     TYPE_MAP = {"button": "button", "input": "text_field", "link": "button", "label": "label"}
 
-    return [
-        Detection(
+    results = []
+    for i, item in enumerate(items[:20]):
+        try:
+            x = _clamp01(float(item.get("x", 0)))
+            y = _clamp01(float(item.get("y", 0)))
+            w = _clamp01(float(item.get("w", 0.1)))
+            h = _clamp01(float(item.get("h", 0.05)))
+        except (TypeError, ValueError):
+            continue
+        results.append(Detection(
             id=f"vl_{i}",
             cls=TYPE_MAP.get(item.get("type", "label"), "label"),
             label=item.get("label", "")[:40],
-            conf=0.72,
-            x=float(item.get("x", 0)),
-            y=float(item.get("y", 0)),
-            w=float(item.get("w", 0.1)),
-            h=float(item.get("h", 0.05)),
-        )
-        for i, item in enumerate(items[:20])
-    ]
+            conf=config.DETECTION_VL_CONFIDENCE,
+            x=x,
+            y=y,
+            w=w,
+            h=h,
+        ))
+    return results
 
 
 async def start_detection_loop():

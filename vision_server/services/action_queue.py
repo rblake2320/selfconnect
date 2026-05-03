@@ -37,6 +37,9 @@ async def enqueue(req) -> dict:
         "kind": req.kind,
         "target": req.target or "",
         "value": req.value or "",
+        "x": req.x,
+        "y": req.y,
+        "hwnd": req.hwnd,
         "state": "pending",
     }
     _queue.append(item)
@@ -114,27 +117,43 @@ async def _execute_item(item: dict):
     kind = item["kind"]
 
     if kind == "click":
-        # value is "x,y" screen coords
-        parts = item["value"].split(",")
-        if len(parts) == 2:
-            x, y = int(parts[0].strip()), int(parts[1].strip())
-            from self_connect import click_at
-            await loop.run_in_executor(None, click_at, x, y)
+        from self_connect import click_at
+        if item.get("x") is not None and item.get("y") is not None:
+            x, y = int(item["x"]), int(item["y"])
         else:
-            raise ValueError(f"click value must be 'x,y', got: {item['value']}")
+            parts = item["value"].split(",")
+            if len(parts) != 2:
+                raise ValueError(f"click value must be 'x,y', got: {item['value']}")
+            x, y = int(parts[0].strip()), int(parts[1].strip())
+        await loop.run_in_executor(None, click_at, x, y)
 
     elif kind == "type":
         from vision_server.config import active_hwnd, ACTION_FOCUS_VERIFY
-        from self_connect import send_string, focus_window
-        if ACTION_FOCUS_VERIFY and active_hwnd:
-            await loop.run_in_executor(None, focus_window, active_hwnd)
+        from self_connect import focus_window, list_windows, send_string
+        hwnd = int(item.get("hwnd") or active_hwnd or 0)
+        if not hwnd:
+            raise ValueError("type action requires active_hwnd or request.hwnd")
+        target = next((w for w in list_windows() if w.hwnd == hwnd), None)
+        if not target:
+            raise ValueError(f"target hwnd not found: {hwnd}")
+        if ACTION_FOCUS_VERIFY:
+            await loop.run_in_executor(None, focus_window, hwnd)
             await asyncio.sleep(0.1)
-        await loop.run_in_executor(None, send_string, active_hwnd, item["value"])
+        await loop.run_in_executor(None, send_string, target, item["value"])
 
     elif kind == "key":
         from self_connect import send_keys
-        keys = item["value"].split("+")
+        keys = [k.strip() for k in item["value"].split("+") if k.strip()]
         await loop.run_in_executor(None, send_keys, *keys)
+
+    elif kind == "scroll":
+        from vision_server.config import active_hwnd
+        from self_connect import scroll_window
+        hwnd = int(item.get("hwnd") or active_hwnd or 0)
+        if not hwnd:
+            raise ValueError("scroll action requires active_hwnd or request.hwnd")
+        clicks = int(item["value"] or "-3")
+        await loop.run_in_executor(None, scroll_window, hwnd, clicks)
 
     elif kind == "wait":
         secs = float(item["value"]) if item["value"] else 1.0
@@ -142,6 +161,12 @@ async def _execute_item(item: dict):
 
     else:
         raise ValueError(f"Unknown action kind: {kind}")
+
+    try:
+        from vision_server.services import macro_recorder
+        macro_recorder.record_step(kind, item.get("target", ""), item.get("value", ""))
+    except Exception as e:
+        logger.debug(f"[queue] macro record skipped: {e}")
 
 
 async def enqueue_command(text: str) -> dict:
@@ -169,7 +194,7 @@ async def enqueue_command(text: str) -> dict:
 
 
 def _get_all() -> list:
-    return [dict(i) for i in _queue]
+    return [dict(i) for i in _queue] + [dict(i) for i in _history[-50:]]
 
 
 def _ts() -> str:
