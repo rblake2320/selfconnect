@@ -19,7 +19,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install ruff Pillow psutil pytest python-dotenv python-telegram-bot
+        run: pip install ruff Pillow psutil pytest python-dotenv python-telegram-bot fastapi uvicorn
 
       - name: Ruff lint — all SDK files
         run: >
@@ -28,6 +28,7 @@ jobs:
           antigravity_controller.py
           approval_partner.py
           approval_telegram.py
+          claudego/
 
       - name: Syntax check
         run: python -m py_compile self_connect.py

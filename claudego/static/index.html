@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClaudeGo — Approval Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e2e4f0;
+    --muted: #6b7280;
+    --accent: #6366f1;
+    --green: #22c55e;
+    --yellow: #f59e0b;
+    --red: #ef4444;
+    --blue: #3b82f6;
+    --radius: 8px;
+    --font: 'Segoe UI', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; }
+
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 24px; background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
+  header h1 span { color: var(--accent); }
+  #conn-status {
+    margin-left: auto; display: flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--muted);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+  .dot.connected { background: var(--green); }
+
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 20px 24px; max-width: 1400px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+  section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  section.full-width { grid-column: 1 / -1; }
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    font-weight: 600; font-size: 13px; text-transform: uppercase;
+    letter-spacing: 0.5px; color: var(--muted);
+  }
+  .badge {
+    background: var(--accent); color: #fff; border-radius: 10px;
+    padding: 1px 7px; font-size: 11px; font-weight: 700;
+  }
+  .badge.urgent { background: var(--red); animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+
+  /* Terminal list */
+  .terminal-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+  }
+  .terminal-item:last-child { border-bottom: none; }
+  .status-dot {
+    width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+  }
+  .s-idle     { background: var(--muted); }
+  .s-working  { background: var(--green); }
+  .s-approval { background: var(--yellow); animation: pulse 1.5s infinite; }
+  .s-stuck    { background: var(--red); }
+  .s-unknown  { background: var(--blue); }
+  .terminal-info { flex: 1; min-width: 0; }
+  .terminal-title { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .terminal-hwnd  { font-size: 11px; color: var(--muted); font-family: monospace; }
+  .terminal-status { font-size: 12px; font-weight: 500; }
+  .terminal-status.approval_needed { color: var(--yellow); }
+  .terminal-status.working  { color: var(--green); }
+  .terminal-status.stuck    { color: var(--red); }
+  .terminal-status.idle     { color: var(--muted); }
+  .empty-state { padding: 24px; text-align: center; color: var(--muted); font-size: 13px; }
+
+  /* Pending approvals */
+  .approval-item {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+  }
+  .approval-item:last-child { border-bottom: none; }
+  .approval-tool { font-family: monospace; font-size: 13px; color: var(--yellow); margin-bottom: 4px; }
+  .approval-meta { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+  .approval-buttons { display: flex; gap: 8px; }
+  button {
+    border: none; border-radius: 5px; padding: 6px 14px;
+    font-size: 12px; font-weight: 600; cursor: pointer; transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.85; }
+  .btn-approve { background: var(--green); color: #000; }
+  .btn-deny    { background: var(--red);   color: #fff; }
+
+  /* Audit log */
+  .log-table { width: 100%; border-collapse: collapse; }
+  .log-table th {
+    text-align: left; padding: 8px 12px; font-size: 11px; color: var(--muted);
+    border-bottom: 1px solid var(--border); position: sticky; top: 45px; background: var(--surface);
+  }
+  .log-table td { padding: 7px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 12px; }
+  .log-table tr:last-child td { border-bottom: none; }
+  .log-scroll { max-height: 320px; overflow-y: auto; }
+  .evt-auto_approved  { color: var(--green); }
+  .evt-auto_denied    { color: var(--red); }
+  .evt-unknown_tool, .evt-approval_needed { color: var(--yellow); }
+  .evt-manual_approved { color: #86efac; }
+  .evt-manual_denied   { color: #fca5a5; }
+  .evt-terminal_discovered { color: var(--blue); }
+  .evt-terminal_lost   { color: var(--muted); }
+  .evt-stuck           { color: var(--red); }
+
+  /* Rules editor */
+  .rules-container { padding: 16px; }
+  .rules-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .rules-col label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  textarea {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 5px; color: var(--text); font-family: monospace; font-size: 12px;
+    padding: 8px; resize: vertical; height: 120px; line-height: 1.6;
+  }
+  textarea:focus { outline: 1px solid var(--accent); }
+  .rules-actions { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+  .btn-save { background: var(--accent); color: #fff; }
+  .rules-default { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+  select {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 5px; padding: 5px 8px; font-size: 12px;
+  }
+  .save-msg { font-size: 12px; color: var(--green); opacity: 0; transition: opacity 0.3s; }
+  .save-msg.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+    <rect width="28" height="28" rx="7" fill="#6366f1"/>
+    <path d="M8 14a6 6 0 1 1 12 0A6 6 0 0 1 8 14z" fill="white" opacity="0.15"/>
+    <circle cx="14" cy="14" r="4" fill="white"/>
+    <path d="M14 4v4M14 20v4M4 14h4M20 14h4" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
+  </svg>
+  <h1><span>Claude</span>Go</h1>
+  <div id="conn-status">
+    <div class="dot" id="conn-dot"></div>
+    <span id="conn-label">Connecting…</span>
+  </div>
+</header>
+
+<main>
+  <!-- Terminals -->
+  <section>
+    <div class="section-header">
+      Terminals
+      <span class="badge" id="term-count">0</span>
+    </div>
+    <div id="terminals-list">
+      <div class="empty-state">Scanning for Claude Code terminals…</div>
+    </div>
+  </section>
+
+  <!-- Pending Approvals -->
+  <section>
+    <div class="section-header">
+      Pending Approvals
+      <span class="badge urgent" id="pending-count" style="display:none">0</span>
+    </div>
+    <div id="pending-list">
+      <div class="empty-state">No approvals waiting</div>
+    </div>
+  </section>
+
+  <!-- Audit Log -->
+  <section class="full-width">
+    <div class="section-header">
+      Audit Log
+      <span style="font-size:11px;color:var(--muted);font-weight:400;text-transform:none">Last 100 events</span>
+    </div>
+    <div class="log-scroll">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Event</th>
+            <th>Terminal</th>
+            <th>Tool</th>
+            <th>Rule</th>
+          </tr>
+        </thead>
+        <tbody id="log-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Rules Editor -->
+  <section class="full-width">
+    <div class="section-header">Rules Editor</div>
+    <div class="rules-container">
+      <div class="rules-row">
+        <div class="rules-col">
+          <label>Allow Patterns (fnmatch, one per line)</label>
+          <textarea id="allow-rules" spellcheck="false"></textarea>
+        </div>
+        <div class="rules-col">
+          <label>Deny Patterns (fnmatch, one per line)</label>
+          <textarea id="deny-rules" spellcheck="false"></textarea>
+        </div>
+      </div>
+      <div class="rules-default">
+        Default action for unknown tools:
+        <select id="default-action">
+          <option value="escalate">Ask (show in dashboard)</option>
+          <option value="approve">Auto-approve</option>
+          <option value="deny">Auto-deny</option>
+        </select>
+      </div>
+      <div class="rules-actions">
+        <button class="btn-save" onclick="saveRules()">Save Rules</button>
+        <span class="save-msg" id="save-msg">Saved</span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const state = {
+  terminals: {},     // hwnd -> terminal state
+  pending: {},       // hwnd -> approval info
+  log: [],
+};
+
+let ws = null;
+
+function connect() {
+  const url = `ws://${location.host}/ws`;
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    document.getElementById('conn-dot').className = 'dot connected';
+    document.getElementById('conn-label').textContent = 'Connected';
+  };
+
+  ws.onclose = () => {
+    document.getElementById('conn-dot').className = 'dot';
+    document.getElementById('conn-label').textContent = 'Disconnected — reconnecting…';
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => {
+    document.getElementById('conn-dot').className = 'dot';
+    document.getElementById('conn-label').textContent = 'Connection error';
+  };
+
+  ws.onmessage = (e) => {
+    const evt = JSON.parse(e.data);
+    handleEvent(evt);
+  };
+
+  // Keep-alive ping every 20s
+  setInterval(() => { if (ws && ws.readyState === 1) ws.send('ping'); }, 20000);
+}
+
+function handleEvent(evt) {
+  if (evt.event_type === 'snapshot') {
+    // Full state from server on connect
+    state.terminals = {};
+    state.pending = {};
+    for (const t of (evt.terminals || [])) {
+      state.terminals[t.hwnd] = t;
+      if (t.status === 'approval_needed') {
+        state.pending[t.hwnd] = { hwnd: t.hwnd, title: t.title, tool_call: t.pending_tool, timestamp: t.last_activity };
+      }
+    }
+    state.log = (evt.audit_log || []).reverse();
+    if (evt.rules) applyRulesFromServer(evt.rules);
+    renderAll();
+    return;
+  }
+
+  // Append to log
+  state.log.unshift(evt);
+  if (state.log.length > 200) state.log = state.log.slice(0, 100);
+
+  switch (evt.event_type) {
+    case 'terminal_discovered':
+      state.terminals[evt.hwnd] = { hwnd: evt.hwnd, title: evt.title, status: 'idle', pending_tool: null };
+      break;
+    case 'terminal_lost':
+      delete state.terminals[evt.hwnd];
+      delete state.pending[evt.hwnd];
+      break;
+    case 'approval_needed':
+      if (state.terminals[evt.hwnd]) state.terminals[evt.hwnd].status = 'approval_needed';
+      state.pending[evt.hwnd] = { hwnd: evt.hwnd, title: evt.title, tool_call: evt.tool_call, timestamp: evt.timestamp };
+      break;
+    case 'auto_approved':
+    case 'manual_approved':
+      if (state.terminals[evt.hwnd]) { state.terminals[evt.hwnd].status = 'working'; state.terminals[evt.hwnd].pending_tool = null; }
+      delete state.pending[evt.hwnd];
+      break;
+    case 'auto_denied':
+    case 'manual_denied':
+      if (state.terminals[evt.hwnd]) { state.terminals[evt.hwnd].status = 'idle'; state.terminals[evt.hwnd].pending_tool = null; }
+      delete state.pending[evt.hwnd];
+      break;
+    case 'stuck':
+      if (state.terminals[evt.hwnd]) state.terminals[evt.hwnd].status = 'stuck';
+      break;
+  }
+
+  renderAll();
+}
+
+function renderAll() {
+  renderTerminals();
+  renderPending();
+  renderLog();
+}
+
+function renderTerminals() {
+  const list = document.getElementById('terminals-list');
+  const count = document.getElementById('term-count');
+  const terminals = Object.values(state.terminals);
+  count.textContent = terminals.length;
+
+  if (!terminals.length) {
+    list.innerHTML = '<div class="empty-state">No Claude Code terminals detected</div>';
+    return;
+  }
+
+  list.innerHTML = terminals.map(t => {
+    const statusClass = t.status === 'approval_needed' ? 'approval' : t.status;
+    const dotClass = `status-dot s-${statusClass}`;
+    const statusLabel = t.status.replace(/_/g, ' ');
+    return `
+      <div class="terminal-item">
+        <div class="${dotClass}"></div>
+        <div class="terminal-info">
+          <div class="terminal-title" title="${esc(t.title)}">${esc(t.title)}</div>
+          <div class="terminal-hwnd">hwnd=${t.hwnd}${t.pending_tool ? ' · ' + esc(t.pending_tool) : ''}</div>
+        </div>
+        <div class="terminal-status ${t.status}">${statusLabel}</div>
+      </div>`;
+  }).join('');
+}
+
+function renderPending() {
+  const list = document.getElementById('pending-list');
+  const badge = document.getElementById('pending-count');
+  const items = Object.values(state.pending);
+
+  if (!items.length) {
+    list.innerHTML = '<div class="empty-state">No approvals waiting</div>';
+    badge.style.display = 'none';
+    return;
+  }
+
+  badge.textContent = items.length;
+  badge.style.display = '';
+
+  list.innerHTML = items.map(item => {
+    const tool = item.tool_call || '(unknown tool)';
+    const title = item.title || '';
+    const ts = item.timestamp ? new Date(item.timestamp * 1000).toLocaleTimeString() : '';
+    return `
+      <div class="approval-item">
+        <div class="approval-tool">${esc(tool)}</div>
+        <div class="approval-meta">${esc(title)} · ${ts}</div>
+        <div class="approval-buttons">
+          <button class="btn-approve" onclick="approve(${item.hwnd})">Approve</button>
+          <button class="btn-deny"    onclick="deny(${item.hwnd})">Deny</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderLog() {
+  const tbody = document.getElementById('log-body');
+  if (!state.log.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:16px">No events yet</td></tr>'; return; }
+  tbody.innerHTML = state.log.slice(0, 100).map(evt => {
+    const t = evt.timestamp ? new Date(evt.timestamp * 1000).toLocaleTimeString() : '';
+    const title = (evt.title || '').slice(0, 40);
+    const tool = evt.tool_call || '—';
+    const rule = evt.rule_matched || '—';
+    const evtShort = evt.event_type.replace(/_/g, ' ');
+    return `<tr>
+      <td style="color:var(--muted);font-family:monospace">${t}</td>
+      <td class="evt-${evt.event_type}">${evtShort}</td>
+      <td style="color:var(--muted)">${esc(title)}</td>
+      <td style="font-family:monospace">${esc(tool)}</td>
+      <td style="font-family:monospace;color:var(--muted)">${esc(rule)}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function approve(hwnd) {
+  await fetch(`/api/approve/${hwnd}`, { method: 'POST' });
+}
+async function deny(hwnd) {
+  await fetch(`/api/deny/${hwnd}`, { method: 'POST' });
+}
+
+// Rules editor
+function applyRulesFromServer(rules) {
+  document.getElementById('allow-rules').value = (rules.allow || []).join('\n');
+  document.getElementById('deny-rules').value  = (rules.deny  || []).join('\n');
+  const sel = document.getElementById('default-action');
+  if (rules.default_action) sel.value = rules.default_action;
+}
+
+async function saveRules() {
+  const allow = document.getElementById('allow-rules').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const deny  = document.getElementById('deny-rules').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const default_action = document.getElementById('default-action').value;
+  await fetch('/api/rules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ allow, deny, default_action }),
+  });
+  const msg = document.getElementById('save-msg');
+  msg.classList.add('show');
+  setTimeout(() => msg.classList.remove('show'), 2000);
+}
+
+// Load initial rules
+fetch('/api/rules').then(r => r.json()).then(applyRulesFromServer).catch(() => {});
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+connect();
+</script>
+</body>
+</html>

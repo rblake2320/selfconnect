@@ -119,6 +119,41 @@ for w in list_windows():
 
 ---
 
+## Peer Approval Protocol — NEVER do blind "y"
+
+When checking a peer for approval prompts, you MUST evaluate what tool is being
+approved — not just blindly inject "y". Use the rules engine:
+
+```python
+import sys
+sys.path.insert(0, '.')
+from self_connect import get_text_uia, send_string, list_windows
+from approval_partner import decide, extract_tool_call, PartnerConfig
+
+PEER_HWND = 5705128  # replace with actual hwnd
+
+# Find the WindowTarget (needed for send_string)
+peer_win = next((w for w in list_windows() if w.hwnd == PEER_HWND), None)
+if peer_win:
+    text = get_text_uia(PEER_HWND) or ''
+    tool = extract_tool_call(text)
+    result = decide(tool, PartnerConfig())
+    if result is True:
+        send_string(peer_win, 'y\r')      # approved — safe tool (git, npm, read, etc.)
+    elif result is False:
+        send_string(peer_win, 'n\r')      # denied — dangerous tool (rm, curl, etc.)
+    else:
+        print(f'UNKNOWN tool {tool!r} — do NOT auto-approve. Escalate to user.')
+```
+
+**DENY list includes:** `rm`, `rmdir`, `del`, `curl`, `wget`, `format`, `mkfs`
+**ALLOW list includes:** `git`, `npm`, `node`, `python`, `pip`, `ls`, `find`, `cat`,
+`gh`, `Read`, `Write`, `Edit`, `Glob`, `Grep`
+
+If you send "y" without checking, you are bypassing the security model. Don't.
+
+---
+
 ## Approval Automation (new in v0.9.x)
 
 Two daemons for unattended operation:
