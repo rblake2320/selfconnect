@@ -183,6 +183,24 @@ All proved live in multi-session tests (see `proofs/` and `docs/`):
    Full chain: `Claude Code → Python Win32 UIA+WM_CHAR → Antigravity Electron → Gemini 3.1 Pro`
    Evidence: `proofs/after_send_invoke_full.png`, `proofs/wm_char_result_panel.png`
 
+8. **Browser automation — zero external dependencies** (Session 10, 2026-05-02) —
+   Full live test against Perplexity AI using only Win32 primitives. No Playwright,
+   no Selenium, no browser extension, no MCP, no WebDriver, no API calls.
+
+   | Step | Method |
+   |------|--------|
+   | Screen capture | `PIL.ImageGrab.grab(bbox=window_rect, all_screens=True)` — only method that works on GPU-composited Chrome windows; `BitBlt` and `PrintWindow(PW_RENDERFULLCONTENT)` return blank pixels |
+   | Click | `ctypes SetCursorPos() + mouse_event(MOUSEEVENTF_LEFTDOWN/UP)` — raw Win32 |
+   | Text input | Write → temp file → PowerShell `Set-Clipboard` → `keybd_event(Ctrl+V)` |
+   | Submit | `keybd_event(VK_RETURN)` |
+
+   CAPTCHA result: **100% correct** on trial 3 — Perplexity's verdict: *"Perfect — 100% correct. J4NQ8 is exactly right."*
+
+   New patent claim: **GPU-compositing-aware screen capture** — `PIL.ImageGrab` as the
+   only viable capture path for hardware-accelerated browser windows, extending the
+   SelfConnect claim from terminal-window automation to any visible composited window.
+   Evidence: `proofs/checkpoint_A_s10_browser_automation.json`
+
 ---
 
 ## Why This Is Novel
