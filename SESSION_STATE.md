@@ -24,6 +24,47 @@ for w in list_windows():
 | C | Gemini CLI v0.40.1 | 0x2602034 | Action Required (techai) |
 | D | Codex v0.125.0 (GPT-5) | 0x1870dac | techai / airgap-sop |
 
+## SelfConnect Pipeline Status (confirmed operational — session 12)
+
+```
+hub_relay.py running in Windows Session 1 (interactive, can see all GUI windows)
+MESH_STATUS: all 5 named nodes + extras ONLINE
+CMD: relay works end-to-end with TAG correlation (45s timeout, 2s poll)
+Direct chat with Session A via SSH bridge: inject text → read response
+```
+
+### Operational Rules (must follow on every restart)
+| Rule | Why |
+|------|-----|
+| hub_relay.py MUST run in Windows Session 1 | Session 0 (services) cannot see GUI windows — Antigravity injection fails |
+| Use Task Scheduler HubRelay task (`/it /rl highest`) | Ensures Session 1 interactive context |
+| Stop `selfconnect-peer.service` before running `spark2_client.py` | They compete for the same Hub inbox |
+| spark2_client HUB = `http://10.0.0.1:8765` | Spark1 QSFP address, reachable from Spark-2 |
+
+### Node B Status (last known)
+- IDLE at `ai-to-ai-bidirectional-chat` terminal
+- Ran migration test autonomously during A's context compaction
+- Checkpoint `sc_test_mc2.json` written, successor spawned at hwnd=22610408, both PASS
+- Last line: "What do you want to do next?"
+- Session A can relay instructions to B via `send_frame`
+
+### Spark-2 → Windows Model Access (NEW — session 12)
+
+Spark-2 injects into Agent-A's terminal via hub_relay → that terminal can run
+`antigravity_controller.py` → reaches any model in Antigravity on the Windows desktop.
+
+```bash
+# From Spark-2 — send a message to Gemini 3.1 Pro on Windows:
+python spark2_client.py --cmd "python antigravity_controller.py --chat 'Hello from Spark-2'"
+
+# Query current model:
+python spark2_client.py --cmd "python antigravity_controller.py --model"
+```
+
+**Models available on Windows via Antigravity:** Gemini 3.1 Pro (default), Claude Sonnet 4.6, Claude Opus 4.6, GPT-OSS-120b
+
+---
+
 ## What was accomplished this session
 - ✅ 4-agent mesh live: A (Claude) + B (Claude) + C (Gemini) + D (Codex)
 - ✅ selfconnect CI: fixed all ruff errors, CI GREEN

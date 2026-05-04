@@ -151,6 +151,11 @@ send_frame(target_window, from_hwnd=my_hwnd, payload="hello", topic="chat", ack=
 | `SendInput` from background | NO | Always goes to foreground |
 | Separate `PostMessage(WM_CHAR, 13)` for Enter | NO | Ignored by Windows Terminal |
 | `WM_KEYDOWN/WM_KEYUP` for VK_RETURN | NO | Ignored by Windows Terminal |
+| `PostMessage(WM_CHAR)` to Chrome_RenderWidgetHostHWND | YES | WebView2/Electron chat injection — requires UIA `set_focus()` first |
+| `SendInput` to WebView2 (OSR mode) | NO | Offscreen rendering blocks all external input |
+| Clipboard paste into WebView2 | NO | Claude Code subprocess is sandboxed from clipboard |
+| UIA `set_focus()` without Win32 foreground | YES | Transfers Blink focus internally — works behind lock screen |
+| UIA `invoke()` on WebView2 buttons | YES | Submits chat, dismisses popups — no click events needed |
 
 ---
 
@@ -164,6 +169,19 @@ All proved live in multi-session tests (see `proofs/` and `docs/`):
 4. **Cross-vendor AI mesh** — Claude (Anthropic) + Codex (OpenAI) communicating via Win32
 5. **Self-designed protocol** — three AI agents designed + shipped the framing layer through the channel they were improving (v0.5.0 → v0.5.2 in 90 minutes)
 6. **PrintWindow ACK** — sender confirms delivery by reading receiver's screen
+7. **Claude ↔ Gemini via Win32** — Claude Code injected a message into Antigravity
+   (Google's standalone Electron IDE) and Gemini 3.1 Pro replied. Confirmed live via UIA
+   accessibility tree extraction. Zero API calls. Zero clipboard. Zero foreground window.
+
+   ```
+   Claude:  "Hello from Claude Agent-A. What model are you?"
+   Gemini:  "Hello Claude Agent-A! 👋 I am Antigravity, an agentic AI coding assistant
+            designed by the Google Deepmind team, and I'm currently running on the
+            Gemini 3.1 Pro model. It's great to meet a fellow AI!"
+   ```
+
+   Full chain: `Claude Code → Python Win32 UIA+WM_CHAR → Antigravity Electron → Gemini 3.1 Pro`
+   Evidence: `proofs/after_send_invoke_full.png`, `proofs/wm_char_result_panel.png`
 
 ---
 
@@ -179,10 +197,56 @@ Transport = Win32 thread message queue. No API. No broker. No network.
 
 ---
 
+## Antigravity / Electron Chat Automation
+
+`antigravity_controller.py` — high-level SDK for controlling Antigravity (Google's
+Electron IDE) and any Electron/WebView2 chat interface programmatically.
+
+```python
+from antigravity_controller import connect, chat, AntigravityMonitor
+
+# Connect (auto-discovers running Antigravity window)
+session = connect()
+print(session)  # AntigravitySession(hwnd=0x..., model='Gemini 3.1 Pro', ...)
+
+# Send a message and get the response
+response = chat(session, "What model are you?")
+print(response)
+
+# Background monitor — emit events when Gemini responds
+monitor = (
+    AntigravityMonitor(session)
+    .on("response", lambda r: print(f"Gemini: {r}"))
+    .on("model_changed", lambda m: print(f"Model switched to: {m}"))
+    .start()
+)
+```
+
+**Glossary** (for Windows Win32 newcomers):
+
+| Term | Meaning |
+|------|---------|
+| HWND | **H**andle to a **W**i**N**dow — the unique integer Windows assigns to every window, used in all Win32 API calls |
+| UIA | UI Automation — Microsoft's accessibility API for finding and controlling UI elements (buttons, inputs) without mouse/keyboard |
+| OSR | Offscreen Rendering — Chromium/WebView2 mode that blocks external SendInput; WM_CHAR PostMessage bypasses it |
+| WM_CHAR | Windows Message: Character — delivers a keystroke directly to a window's message queue |
+
+**CLI:**
+```bash
+python antigravity_controller.py --list                        # find Antigravity windows
+python antigravity_controller.py --chat "Hello, who are you?"  # send message, print response
+python antigravity_controller.py --buttons                     # list all UIA button names
+python antigravity_controller.py --model                       # show current model
+```
+
+---
+
 ## Scripts
 
 | Script | What it does |
 |--------|-------------|
+| `antigravity_controller.py` | High-level Antigravity/Electron SDK — `connect`, `chat`, `AntigravityMonitor` |
+| `inject_webview.py` | Low-level proof script — UIA+WM_CHAR injection into any Electron app |
 | `_spawn_claude.py` | Spawn a new Claude CLI session |
 | `_spawn_codex.py` | Spawn a new Codex CLI session |
 | `proof_benchmark.py` | Live proof benchmark (8/8) |

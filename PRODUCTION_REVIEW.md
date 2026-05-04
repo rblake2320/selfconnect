@@ -71,9 +71,9 @@
 
 | # | Issue | File:Line | Severity | Assigned To | Status |
 |---|-------|-----------|----------|-------------|--------|
-| 1 | `enqueue_command("click <label>")` hardcodes `0,0` instead of resolving detection coords | `action_queue.py:179-181` | **BLOCKER** — wrong behavior | B-NEW | OPEN |
-| 2 | `yolo` + `claude` health statuses hardcoded | `health_monitor.py:46-47` | Minor — misleading dashboard | D-NEW | OPEN |
-| 3 | Stale "Agent: implement this" comments | `detection_service.py:44`, `vl_service.py:43` | Cosmetic | C | OPEN |
+| 1 | `enqueue_command("click <label>")` hardcodes `0,0` instead of resolving detection coords | `action_queue.py:179-181` | **BLOCKER** — wrong behavior | A | **FIXED 7b832f9** |
+| 2 | `yolo` + `claude` health statuses hardcoded | `health_monitor.py:46-47` | Minor — misleading dashboard | A | **FIXED 7b832f9** |
+| 3 | Stale "Agent: implement this" comments | `detection_service.py:44`, `vl_service.py:43` | Cosmetic | C | **FIXED 7b832f9** |
 | 4 | `/api/search` returns 501 | `search.py:14` | By design — nvclip v2 | — | DEFERRED (documented) |
 
 **NOT issues:**
@@ -83,8 +83,8 @@
 - Dashboard fully wired to live server
 - DEPLOY.md + ARCHITECTURE.md accurate
 
-**VERDICT: NOT PRODUCTION READY until Issue #1 is fixed.**  
-Issue #2 and #3 should be fixed before final ship but are not blockers.
+**VERDICT: PRODUCTION READY — all 3 issues fixed, 52/52 tests pass, commit 7b832f9 pushed.**  
+Reviewed by A + C. C approved before commit.
 
 ---
 
