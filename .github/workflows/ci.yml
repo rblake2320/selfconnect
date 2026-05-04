@@ -19,10 +19,15 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install ruff Pillow psutil
+        run: pip install ruff Pillow psutil pytest python-dotenv python-telegram-bot
 
-      - name: Ruff lint
-        run: ruff check self_connect.py
+      - name: Ruff lint — all SDK files
+        run: >
+          ruff check
+          self_connect.py
+          antigravity_controller.py
+          approval_partner.py
+          approval_telegram.py
 
       - name: Syntax check
         run: python -m py_compile self_connect.py
@@ -54,3 +59,6 @@ jobs:
 
       - name: Version check
         run: python -c "import ast,pathlib; tree=ast.parse(pathlib.Path('self_connect.py').read_text(encoding='utf-8')); [print('Version:', n.value.s) for n in ast.walk(tree) if isinstance(n, ast.Assign) and any(getattr(t,'id','') == '__version__' for t in n.targets)]"
+
+      - name: Unit tests (no Win32 desktop needed)
+        run: python -m pytest tests/ -v --tb=short

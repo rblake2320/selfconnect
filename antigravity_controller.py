@@ -52,17 +52,17 @@ WM_CHAR = 0x0102
 WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
 
 __all__ = [
-    "AntigravitySession",
-    "connect",
-    "send_message",
-    "read_latest_response",
-    "chat",
-    "list_buttons",
-    "click_button",
-    "get_model",
-    "set_model",
-    "new_chat",
     "AntigravityMonitor",
+    "AntigravitySession",
+    "chat",
+    "click_button",
+    "connect",
+    "get_model",
+    "list_buttons",
+    "new_chat",
+    "read_latest_response",
+    "send_message",
+    "set_model",
 ]
 
 _VALID_EVENTS = {"response", "error", "model_changed"}
