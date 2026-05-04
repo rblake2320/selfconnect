@@ -759,11 +759,11 @@ def crop_to_client(hwnd: int, img):
         ox = pt.x - wr.left
         oy = pt.y - wr.top
         iw, ih = img.size
-        l = max(0, ox)
-        t = max(0, oy)
+        left = max(0, ox)
+        top = max(0, oy)
         r = min(iw, ox + cr.right)
         b = min(ih, oy + cr.bottom)
-        return img.crop((l, t, r, b)) if r > l and b > t else img
+        return img.crop((left, top, r, b)) if r > left and b > top else img
     except Exception:
         return img
 
