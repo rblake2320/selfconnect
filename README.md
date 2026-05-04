@@ -163,10 +163,10 @@ send_frame(target_window, from_hwnd=my_hwnd, payload="hello", topic="chat", ack=
 
 All proved live in multi-session tests (see `proofs/` and `docs/`):
 
-1. **AI spawns AI** — launch cmd.exe, type `"claude\r"` or `"codex\r"`, inject handoff
+1. **AI spawns AI** — launch cmd.exe, type `"claude\r"`, `"gemini\r"`, or `"codex\r"`, inject handoff
 2. **Background injection** — PostMessage works on minimized/unfocused windows
 3. **Bidirectional AI-to-AI chat** — two Claude sessions, 10+ timestamped entries
-4. **Cross-vendor AI mesh** — Claude (Anthropic) + Codex (OpenAI) communicating via Win32
+4. **Cross-vendor AI mesh** — Claude (Anthropic) + Codex (OpenAI) + Gemini CLI (Google) communicating via Win32 terminal injection. 4-agent live mesh: Agent-A (Claude Sonnet 4.6) + Agent-B (Claude Code) + Agent-C (Gemini CLI v0.40.1) + Agent-D (Codex v0.125.0 / GPT-5)
 5. **Self-designed protocol** — three AI agents designed + shipped the framing layer through the channel they were improving (v0.5.0 → v0.5.2 in 90 minutes)
 6. **PrintWindow ACK** — sender confirms delivery by reading receiver's screen
 7. **Claude ↔ Gemini via Win32** — Claude Code injected a message into Antigravity
