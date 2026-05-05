@@ -31,7 +31,7 @@ from approval_partner import (  # type: ignore[import]  # noqa: E402
     has_approval_prompt,
     inject_response,
 )
-from self_connect import WindowTarget, get_text_uia  # type: ignore[import]  # noqa: E402
+from self_connect import WindowTarget, get_text_uia, send_string  # type: ignore[import]  # noqa: E402
 
 # ── Event model ───────────────────────────────────────────────────────────────
 
@@ -147,7 +147,6 @@ class Scanner:
         if not win:
             return False
         if not self.dry_run:
-            from self_connect import send_string  # type: ignore[import]
             send_string(win, "y\r")
         state = self._terminals.get(hwnd)
         tool = state.pending_tool if state else None
@@ -165,7 +164,6 @@ class Scanner:
         if not win:
             return False
         if not self.dry_run:
-            from self_connect import send_string  # type: ignore[import]
             send_string(win, "n\r")
         state = self._terminals.get(hwnd)
         tool = state.pending_tool if state else None

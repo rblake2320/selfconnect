@@ -1,4 +1,4 @@
-# SelfConnect SDK
+# SelfConnect SDK v0.10.0
 
 **OS-native bridge between AI agents and Windows desktop apps.**  
 PostMessage + PrintWindow. No browser. No accessibility layer. No API between agents.
@@ -34,9 +34,11 @@ Zero API calls between agents. Zero network traffic. Two functions from `user32.
 ## Installation
 
 ```bash
-pip install selfconnect            # core (Pillow + psutil)
-pip install selfconnect[uia]       # + UIA text extraction
-pip install selfconnect[full]      # + UIA + comtypes
+pip install selfconnect                  # core (Pillow + psutil)
+pip install selfconnect[uia]             # + UIA text extraction
+pip install selfconnect[full]            # + UIA + comtypes
+pip install selfconnect[telegram]        # + Telegram approval bridge
+pip install selfconnect[claudego]        # + ClaudeGo web dashboard
 ```
 
 ---
@@ -57,6 +59,62 @@ send_string(window_target, "your message here\r")  # \r = Enter key
 
 # Capture any window's pixels
 save_capture(hwnd, path="proofs/capture.png")
+```
+
+---
+
+## Approval Automation
+
+Two daemons for unattended operation. Run them in the background — walk away.
+
+### Local auto-approval (`approval_partner.py`)
+
+Watches all Claude Code terminal windows, detects approval prompts, and injects
+`y` or `n` based on allow/deny rules. Unknown tools are escalated.
+
+```bash
+python approval_partner.py                # run with default rules
+python approval_partner.py --dry-run      # detect prompts but don't inject
+python approval_partner.py --approve-all  # approve everything (use with care)
+python approval_partner.py --list-windows # show detected Claude terminals
+```
+
+Default allow: `Bash(git:*)`, `Bash(npm:*)`, `Bash(python:*)`, `Bash(gh:*)`,
+`Read(*)`, `Write(*)`, `Edit(*)`, `Glob(*)`, `Grep(*)`
+
+Default deny: `Bash(rm:*)`, `Bash(rmdir:*)`, `Bash(curl:*)`, `Bash(wget:*)`
+
+### Telegram bridge (`approval_telegram.py`)
+
+Escalates unknown tools to your phone. Tap approve/deny — response is injected
+back into the terminal automatically.
+
+```bash
+cp .env.approval.example .env.approval
+# Edit: set TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALLOWED_USER_ID
+python approval_telegram.py
+```
+
+Run both together for full coverage: local daemon handles known-safe tools instantly;
+unknown tools hit your phone.
+
+---
+
+## ClaudeGo Dashboard
+
+A lightweight web dashboard for monitoring the Claude Code mesh in real time.
+
+```bash
+python -m claudego           # starts on http://localhost:9090
+```
+
+Features:
+- Live window list with approval-prompt status indicators (green / yellow / red)
+- System tray icon (`claudego/tray.py`) — color reflects mesh health
+- Desktop toast notifications (`claudego/notifier.py`) via winotify
+
+```bash
+pip install selfconnect[claudego]   # installs pystray + winotify
 ```
 
 ---
@@ -86,14 +144,14 @@ for w in list_windows():
 
 restore_window(new_win.hwnd)
 time.sleep(0.3)
-send_string(new_win, "claude\r")   # or "codex\r" for OpenAI Codex
+send_string(new_win, "claude\r")   # or "codex\r" / "gemini\r"
 time.sleep(15)
 send_string(new_win, "Your instructions here\r")
 ```
 
 ---
 
-## Reliable Framing (v0.5.2)
+## Reliable Framing
 
 For multi-agent meshes, use the framing layer to send structured messages:
 
@@ -109,7 +167,9 @@ send_frame(target_window, from_hwnd=my_hwnd, payload="hello", topic="chat", ack=
 
 ---
 
-## API Reference (v0.5.2 — 32 exports)
+## API Reference (v0.10.0 — 60 exports)
+
+Full export list and signatures: see `CLAUDE.md` → Key Files section.
 
 ### Core
 | Function | Description |
@@ -121,7 +181,7 @@ send_frame(target_window, from_hwnd=my_hwnd, payload="hello", topic="chat", ack=
 | `capture_window(hwnd)` | PrintWindow → PIL Image |
 | `restore_window(hwnd)` | ShowWindow + SetForegroundWindow |
 
-### Framing Layer (v0.5+)
+### Framing Layer
 | Function | Description |
 |----------|-------------|
 | `build_frame(from_hwnd, to_hwnd, payload, topic, seq)` | Build STX\|JSON\|NUL\|payload\|ETX string |
@@ -137,6 +197,33 @@ send_frame(target_window, from_hwnd=my_hwnd, payload="hello", topic="chat", ack=
 | `get_text_uia(hwnd)` | UIA text extraction (requires pywinauto) |
 | `get_clipboard_text()` | Read clipboard |
 | `set_clipboard_text(text)` | Write clipboard |
+
+### Extended (v0.8+)
+| Class / Function | Description |
+|----------|-------------|
+| `WatchdogLoop` | Async watchdog — fires callback when pattern appears in target window |
+| `ApprovalRelay` | Policy-gated guardian — A approves B's tool prompts |
+| `MessageListener` | Async interrupt-pattern listener for incoming framed messages |
+| `MigrationCoordinator` | Context-preserving role migration between agents |
+| `send_keys(target, keys)` | SendInput (foreground) — for Enter/submit in Claude Code TUI |
+
+---
+
+## Session History
+
+| Session | Version | Key Win |
+|---------|---------|---------|
+| 4 | v0.4.0 | First cross-AI PostMessage proof (Claude → Claude) |
+| 5 | v0.5.x | Framing layer (STX/NUL/ETX protocol) — self-designed by agents |
+| 6 | v0.6.0 | Universal Win32 app control; full design-to-code pipeline |
+| 7 | v0.8.0 | WatchdogLoop, ApprovalRelay, MessageListener |
+| 8 | v0.9.0 | MigrationCoordinator — context-preserving role migration |
+| 9 | v0.9.0 | Spark-2 Linux peer via hub_relay — cross-machine mesh live |
+| 10 | v0.9.0 | Browser automation (PIL.ImageGrab); CAPTCHA 100% correct |
+| 11 | v0.9.0 | PyPI publish readiness; CI green on master |
+| 12 | v0.9.0 | WebView2/Antigravity chat injection proved (Gemini responded) |
+| 13 | v0.9.1 | approval_partner + approval_telegram shipped |
+| 14 | v0.10.0 | ClaudeGo dashboard (tray + notifier); peer_watcher rules engine |
 
 ---
 
@@ -166,40 +253,24 @@ All proved live in multi-session tests (see `proofs/` and `docs/`):
 1. **AI spawns AI** — launch cmd.exe, type `"claude\r"`, `"gemini\r"`, or `"codex\r"`, inject handoff
 2. **Background injection** — PostMessage works on minimized/unfocused windows
 3. **Bidirectional AI-to-AI chat** — two Claude sessions, 10+ timestamped entries
-4. **Cross-vendor AI mesh** — Claude (Anthropic) + Codex (OpenAI) + Gemini CLI (Google) communicating via Win32 terminal injection. 4-agent live mesh: Agent-A (Claude Sonnet 4.6) + Agent-B (Claude Code) + Agent-C (Gemini CLI v0.40.1) + Agent-D (Codex v0.125.0 / GPT-5)
+4. **Cross-vendor AI mesh** — Claude + Codex + Gemini CLI communicating via Win32 terminal injection. 4-agent live mesh: Agent-A (Claude Sonnet 4.6) + Agent-B (Claude Code) + Agent-C (Gemini CLI) + Agent-D (Codex / GPT-5)
 5. **Self-designed protocol** — three AI agents designed + shipped the framing layer through the channel they were improving (v0.5.0 → v0.5.2 in 90 minutes)
 6. **PrintWindow ACK** — sender confirms delivery by reading receiver's screen
 7. **Claude ↔ Gemini via Win32** — Claude Code injected a message into Antigravity
-   (Google's standalone Electron IDE) and Gemini 3.1 Pro replied. Confirmed live via UIA
-   accessibility tree extraction. Zero API calls. Zero clipboard. Zero foreground window.
+   (Google's standalone Electron IDE) and Gemini 3.1 Pro replied. Zero API calls. Zero clipboard. Zero foreground window.
 
    ```
    Claude:  "Hello from Claude Agent-A. What model are you?"
-   Gemini:  "Hello Claude Agent-A! 👋 I am Antigravity, an agentic AI coding assistant
-            designed by the Google Deepmind team, and I'm currently running on the
-            Gemini 3.1 Pro model. It's great to meet a fellow AI!"
+   Gemini:  "Hello Claude Agent-A! I am Antigravity, running on Gemini 3.1 Pro."
    ```
 
    Full chain: `Claude Code → Python Win32 UIA+WM_CHAR → Antigravity Electron → Gemini 3.1 Pro`
-   Evidence: `proofs/after_send_invoke_full.png`, `proofs/wm_char_result_panel.png`
 
-8. **Browser automation — zero external dependencies** (Session 10, 2026-05-02) —
+8. **Browser automation — zero external dependencies** (Session 10) —
    Full live test against Perplexity AI using only Win32 primitives. No Playwright,
    no Selenium, no browser extension, no MCP, no WebDriver, no API calls.
-
-   | Step | Method |
-   |------|--------|
-   | Screen capture | `PIL.ImageGrab.grab(bbox=window_rect, all_screens=True)` — only method that works on GPU-composited Chrome windows; `BitBlt` and `PrintWindow(PW_RENDERFULLCONTENT)` return blank pixels |
-   | Click | `ctypes SetCursorPos() + mouse_event(MOUSEEVENTF_LEFTDOWN/UP)` — raw Win32 |
-   | Text input | Write → temp file → PowerShell `Set-Clipboard` → `keybd_event(Ctrl+V)` |
-   | Submit | `keybd_event(VK_RETURN)` |
-
-   CAPTCHA result: **100% correct** on trial 3 — Perplexity's verdict: *"Perfect — 100% correct. J4NQ8 is exactly right."*
-
-   New patent claim: **GPU-compositing-aware screen capture** — `PIL.ImageGrab` as the
-   only viable capture path for hardware-accelerated browser windows, extending the
-   SelfConnect claim from terminal-window automation to any visible composited window.
-   Evidence: `proofs/checkpoint_A_s10_browser_automation.json`
+   CAPTCHA result: **100% correct** — `PIL.ImageGrab` as the only viable capture path
+   for GPU-composited browser windows.
 
 ---
 
@@ -223,38 +294,21 @@ Electron IDE) and any Electron/WebView2 chat interface programmatically.
 ```python
 from antigravity_controller import connect, chat, AntigravityMonitor
 
-# Connect (auto-discovers running Antigravity window)
 session = connect()
-print(session)  # AntigravitySession(hwnd=0x..., model='Gemini 3.1 Pro', ...)
-
-# Send a message and get the response
 response = chat(session, "What model are you?")
-print(response)
 
-# Background monitor — emit events when Gemini responds
 monitor = (
     AntigravityMonitor(session)
     .on("response", lambda r: print(f"Gemini: {r}"))
-    .on("model_changed", lambda m: print(f"Model switched to: {m}"))
     .start()
 )
 ```
 
-**Glossary** (for Windows Win32 newcomers):
-
-| Term | Meaning |
-|------|---------|
-| HWND | **H**andle to a **W**i**N**dow — the unique integer Windows assigns to every window, used in all Win32 API calls |
-| UIA | UI Automation — Microsoft's accessibility API for finding and controlling UI elements (buttons, inputs) without mouse/keyboard |
-| OSR | Offscreen Rendering — Chromium/WebView2 mode that blocks external SendInput; WM_CHAR PostMessage bypasses it |
-| WM_CHAR | Windows Message: Character — delivers a keystroke directly to a window's message queue |
-
 **CLI:**
 ```bash
-python antigravity_controller.py --list                        # find Antigravity windows
-python antigravity_controller.py --chat "Hello, who are you?"  # send message, print response
-python antigravity_controller.py --buttons                     # list all UIA button names
-python antigravity_controller.py --model                       # show current model
+python antigravity_controller.py --list
+python antigravity_controller.py --chat "Hello, who are you?"
+python antigravity_controller.py --model
 ```
 
 ---
@@ -264,14 +318,15 @@ python antigravity_controller.py --model                       # show current mo
 | Script | What it does |
 |--------|-------------|
 | `antigravity_controller.py` | High-level Antigravity/Electron SDK — `connect`, `chat`, `AntigravityMonitor` |
+| `approval_partner.py` | Local auto-approval daemon — watches terminals, injects y/n via rules engine |
+| `approval_telegram.py` | Telegram bridge — phone approval for unknown tools |
+| `peer_watcher.py` | Rules-based peer approval watcher for a specific agent window |
+| `hub_relay.py` | Cross-machine mesh relay (Windows ↔ Spark-1 ↔ Spark-2) |
+| `spark2_client.py` | Linux RPC client — mirrors self_connect API from Spark-2 |
 | `inject_webview.py` | Low-level proof script — UIA+WM_CHAR injection into any Electron app |
 | `_spawn_claude.py` | Spawn a new Claude CLI session |
-| `_spawn_codex.py` | Spawn a new Codex CLI session |
-| `proof_benchmark.py` | Live proof benchmark (8/8) |
+| `proof_benchmark.py` | Live proof benchmark |
 | `test_self_connect.py` | Unit tests |
-| `_save_notepads.py` | Extract text from Notepad via WM_GETTEXT |
-| `_close_notepads.py` | Close Notepad windows |
-| `_draw_art.py` | Demo: draw in MS Paint via PostMessage |
 
 ---
 
