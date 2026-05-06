@@ -18,6 +18,12 @@ proofs/
 # Agent briefing files (ephemeral session state)
 briefing_*.md
 
+# Temporary session screenshots
+tmp_*.png
+
+# Local Claude Code workspace state
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db
