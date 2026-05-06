@@ -9,6 +9,18 @@ from self_connect import list_windows, send_string, save_capture
 
 ---
 
+## Why Runbooks Exist
+
+`runbooks/capture_chrome_window.md` shows session 10 and session 14 in its Verified section.
+The same procedure was rediscovered twice before anyone wrote it down. That's what this
+system exists to prevent.
+
+Six runbooks are included — each one documents a Win32 procedure that cost at least one
+full session of trial-and-error before it was proved. `runbook_writer.py` generates new
+ones automatically when an operation requires 3+ retries.
+
+---
+
 ## What It Does
 
 SelfConnect lets a frontier AI model (Claude, Codex, or any CLI agent) control Windows
