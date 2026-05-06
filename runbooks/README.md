@@ -44,6 +44,7 @@ One-line description of what this achieves.
 | [enter_claude_tui.md](enter_claude_tui.md) | Submit text / press Enter in Claude Code TUI |
 | [peer_approval_check.md](peer_approval_check.md) | Check peer terminal for approval prompt, inject y/n safely |
 | [cross_machine_mesh.md](cross_machine_mesh.md) | Start multi-machine AI mesh (Windows ↔ Spark-1 ↔ Spark-2) |
+| [fix_antigravity_gemini.md](fix_antigravity_gemini.md) | Restore Gemini chat when it silently fails to load in Antigravity |
 
 ---
 
