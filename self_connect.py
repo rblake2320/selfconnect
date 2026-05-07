@@ -645,17 +645,33 @@ def submit_claude_input(hwnd: int) -> bool:
       - PostMessage(WM_KEYDOWN, VK_RETURN)
       - SendInput(VK_RETURN) even after SetForegroundWindow
 
-    The only working method found (session 15, 2026-05-07) is
-    PostMessage(WM_CHAR, 0x000D) to the parent CASCADIA_HOSTING_WINDOW_CLASS
-    window.  This bypasses the XAML input routing and delivers the carriage
-    return directly to the ConPTY stdin pipe.
+    Reliable method (session 15, 2026-05-07): send WM_CHAR 0x000D to BOTH
+    the Windows.UI.Input.InputSite.WindowClass child AND the parent
+    CASCADIA_HOSTING_WINDOW_CLASS.  Posting to the parent alone works for some
+    windows; the dual-post is required for others (discovered when spawning F).
 
-    Returns True if the message was posted successfully (PostMessageW != 0).
+    Returns True if at least the parent post succeeded.
     Does NOT guarantee the prompt was processed — poll get_text_uia() to confirm.
     """
     WM_CHAR = 0x0102
-    # lParam: repeat=1, scan=0x1C (Enter scancode), extended=0, prior=0, trans=0
-    lParam  = 0x001C0001
+    lParam  = 0x001C0001  # repeat=1, scan=0x1C (Enter), extended=0
+
+    # Find the InputSite child (Windows.UI.Input.InputSite.WindowClass)
+    _input_site: list[int] = []
+
+    def _enum_cb(child: int, _: int) -> bool:
+        buf = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(child, buf, 64)
+        if "InputSite" in buf.value:
+            _input_site.append(child)
+        return True
+
+    _cb_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+    user32.EnumChildWindows(hwnd, _cb_type(_enum_cb), 0)
+
+    if _input_site:
+        user32.PostMessageW(_input_site[0], WM_CHAR, 0x000D, lParam)
+
     return bool(user32.PostMessageW(hwnd, WM_CHAR, 0x000D, lParam))
 
 
