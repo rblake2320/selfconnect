@@ -109,17 +109,29 @@ class PartnerConfig:
 # ── Window discovery ──────────────────────────────────────────────────────────
 
 def find_claude_terminals() -> list[WindowTarget]:
-    """Return all windows that look like a Claude Code terminal."""
+    """Return all windows that look like a Claude Code or mesh agent terminal.
+
+    Includes:
+    - Claude Code instances (title contains 'claude')
+    - local_agent.py instances (Agent-B, Ollama-based — no approval prompts, shown as peers)
+    - Observer instances (Agent-E)
+    - Any SelfConnect mesh terminal
+    """
     results: list[WindowTarget] = []
+    # Title patterns that indicate a mesh agent or Claude Code terminal
+    TITLE_PATTERNS = (
+        "claude", "claude code",      # Claude Code instances (A, E)
+        "agent-b", "local_agent",     # Ollama local agent (Agent-B)
+        "agent-e", "observer",        # Observer Claude (Agent-E)
+        "pka", "selfconnect", "anthropic",
+    )
     for w in list_windows():
         title_lower = w.title.lower()
         exe_lower = (w.exe_name or "").lower()
-        # Windows Terminal, cmd, PowerShell — all Claude Code hosts
-        if any(x in title_lower for x in ("claude", "claude code")):
+        if any(x in title_lower for x in TITLE_PATTERNS):
             results.append(w)
         elif any(x in exe_lower for x in ("windowsterminal", "cmd.exe", "powershell")):
-            # Only include if the title hints at Claude Code activity
-            if any(x in title_lower for x in ("claude", "pka", "selfconnect", "anthropic")):
+            if any(x in title_lower for x in TITLE_PATTERNS):
                 results.append(w)
     return results
 

@@ -2,15 +2,17 @@
 
 # Agent HWNDs (update when agents restart)
 AGENT_A_HWND = 0x17b1322   # Claude Code orchestrator (airgap-sop-production tab)
-AGENT_B_HWND = 0x1311316   # Claude Code peer (SelfConnect mesh peer terminal)
+AGENT_B_HWND = 0x1fae0e46   # Claude Code peer (SelfConnect mesh peer terminal)
 AGENT_C_HWND = 0x2602034   # Gemini CLI
 AGENT_D_HWND = 0x1870dac   # Codex (techai tab)
+AGENT_E_HWND = 0x3a90b00   # Observer Claude (patent/github logger) — updated by spawn_observer.py
 
 MESH = {
     "A": AGENT_A_HWND,
     "B": AGENT_B_HWND,
     "C": AGENT_C_HWND,
     "D": AGENT_D_HWND,
+    "E": AGENT_E_HWND,
 }
 
 # Standard task briefing footer — append to every task message
