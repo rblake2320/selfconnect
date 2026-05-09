@@ -27,3 +27,6 @@ tmp_*.png
 # OS
 .DS_Store
 Thumbs.db
+
+# Observer log artifacts
+observer_logs/
