@@ -51,6 +51,9 @@ __all__ = [  # noqa: RUF022  # grouped by version/category, not alphabetical
     "capture_window", "crop_to_client", "save_capture",
     # Text extraction (zero-inference)
     "get_window_text", "get_child_texts", "get_text_uia",
+    # UI Accessibility Tree (v0.10.0) — full control tree, Codex-parity interaction
+    "get_ui_tree", "find_control", "interact_control",
+    "watch_ui", "WatchHandle",
     # Wait / poll
     "wait_for_title_change",
     # Framing layer (v0.5.0) — reliable AI-to-AI messaging
@@ -602,6 +605,614 @@ def get_text_uia(hwnd: int) -> str:
         pass
 
     return ""
+
+
+# ── UI Accessibility Tree (v0.10.0) ──────────────────────────────────────────
+
+def get_ui_tree(hwnd: int, max_depth: int = 10) -> list:
+    """Extract the full UI Automation tree from a window.
+
+    Returns a list of dicts (depth-first order), each representing one UI element:
+    {
+        "name":          "Save",
+        "control_type":  "Button",
+        "class_name":    "Button",
+        "automation_id": "btnSave",
+        "rect":          {"left": 340, "top": 500, "right": 420, "bottom": 530},
+        "is_enabled":    True,
+        "patterns":      ["Invoke"],
+        "value":         "",
+        "children":      [...]
+    }
+
+    Strategy: pywinauto primary (richest), comtypes fallback for elements where
+    pywinauto returns control_type=None or "Unknown".
+
+    Args:
+        hwnd:      Window handle.
+        max_depth: Maximum tree depth to traverse (default 10). Use lower values
+                   for apps with deep DOM-backed trees (Chrome, VS Code).
+    """
+    # Strategy 1: pywinauto
+    try:
+        import pythoncom as _pcom  # type: ignore
+        from pywinauto import Desktop as _PwaDesktop  # type: ignore
+
+        try:
+            _pcom.CoInitializeEx(_pcom.COINIT_MULTITHREADED)
+        except Exception:
+            pass
+
+        desktop = _PwaDesktop(backend="uia")
+        wrapper = desktop.window(handle=hwnd)
+
+        def _pwa_patterns(w) -> list:
+            patterns = []
+            try:
+                if w.iface_invoke:
+                    patterns.append("Invoke")
+            except Exception:
+                pass
+            try:
+                if w.iface_value:
+                    patterns.append("Value")
+            except Exception:
+                pass
+            try:
+                if w.iface_toggle:
+                    patterns.append("Toggle")
+            except Exception:
+                pass
+            try:
+                if w.iface_selection:
+                    patterns.append("Selection")
+            except Exception:
+                pass
+            try:
+                if w.iface_expand_collapse:
+                    patterns.append("ExpandCollapse")
+            except Exception:
+                pass
+            try:
+                if w.iface_scroll:
+                    patterns.append("Scroll")
+            except Exception:
+                pass
+            try:
+                if w.iface_selection_item:
+                    patterns.append("SelectionItem")
+            except Exception:
+                pass
+            return patterns
+
+        def _pwa_value(w) -> str:
+            try:
+                if w.iface_value:
+                    return w.iface_value.CurrentValue or ""
+            except Exception:
+                pass
+            return ""
+
+        def _pwa_rect(w) -> dict:
+            try:
+                r = w.element_info.rectangle
+                return {"left": r.left, "top": r.top, "right": r.right, "bottom": r.bottom}
+            except Exception:
+                return {"left": 0, "top": 0, "right": 0, "bottom": 0}
+
+        def _build_node(w, depth: int) -> dict:
+            info = w.element_info
+            ct = ""
+            try:
+                ct = str(info.control_type or "")
+            except Exception:
+                pass
+            name = ""
+            try:
+                name = info.name or ""
+            except Exception:
+                pass
+            class_name = ""
+            try:
+                class_name = info.class_name or ""
+            except Exception:
+                pass
+            auto_id = ""
+            try:
+                auto_id = info.automation_id or ""
+            except Exception:
+                pass
+            is_enabled = True
+            try:
+                is_enabled = bool(info.enabled)
+            except Exception:
+                pass
+
+            node: dict = {
+                "name": name,
+                "control_type": ct,
+                "class_name": class_name,
+                "automation_id": auto_id,
+                "rect": _pwa_rect(w),
+                "is_enabled": is_enabled,
+                "patterns": _pwa_patterns(w),
+                "value": _pwa_value(w),
+                "children": [],
+            }
+            if depth < max_depth:
+                try:
+                    for child in w.children():
+                        node["children"].append(_build_node(child, depth + 1))
+                except Exception:
+                    pass
+            return node
+
+        root_node = _build_node(wrapper, 0)
+        return [root_node]
+
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # Strategy 2: comtypes IUIAutomation fallback
+    try:
+        import comtypes.client as _cc  # type: ignore
+        import comtypes.gen.UIAutomationClient as _uia  # type: ignore
+
+        _CT_NAMES = {
+            50000: "Button", 50001: "Calendar", 50002: "CheckBox",
+            50003: "ComboBox", 50004: "Edit", 50005: "Hyperlink",
+            50006: "Image", 50007: "ListItem", 50008: "List",
+            50009: "Menu", 50010: "MenuBar", 50011: "MenuItem",
+            50012: "ProgressBar", 50013: "RadioButton", 50014: "ScrollBar",
+            50015: "Slider", 50016: "Spinner", 50017: "StatusBar",
+            50018: "Tab", 50019: "TabItem", 50020: "Text",
+            50021: "ToolBar", 50022: "ToolTip", 50023: "Tree",
+            50024: "TreeItem", 50025: "Custom", 50026: "Group",
+            50027: "Thumb", 50028: "DataGrid", 50029: "DataItem",
+            50030: "Document", 50031: "SplitButton", 50032: "Window",
+            50033: "Pane", 50034: "Header", 50035: "HeaderItem",
+            50036: "Table", 50037: "TitleBar", 50038: "Separator",
+        }
+
+        auto = _cc.CreateObject(
+            "{ff48dba4-60ef-4201-aa87-54103eef594e}",
+            interface=_uia.IUIAutomation,
+        )
+        elem = auto.ElementFromHandle(hwnd)
+        if elem is None:
+            return []
+
+        _UIA_INVOKE   = 10000
+        _UIA_VALUE    = 10002
+        _UIA_TOGGLE   = 10015
+        _UIA_EXPAND   = 10005
+        _UIA_SELECT   = 10010
+        _UIA_SCROLL   = 10004
+
+        def _ct_patterns(e) -> list:
+            pats = []
+            for pid, name in [(_UIA_INVOKE, "Invoke"), (_UIA_VALUE, "Value"),
+                               (_UIA_TOGGLE, "Toggle"), (_UIA_EXPAND, "ExpandCollapse"),
+                               (_UIA_SELECT, "SelectionItem"), (_UIA_SCROLL, "Scroll")]:
+                try:
+                    p = e.GetCurrentPattern(pid)
+                    if p is not None:
+                        pats.append(name)
+                except Exception:
+                    pass
+            return pats
+
+        def _ct_value(e) -> str:
+            try:
+                p = e.GetCurrentPattern(_UIA_VALUE)
+                if p is not None:
+                    return p.QueryInterface(_uia.IUIAutomationValuePattern).CurrentValue or ""
+            except Exception:
+                pass
+            return ""
+
+        def _ct_rect(e) -> dict:
+            try:
+                r = e.CurrentBoundingRectangle
+                return {"left": r.left, "top": r.top, "right": r.right, "bottom": r.bottom}
+            except Exception:
+                return {"left": 0, "top": 0, "right": 0, "bottom": 0}
+
+        condition = auto.CreateTrueCondition()
+        walker = auto.CreateTreeWalker(condition)
+
+        def _build_ct_node(e, depth: int) -> dict:
+            ct_id = 0
+            try:
+                ct_id = e.CurrentControlType
+            except Exception:
+                pass
+            name = ""
+            try:
+                name = e.CurrentName or ""
+            except Exception:
+                pass
+            class_name = ""
+            try:
+                class_name = e.CurrentClassName or ""
+            except Exception:
+                pass
+            auto_id = ""
+            try:
+                auto_id = e.CurrentAutomationId or ""
+            except Exception:
+                pass
+            is_enabled = True
+            try:
+                is_enabled = bool(e.CurrentIsEnabled)
+            except Exception:
+                pass
+
+            node: dict = {
+                "name": name,
+                "control_type": _CT_NAMES.get(ct_id, f"Unknown({ct_id})"),
+                "class_name": class_name,
+                "automation_id": auto_id,
+                "rect": _ct_rect(e),
+                "is_enabled": is_enabled,
+                "patterns": _ct_patterns(e),
+                "value": _ct_value(e),
+                "children": [],
+            }
+            if depth < max_depth:
+                try:
+                    child = walker.GetFirstChildElement(e)
+                    while child:
+                        node["children"].append(_build_ct_node(child, depth + 1))
+                        child = walker.GetNextSiblingElement(child)
+                except Exception:
+                    pass
+            return node
+
+        root_node = _build_ct_node(elem, 0)
+        return [root_node]
+
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    return []
+
+
+def _flatten_tree(nodes: list, _out: list | None = None) -> list:
+    """Flatten a nested UI tree into a single list of nodes (without children lists)."""
+    if _out is None:
+        _out = []
+    for node in nodes:
+        children = node.get("children", [])
+        flat_node = {k: v for k, v in node.items() if k != "children"}
+        _out.append(flat_node)
+        _flatten_tree(children, _out)
+    return _out
+
+
+def find_control(
+    hwnd: int,
+    name: str | None = None,
+    control_type: str | None = None,
+    automation_id: str | None = None,
+    max_depth: int = 10,
+) -> dict | None:
+    """Find the first UI control matching the given criteria.
+
+    At least one of name, control_type, or automation_id must be provided.
+    Matching is case-insensitive for name and control_type.
+
+    Returns the matching node dict (without children), or None if not found.
+
+    Example:
+        btn = find_control(hwnd, name="Save", control_type="Button")
+        if btn:
+            interact_control(hwnd, btn["automation_id"] or btn["name"], "invoke")
+    """
+    if name is None and control_type is None and automation_id is None:
+        raise ValueError("At least one of name, control_type, or automation_id must be provided.")
+
+    tree = get_ui_tree(hwnd, max_depth=max_depth)
+    flat = _flatten_tree(tree)
+
+    name_lo = name.lower() if name else None
+    ct_lo = control_type.lower() if control_type else None
+
+    for node in flat:
+        if name_lo is not None and node.get("name", "").lower() != name_lo:
+            continue
+        if ct_lo is not None and node.get("control_type", "").lower() != ct_lo:
+            continue
+        if automation_id is not None and node.get("automation_id", "") != automation_id:
+            continue
+        return node
+
+    return None
+
+
+def interact_control(
+    hwnd: int,
+    name_or_id: str,
+    action: str = "invoke",
+    value: str = "",
+    max_depth: int = 10,
+) -> bool:
+    """Find a control by name or automation_id and perform an action on it.
+
+    Actions:
+        "invoke"   — click / press the control (InvokePattern)
+        "set_value"— set text (ValuePattern); pass value= argument
+        "toggle"   — toggle checkbox/button (TogglePattern)
+        "select"   — select a list/tree item (SelectionItemPattern)
+        "expand"   — expand a tree node or dropdown (ExpandCollapsePattern)
+        "collapse" — collapse a tree node or dropdown (ExpandCollapsePattern)
+
+    Raises ValueError with a descriptive message if the control is not found
+    or the requested pattern is unavailable.
+
+    Returns True on success.
+
+    Example:
+        interact_control(notepad_hwnd, "Save", "invoke")
+        interact_control(edit_hwnd, "Text Editor", "set_value", value="Hello World")
+    """
+    try:
+        import pythoncom as _pcom  # type: ignore
+        from pywinauto import Desktop as _PwaDesktop  # type: ignore
+
+        try:
+            _pcom.CoInitializeEx(_pcom.COINIT_MULTITHREADED)
+        except Exception:
+            pass
+
+        desktop = _PwaDesktop(backend="uia")
+        wrapper = desktop.window(handle=hwnd)
+
+        # Search all descendants for a match
+        target_wrapper = None
+        try:
+            for w in wrapper.descendants():
+                info = w.element_info
+                w_name = ""
+                w_auto_id = ""
+                try:
+                    w_name = info.name or ""
+                except Exception:
+                    pass
+                try:
+                    w_auto_id = info.automation_id or ""
+                except Exception:
+                    pass
+                if w_name.lower() == name_or_id.lower() or w_auto_id == name_or_id:
+                    target_wrapper = w
+                    break
+        except Exception:
+            pass
+
+        if target_wrapper is None:
+            # Collect available names for the error message
+            available = []
+            try:
+                for w in wrapper.descendants():
+                    try:
+                        n = w.element_info.name or ""
+                        if n:
+                            available.append(n)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            raise ValueError(
+                f"Control {name_or_id!r} not found in hwnd={hwnd}. "
+                f"Available controls: {available[:20]}"
+            )
+
+        info = target_wrapper.element_info
+        ct = ""
+        try:
+            ct = str(info.control_type or "")
+        except Exception:
+            pass
+        is_enabled = True
+        try:
+            is_enabled = bool(info.enabled)
+        except Exception:
+            pass
+
+        action_lo = action.lower()
+
+        if action_lo == "invoke":
+            try:
+                if target_wrapper.iface_invoke:
+                    target_wrapper.iface_invoke.Invoke()
+                    return True
+            except Exception:
+                pass
+            raise ValueError(
+                f"Control {name_or_id!r} (type={ct}) does not support InvokePattern. "
+                f"is_enabled={is_enabled}. Try action='toggle' or 'select'."
+            )
+
+        elif action_lo == "set_value":
+            try:
+                if target_wrapper.iface_value:
+                    target_wrapper.iface_value.SetValue(value)
+                    return True
+            except Exception:
+                pass
+            raise ValueError(
+                f"Control {name_or_id!r} (type={ct}) does not support ValuePattern. "
+                f"is_enabled={is_enabled}. For read-only fields, try send_string() instead."
+            )
+
+        elif action_lo == "toggle":
+            try:
+                if target_wrapper.iface_toggle:
+                    target_wrapper.iface_toggle.Toggle()
+                    return True
+            except Exception:
+                pass
+            raise ValueError(
+                f"Control {name_or_id!r} (type={ct}) does not support TogglePattern. "
+                f"is_enabled={is_enabled}."
+            )
+
+        elif action_lo == "select":
+            try:
+                if target_wrapper.iface_selection_item:
+                    target_wrapper.iface_selection_item.Select()
+                    return True
+            except Exception:
+                pass
+            raise ValueError(
+                f"Control {name_or_id!r} (type={ct}) does not support SelectionItemPattern. "
+                f"is_enabled={is_enabled}."
+            )
+
+        elif action_lo == "expand":
+            try:
+                if target_wrapper.iface_expand_collapse:
+                    target_wrapper.iface_expand_collapse.Expand()
+                    return True
+            except Exception:
+                pass
+            raise ValueError(
+                f"Control {name_or_id!r} (type={ct}) does not support ExpandCollapsePattern. "
+                f"is_enabled={is_enabled}."
+            )
+
+        elif action_lo == "collapse":
+            try:
+                if target_wrapper.iface_expand_collapse:
+                    target_wrapper.iface_expand_collapse.Collapse()
+                    return True
+            except Exception:
+                pass
+            raise ValueError(
+                f"Control {name_or_id!r} (type={ct}) does not support ExpandCollapsePattern. "
+                f"is_enabled={is_enabled}."
+            )
+
+        else:
+            raise ValueError(
+                f"Unknown action {action!r}. Supported: invoke, set_value, toggle, "
+                f"select, expand, collapse."
+            )
+
+    except ImportError:
+        raise RuntimeError(
+            "pywinauto is required for interact_control(). "
+            "Install: pip install pywinauto"
+        )
+
+
+# ── UI Tree Watcher (v0.10.0) ─────────────────────────────────────────────────
+
+class WatchHandle:
+    """Handle returned by watch_ui(). Call .stop() to end watching."""
+
+    def __init__(self, thread: threading.Thread, stop_event: threading.Event) -> None:
+        self._thread = thread
+        self._stop = stop_event
+
+    def stop(self) -> None:
+        """Stop the watcher thread."""
+        self._stop.set()
+        self._thread.join(timeout=5.0)
+
+    def is_alive(self) -> bool:
+        return self._thread.is_alive()
+
+
+def watch_ui(
+    hwnd: int,
+    callback,
+    poll: float = 0.1,
+    timeout: float = 30.0,
+    max_depth: int = 10,
+) -> "WatchHandle":
+    """Poll the UI tree and fire callback when it changes.
+
+    Runs on a daemon thread. The callback receives three arguments:
+        added:   list[dict] — controls that appeared since last poll
+        removed: list[dict] — controls that disappeared
+        changed: list[tuple[dict, dict]] — (old, new) for controls whose
+                 enabled state, value, or patterns changed
+
+    Controls are matched across polls by automation_id if available, otherwise
+    by (name, control_type) pair.
+
+    Args:
+        hwnd:      Window handle to watch.
+        callback:  Callable(added, removed, changed) — called on any diff.
+        poll:      Seconds between polls (default 0.1 s).
+        timeout:   Stop watching after this many seconds (default 30 s).
+        max_depth: Tree depth limit passed to get_ui_tree() (default 10).
+
+    Returns:
+        WatchHandle — call .stop() to end early.
+
+    Example:
+        def on_change(added, removed, changed):
+            for ctrl in added:
+                if ctrl["name"] == "Save" and ctrl["control_type"] == "Button":
+                    interact_control(hwnd, "Save", "invoke")
+
+        handle = watch_ui(notepad_hwnd, on_change, poll=0.1, timeout=60)
+        # ... later ...
+        handle.stop()
+    """
+    stop_event = threading.Event()
+
+    def _key(node: dict) -> str:
+        if node.get("automation_id"):
+            return f"id:{node['automation_id']}"
+        return f"name:{node.get('name','')}|ct:{node.get('control_type','')}"
+
+    def _snapshot() -> dict:
+        flat = _flatten_tree(get_ui_tree(hwnd, max_depth=max_depth))
+        return {_key(n): n for n in flat}
+
+    def _node_changed(old: dict, new: dict) -> bool:
+        return (
+            old.get("is_enabled") != new.get("is_enabled")
+            or old.get("value") != new.get("value")
+            or old.get("patterns") != new.get("patterns")
+        )
+
+    def _run() -> None:
+        prev = _snapshot()
+        deadline = time.monotonic() + timeout
+        while not stop_event.is_set() and time.monotonic() < deadline:
+            time.sleep(poll)
+            try:
+                curr = _snapshot()
+            except Exception:
+                continue
+
+            added = [curr[k] for k in curr if k not in prev]
+            removed = [prev[k] for k in prev if k not in curr]
+            changed = [
+                (prev[k], curr[k])
+                for k in curr
+                if k in prev and _node_changed(prev[k], curr[k])
+            ]
+
+            if added or removed or changed:
+                try:
+                    callback(added, removed, changed)
+                except Exception:
+                    pass
+
+            prev = curr
+
+    t = threading.Thread(target=_run, daemon=True, name=f"watch_ui_{hwnd}")
+    t.start()
+    return WatchHandle(t, stop_event)
 
 
 # ── Window management ────────────────────────────────────────────────────────
