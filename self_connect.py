@@ -3032,52 +3032,40 @@ def _wait_for_claude_ready(
 ) -> bool:
     """Wait until a Claude Code terminal is ready to accept input.
 
-    Detection strategy (any match → ready):
-    1. UIA text from the window contains a Claude Code prompt indicator
-       ('>',  '?', 'Claude', or the typical '>' prompt character)
-    2. The InputSite child window exists (ConPTY is alive)
-
-    Falls back to a 5-second sleep if neither detection method fires within
-    the first 3 polls — in case UIA is slow to initialize.
+    Detection strategy (in order of reliability):
+    1. Window title contains Claude Code indicators (✳, "claude") — title only
+       changes after the Claude Code TUI process has initialized. This avoids
+       false positives from cmd.exe which also shows ">" in its UIA text.
+    2. Fallback: if no title match within timeout, sleep 20s and return True
+       (gives Claude Code time to initialize even if title detection misses).
 
     Args:
         hwnd:    Window handle of the Claude Code terminal.
-        timeout: Maximum seconds to wait (default 30).
+        timeout: Maximum seconds to wait for title detection (default 30).
         poll:    Seconds between polls (default 0.5).
 
     Returns:
-        True if ready was detected, False if timeout reached.
+        True if ready was detected (or fallback triggered), False if hwnd gone.
     """
-    _INDICATORS = (">", "?", "Claude", "claude", "Welcome", "$")
+    # Claude Code changes the WT window title to include "claude" once the TUI is up.
+    # cmd.exe prompt or pre-Claude shell will NOT have "claude" in the title.
+    _TITLE_INDICATORS = ("claude", "\u2733")  # "claude" or "✳" unicode sparkle
     deadline = time.monotonic() + timeout
-    fast_fail_at = time.monotonic() + 3.0  # quick fallback window
-    fallback_used = False
 
     while time.monotonic() < deadline:
-        # Check 1: InputSite child exists (ConPTY initialized)
-        input_site = find_child_by_class(hwnd, WT_INPUT_CLASS)
-        if input_site:
-            # Give ConPTY a tiny settle time before injecting
-            time.sleep(0.2)
-            return True
-
-        # Check 2: UIA text contains a prompt indicator
-        try:
-            text = get_text_uia(hwnd)
-            if text and any(ind in text for ind in _INDICATORS):
-                time.sleep(0.2)
-                return True
-        except Exception:
-            pass
-
-        # Fallback: if quick-detection window expired, sleep 5s and return True
-        if not fallback_used and time.monotonic() > fast_fail_at:
-            time.sleep(5.0)
-            fallback_used = True
-            return True
+        for w in list_windows():
+            if w.hwnd == hwnd:
+                title_lo = w.title.lower()
+                if any(ind in title_lo for ind in _TITLE_INDICATORS):
+                    # Extra settle: Claude TUI needs ~1s after title appears
+                    time.sleep(1.5)
+                    return True
+                break  # hwnd found but title not ready yet
 
         time.sleep(poll)
 
+    # Fallback: hwnd never got a Claude title — sleep and hope for the best
+    time.sleep(20.0)
     return False
 
 
