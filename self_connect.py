@@ -54,6 +54,8 @@ __all__ = [  # noqa: RUF022  # grouped by version/category, not alphabetical
     # UI Accessibility Tree (v0.10.0) — full control tree, Codex-parity interaction
     "get_ui_tree", "find_control", "interact_control",
     "watch_ui", "WatchHandle",
+    # Speed constants (v0.10.0)
+    "_TURBO_DELAY",
     # Wait / poll
     "wait_for_title_change",
     # Framing layer (v0.5.0) — reliable AI-to-AI messaging
@@ -397,22 +399,84 @@ def _send_char_sendinput(ch: str) -> None:
         user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
 
 
-def send_string(target: WindowTarget, text: str, char_delay: float = 0.05) -> None:
+# Minimum reliable char_delay discovered empirically via bench_char_delay.py.
+# 0ms works on most modern ConPTY setups; raise to 0.002 if you see dropped chars.
+_TURBO_DELAY: float = 0.0
+
+
+def send_string(
+    target: "WindowTarget",
+    text: str,
+    char_delay: float = 0.05,
+    mode: str = "auto",
+) -> None:
     """
-    Send text to the target window. Auto-selects delivery method:
+    Send text to the target window.
 
-    - Windows Terminal (CASCADIA_HOSTING_WINDOW_CLASS): PostMessage(WM_CHAR) to
-      the InputSite child, routed through ConPTY. Does NOT require foreground
-      focus — the target window can be visible but NOT the active window.
-      Include '\\r' in the text string to send Enter (wParam=0x0D via WM_CHAR,
-      or WM_KEYDOWN/VK_RETURN — both work through ConPTY).
+    Args:
+        target:     WindowTarget to send to.
+        text:       Text to send (include '\\r' for Enter).
+        char_delay: Per-character sleep in seconds — only used in 'safe' mode
+                    or when mode='auto' falls back to safe. Ignored in turbo/clipboard.
+        mode:       Speed mode:
+                      "turbo"     — PostMessage(WM_CHAR) with _TURBO_DELAY (near-instant).
+                                    ConPTY targets only; falls back to 'safe' otherwise.
+                      "clipboard" — Write full text to clipboard, Ctrl+V paste.
+                                    Near-instant; requires foreground. Clobbers clipboard.
+                                    Saves and restores previous clipboard content.
+                      "safe"      — Legacy 50ms/char (default pre-v0.10.0 behaviour).
+                      "auto"      — Turbo for ConPTY/UWP targets, safe for others.
 
-    - Classic Win32 windows: SendInput(KEYEVENTF_UNICODE). DOES require the
-      target window to have foreground focus.
+    Delivery notes:
+    - ConPTY (Windows Terminal): PostMessage(WM_CHAR) to InputSite child.
+      Background-safe — no foreground focus required.
+    - Classic Win32 windows: SendInput(KEYEVENTF_UNICODE). Requires foreground focus.
 
     Verified: one Claude session can inject text into another Claude session's
-    terminal window without stealing foreground focus (2026-04-30 live proof).
+    terminal without stealing foreground focus (2026-04-30 live proof).
     """
+    mode = mode.lower()
+
+    if mode == "clipboard":
+        # Save, paste, restore
+        prev = ""
+        try:
+            prev = read_clipboard()
+        except Exception:
+            pass
+        write_clipboard(text)
+        focus_window(target.hwnd)
+        time.sleep(0.05)  # let focus settle
+        # Ctrl+V via SendInput
+        _press_vk(VK_CONTROL, down=True)
+        _press_vk(ord('V'), down=True)
+        _press_vk(ord('V'), down=False)
+        _press_vk(VK_CONTROL, down=False)
+        time.sleep(0.05)
+        try:
+            write_clipboard(prev)
+        except Exception:
+            pass
+        return
+
+    if mode == "turbo" or (mode == "auto" and target.is_uwp_terminal()):
+        delay = _TURBO_DELAY
+        if target.is_uwp_terminal():
+            input_site = find_child_by_class(target.hwnd, WT_INPUT_CLASS)
+            delivery = input_site if input_site else target.hwnd
+            for ch in text:
+                _send_char_postmessage(delivery, ch)
+                if delay > 0:
+                    time.sleep(delay)
+        else:
+            # turbo requested but not a ConPTY target — fall through to safe
+            for ch in text:
+                _send_char_sendinput(ch)
+                if delay > 0:
+                    time.sleep(delay)
+        return
+
+    # "safe" or "auto" for non-UWP targets
     if target.is_uwp_terminal():
         input_site = find_child_by_class(target.hwnd, WT_INPUT_CLASS)
         delivery = input_site if input_site else target.hwnd
@@ -423,6 +487,18 @@ def send_string(target: WindowTarget, text: str, char_delay: float = 0.05) -> No
         for ch in text:
             _send_char_sendinput(ch)
             time.sleep(char_delay)
+
+
+def _press_vk(vk: int, down: bool) -> None:
+    """Fire a single virtual-key press or release via SendInput."""
+    inp = INPUT()
+    inp.type = INPUT_KEYBOARD
+    inp.u.ki.wVk = vk
+    inp.u.ki.wScan = 0
+    inp.u.ki.dwFlags = 0 if down else KEYEVENTF_KEYUP
+    inp.u.ki.time = 0
+    inp.u.ki.dwExtraInfo = 0
+    user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
 
 
 # VK name lookup for send_keys
@@ -1866,21 +1942,38 @@ class WindowPool:
     def get(self, name: str) -> Optional[WindowTarget]:
         return self.targets.get(name)
 
-    def send_to(self, name: str, text: str, char_delay: float = 0.05) -> None:
+    def send_to(self, name: str, text: str, char_delay: float = 0.05,
+                mode: str = "auto") -> None:
         """Type text into a named window (no foreground focus required for UWP)."""
         t = self.targets.get(name)
         if not t:
             raise KeyError(f"No window named '{name}' in pool")
-        send_string(t, text, char_delay)
+        send_string(t, text, char_delay, mode=mode)
 
     def capture_all(self, crop: bool = True) -> "dict[str, object]":
-        """Capture all registered windows. Returns {name: PIL.Image | None}."""
-        results: dict[str, object] = {}
-        for name, t in self.targets.items():
+        """Capture all registered windows in parallel. Returns {name: PIL.Image | None}.
+
+        Each PrintWindow call uses its own GDI DC and is thread-safe by design.
+        Falls back to serial capture if threading is unavailable.
+        """
+        import concurrent.futures as _cf
+
+        def _capture_one(item):
+            name, t = item
             img = capture_window(t.hwnd)
             if img and crop:
                 img = crop_to_client(t.hwnd, img)
-            results[name] = img
+            return name, img
+
+        results: dict[str, object] = {}
+        items = list(self.targets.items())
+        if len(items) <= 1:
+            for name, img in map(_capture_one, items):
+                results[name] = img
+        else:
+            with _cf.ThreadPoolExecutor(max_workers=min(len(items), 8)) as pool:
+                for name, img in pool.map(_capture_one, items):
+                    results[name] = img
         return results
 
     def save_all(self, directory: Optional[str] = None) -> "dict[str, str]":
@@ -2156,6 +2249,7 @@ def parse_frame(raw: str) -> dict | None:
 def send_frame(target, from_hwnd: int, payload: str,
                topic: str = "default", seq: int | None = None,
                char_delay: float = 0.03,
+               mode: str = "turbo",
                ack: bool = False, ack_timeout: float = 5.0,
                retries: int = 2) -> dict:
     """
@@ -2167,7 +2261,8 @@ def send_frame(target, from_hwnd: int, payload: str,
         payload: message text
         topic: conversation thread ID
         seq: sequence number (auto-increments if None)
-        char_delay: per-character delay (lower = faster for framed msgs)
+        char_delay: per-character delay — used only when mode='safe'
+        mode: speed mode passed to send_string() — default 'turbo'
         ack: if True, verify delivery via PrintWindow after sending
         ack_timeout: seconds to wait for ACK verification
         retries: number of retransmit attempts if ACK fails
@@ -2176,7 +2271,7 @@ def send_frame(target, from_hwnd: int, payload: str,
     """
     to_hwnd = target.hwnd if hasattr(target, "hwnd") else target
     frame = build_frame(from_hwnd, to_hwnd, payload, topic, seq)
-    send_string(target, frame, char_delay=char_delay)
+    send_string(target, frame, char_delay=char_delay, mode=mode)
     header = _json.loads(frame[1:frame.index(_NUL)])
     if not ack:
         return header
@@ -2930,6 +3025,62 @@ def read_checkpoint(path: str) -> Checkpoint:
     )
 
 
+def _wait_for_claude_ready(
+    hwnd: int,
+    timeout: float = 30.0,
+    poll: float = 0.5,
+) -> bool:
+    """Wait until a Claude Code terminal is ready to accept input.
+
+    Detection strategy (any match → ready):
+    1. UIA text from the window contains a Claude Code prompt indicator
+       ('>',  '?', 'Claude', or the typical '>' prompt character)
+    2. The InputSite child window exists (ConPTY is alive)
+
+    Falls back to a 5-second sleep if neither detection method fires within
+    the first 3 polls — in case UIA is slow to initialize.
+
+    Args:
+        hwnd:    Window handle of the Claude Code terminal.
+        timeout: Maximum seconds to wait (default 30).
+        poll:    Seconds between polls (default 0.5).
+
+    Returns:
+        True if ready was detected, False if timeout reached.
+    """
+    _INDICATORS = (">", "?", "Claude", "claude", "Welcome", "$")
+    deadline = time.monotonic() + timeout
+    fast_fail_at = time.monotonic() + 3.0  # quick fallback window
+    fallback_used = False
+
+    while time.monotonic() < deadline:
+        # Check 1: InputSite child exists (ConPTY initialized)
+        input_site = find_child_by_class(hwnd, WT_INPUT_CLASS)
+        if input_site:
+            # Give ConPTY a tiny settle time before injecting
+            time.sleep(0.2)
+            return True
+
+        # Check 2: UIA text contains a prompt indicator
+        try:
+            text = get_text_uia(hwnd)
+            if text and any(ind in text for ind in _INDICATORS):
+                time.sleep(0.2)
+                return True
+        except Exception:
+            pass
+
+        # Fallback: if quick-detection window expired, sleep 5s and return True
+        if not fallback_used and time.monotonic() > fast_fail_at:
+            time.sleep(5.0)
+            fallback_used = True
+            return True
+
+        time.sleep(poll)
+
+    return False
+
+
 class MigrationCoordinator:
     """
     Autonomous context-migration supervisor.
@@ -3171,7 +3322,7 @@ class MigrationCoordinator:
                 return new_hwnd
             # Launch claude in the new terminal
             send_string(new_win, "claude\r")
-            time.sleep(12.0)   # wait for Claude Code to initialize
+            _wait_for_claude_ready(new_win.hwnd, timeout=30.0, poll=0.5)
             # Inject briefing via PostMessage WM_CHAR (no stdin redirect — needs TTY)
             send_string(new_win, briefing)
             time.sleep(0.5)

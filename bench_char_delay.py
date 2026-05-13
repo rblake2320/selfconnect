@@ -23,16 +23,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from self_connect import WindowTarget, find_target, list_windows, send_string
 
-
 # ── Payload generator ─────────────────────────────────────────────────────────
 
 def _make_payload(length: int, seed: str = "BENCH") -> str:
     """Generate a deterministic printable ASCII payload of exactly `length` chars.
     Uses only characters safe for cmd.exe echo: A-Z 0-9 (no special chars).
     """
-    chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-    raw = (seed * ((length // len(seed)) + 2))[:length]
-    return raw
+    return (seed * ((length // len(seed)) + 2))[:length]
 
 
 # ── Single trial ──────────────────────────────────────────────────────────────
@@ -108,7 +105,7 @@ def run_benchmark(target: WindowTarget, trials: int, out_path: str) -> None:
     done = 0
 
     print(f"Target: hwnd={target.hwnd} title={target.title!r}")
-    print(f"Trials: {trials} | Combos: {len(DELAYS_MS)} delays × {len(PAYLOAD_SIZES)} sizes")
+    print(f"Trials: {trials} | Combos: {len(DELAYS_MS)} delays x {len(PAYLOAD_SIZES)} sizes")
     print(f"Total sends: {total}")
     print()
 
@@ -153,7 +150,7 @@ def run_benchmark(target: WindowTarget, trials: int, out_path: str) -> None:
         any_drop = any(float(r["drop_rate"]) > 0 for r in subset)
         max_drop = max(float(r["drop_rate"]) for r in subset)
         verdict = "RELIABLE" if not any_drop else "DROPS"
-        print(f"{delay_ms:>10}  {str(any_drop):>10}  {max_drop:>12.4f}  {verdict:>10}")
+        print(f"{delay_ms:>10}  {any_drop!r:>10}  {max_drop:>12.4f}  {verdict:>10}")
 
     reliable = [d for d in DELAYS_MS if not any(float(r["drop_rate"]) > 0 for r in rows if r["delay_ms"] == d)]
     if reliable:
