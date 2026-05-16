@@ -2083,6 +2083,25 @@ def write_clipboard(text: str) -> bool:
         user32.CloseClipboard()
 
 
+# ── DPI awareness ─────────────────────────────────────────────────────────────
+def set_dpi_aware() -> None:
+    """Enable Per-Monitor DPI awareness (level 2) for this process.
+
+    Call ONCE at the top of any script that combines PIL.ImageGrab captures
+    with GetWindowRect + click_at().  Without this, GetWindowRect returns
+    logical (scaled) coordinates on high-DPI displays while PIL captures at
+    physical pixels, causing clicks to land at the wrong position.
+
+    Safe to call multiple times (subsequent calls are no-ops via Windows).
+    Verified on 4096x1728 → 5120x2160 physical (1.25x DPI scale).
+    Single-monitor only; multi-monitor needs per-monitor DPI translation.
+    """
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except OSError:
+        pass  # already set or unsupported
+
+
 # ── Mouse ─────────────────────────────────────────────────────────────────────
 def click_at(x: int, y: int, button: str = "left") -> None:
     """
