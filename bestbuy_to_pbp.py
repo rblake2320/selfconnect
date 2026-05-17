@@ -9,10 +9,11 @@ Usage:
     python bestbuy_to_pbp.py --post  # POST draft to aihangout.ai API
 """
 
-import json
-import hashlib
-import os
 import argparse
+import hashlib
+import json
+import os
+
 import yaml
 
 TRACE_PATH = os.path.join(
@@ -290,6 +291,7 @@ def build_pathbook_payload() -> dict:
         "status": "draft",
         "trust_tier": "draft",
         "confidence": 0.2,
+        "error_signature": "bestbuy.com: guest checkout navigation (e-commerce-order)",
         "trigger_yaml": yaml.dump(trigger, sort_keys=False, allow_unicode=True),
         "remediation_yaml": yaml.dump(remediation, sort_keys=False, allow_unicode=True),
         "verify_yaml": yaml.dump(verify, sort_keys=False, allow_unicode=True),
@@ -351,7 +353,7 @@ def main():
 
     trace_sha = compute_trace_sha256()
     print(f"\nProvenance SHA256: {trace_sha}")
-    print(f"Pathbook ID: PBP-BESTBUY-ORDER-0001")
+    print("Pathbook ID: PBP-BESTBUY-ORDER-0001")
 
     if args.post:
         import urllib.request
