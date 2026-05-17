@@ -79,6 +79,8 @@ __all__ = [  # noqa: RUF022  # grouped by version/category, not alphabetical
     "Checkpoint", "write_checkpoint", "read_checkpoint", "MigrationCoordinator",
     # Layer 5 FRP (v0.10.0) — Failure Remediation Protocol
     "lookup_frp", "contribute_frp", "compute_fingerprint", "detect_env_class", "FRPSession",
+    # Layer 6 — Service Abstraction (v0.10.1)
+    "PathbookService", "PolicyService", "AgentService", "AudioService",  # noqa: F822
 ]
 
 import collections
@@ -102,6 +104,16 @@ from frp_client import (
     detect_env_class,
     lookup_frp,
 )
+
+
+def __getattr__(name: str):
+    """Lazy import for services layer to avoid circular import."""
+    _service_names = {"AgentService", "AudioService", "PathbookService", "PolicyService"}
+    if name in _service_names:
+        import services as _svc
+
+        return getattr(_svc, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # ── Win32 constants ───────────────────────────────────────────────────────────
 INPUT_KEYBOARD       = 1
