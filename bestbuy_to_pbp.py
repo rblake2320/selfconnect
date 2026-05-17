@@ -280,20 +280,27 @@ def build_pathbook_payload() -> dict:
     verify = build_verify_yaml()
 
     return {
+        # ── Required fields (API returns 400 without these) ──────────────────
         "title": "Best Buy — Guest Checkout (Generic)",
-        "description": (
+        "error_signature": "bestbuy.com: guest checkout navigation (e-commerce-order)",
+        "trigger_yaml": yaml.dump(trigger, sort_keys=False, allow_unicode=True),
+        "remediation_yaml": yaml.dump(remediation, sort_keys=False, allow_unicode=True),
+        # ── Optional but important ───────────────────────────────────────────
+        "pathbook_id": "PBP-BESTBUY-ORDER-0001",   # canonical ID; auto-generated if omitted
+        "protocol_version": "pbp-0.1",
+        "summary": (
             "Parameterized navigation pathbook for Best Buy e-commerce guest checkout. "
             "Covers: search → add to cart → go to cart → checkout → guest → shipping form fill → STOP. "
             "Does NOT place an order. Works for any searchable item."
         ),
         "source_type": "navigation",
-        "domain": "bestbuy.com",
+        "ecosystem": "browser-commerce",
+        "runtime": "playwright-browser",
+        "package_name": "bestbuy.com",
         "status": "draft",
         "trust_tier": "draft",
         "confidence": 0.2,
-        "error_signature": "bestbuy.com: guest checkout navigation (e-commerce-order)",
-        "trigger_yaml": yaml.dump(trigger, sort_keys=False, allow_unicode=True),
-        "remediation_yaml": yaml.dump(remediation, sort_keys=False, allow_unicode=True),
+        "token_savings_estimate": 0,
         "verify_yaml": yaml.dump(verify, sort_keys=False, allow_unicode=True),
         "provenance": json.dumps({
             "source_agent": "Claude Code (Playwright runner)",
