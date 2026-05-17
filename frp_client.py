@@ -41,6 +41,11 @@ __all__ = [  # noqa: RUF022
 API_BASE = "https://aihangout.ai/api/pathbooks"
 LOOKUP_TIMEOUT = 5
 CONTRIBUTE_TIMEOUT = 10
+_HEADERS_BASE = {
+    "Content-Type": "application/json",
+    "User-Agent": "FRP-Client/1.0 (SelfConnect SDK)",
+    "Origin": "https://aihangout.ai",
+}
 
 
 # ── Types ────────────────────────────────────────────────────────────────────
@@ -189,7 +194,7 @@ def lookup_frp(
         req = urllib.request.Request(
             f"{API_BASE}/lookup",
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers=_HEADERS_BASE,
             method="POST",
         )
         ctx = _make_ssl_context()
@@ -215,7 +220,7 @@ def lookup_frp(
         req = urllib.request.Request(
             f"{API_BASE}/lookup",
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers=_HEADERS_BASE,
             method="POST",
         )
         ctx = _make_ssl_context()
@@ -299,7 +304,7 @@ def contribute_frp(
         payload["pathbook_id"] = pathbook_id
 
     data = json.dumps(payload).encode()
-    headers: dict[str, str] = {"Content-Type": "application/json"}
+    headers: dict[str, str] = {**_HEADERS_BASE}
     if jwt:
         headers["Authorization"] = f"Bearer {jwt}"
 
