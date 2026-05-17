@@ -77,6 +77,8 @@ __all__ = [  # noqa: RUF022  # grouped by version/category, not alphabetical
     "PeerState", "PeerRecord", "AgentRegistry", "WatchdogLoop", "ApprovalRelay",
     # Layer 4 Continuity (v0.9.0) — context-preserving role migration
     "Checkpoint", "write_checkpoint", "read_checkpoint", "MigrationCoordinator",
+    # Layer 5 FRP (v0.10.0) — Failure Remediation Protocol
+    "lookup_frp", "contribute_frp", "compute_fingerprint", "detect_env_class", "FRPSession",
 ]
 
 import collections
@@ -92,6 +94,14 @@ import time
 import uuid as _uuid
 from dataclasses import asdict, dataclass, field
 from typing import Optional
+
+from frp_client import (
+    FRPSession,
+    compute_fingerprint,
+    contribute_frp,
+    detect_env_class,
+    lookup_frp,
+)
 
 # ── Win32 constants ───────────────────────────────────────────────────────────
 INPUT_KEYBOARD       = 1
