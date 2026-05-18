@@ -207,16 +207,24 @@ def lookup_frp(
 
         pathbooks = data.get("pathbooks", [])
         if pathbooks:
-            entry = pathbooks[0]
-            # Self-validate: server may return all entries on a fingerprint miss.
-            # Reject if the returned entry's fingerprint doesn't match what we asked for.
-            returned_fp = entry.get("error_fingerprint", "")
-            if returned_fp and returned_fp != fingerprint:
-                pass  # fall through to text-based fallback
-            else:
-                trust = entry.get("trust_tier", "draft")
-                if include_drafts or trust != "draft":
-                    return entry
+            # Pass 1: scan all returned entries for an exact fingerprint match.
+            # The server returns all pathbooks on a miss; the correct entry may not be first.
+            for entry in pathbooks:
+                returned_fp = entry.get("error_fingerprint", "")
+                if not returned_fp or returned_fp == fingerprint:
+                    trust = entry.get("trust_tier", "draft")
+                    if include_drafts or trust != "draft":
+                        return entry
+
+            # Pass 2: signature substring match — handles Python exception class prefix
+            # variations, e.g. "[WinError 10048]..." matches "OSError: [WinError 10048]...".
+            error_lower = error_text.lower().strip()
+            for entry in pathbooks:
+                sig = entry.get("error_signature", "").lower().strip()
+                if sig and error_lower and (error_lower in sig or sig in error_lower):
+                    trust = entry.get("trust_tier", "draft")
+                    if include_drafts or trust != "draft":
+                        return entry
     except Exception:
         pass
 
