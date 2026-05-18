@@ -1,10 +1,10 @@
 """
-services/ — Stable abstraction layer over SelfConnect SDK internals.
+services/ — Thin stateless abstraction layer over SelfConnect SDK internals.
 
-Plugins and audio sidecars call these service APIs instead of SDK internals
-directly. This prevents breaking changes as new surfaces are added.
+Sits between SDK internals and external consumers (plugins, bridges, enterprise
+transport). Not a daemon or web server — just a clean Python module layer.
 
-v0.10.1 — Layer 6 Service Abstraction
+All service classes are stateless (classmethod/staticmethod only).
 """
 
 from services.agent_service import AgentService

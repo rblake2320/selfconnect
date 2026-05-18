@@ -1,68 +1,87 @@
 """
-PolicyService — Stable API for tool approval decisions.
+PolicyService — Thin wrapper around the approval/policy rules engine.
 
-Wraps approval_partner for policy-gated tool call evaluation.
+Uses approval_partner.py for tool call allow/deny decisions.
+Gracefully degrades when approval_partner is not importable.
 """
 
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+# approval_partner.py lives in the parent directory
+_parent_dir = str(Path(__file__).resolve().parent.parent)
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
+
+_POLICY_AVAILABLE = False
+_DEFAULT_ALLOW: list[str] = []
+_DEFAULT_DENY: list[str] = []
+
 try:
-    from approval_partner import PartnerConfig, decide, extract_tool_call
+    from approval_partner import (
+        DEFAULT_ALLOW,
+        DEFAULT_DENY,
+        PartnerConfig,
+        decide,
+        extract_tool_call,
+    )
 
     _POLICY_AVAILABLE = True
+    _DEFAULT_ALLOW = list(DEFAULT_ALLOW)
+    _DEFAULT_DENY = list(DEFAULT_DENY)
 except ImportError:
     _POLICY_AVAILABLE = False
-    log.warning(
-        "approval_partner not importable — PolicyService degraded to allow-all mode"
-    )
+    log.warning("approval_partner not importable — PolicyService in allow-all mode")
 
 
 class PolicyService:
-    """Stable interface for tool approval policy decisions."""
+    """Stateless interface for tool approval policy decisions."""
 
-    def __init__(self, config: PartnerConfig | None = None) -> None:
-        if _POLICY_AVAILABLE and config is None:
-            self._config = PartnerConfig()
-        elif _POLICY_AVAILABLE:
-            self._config = config
-        else:
-            self._config = None
-
-    @property
-    def is_available(self) -> bool:
-        """Whether the policy engine is importable."""
-        return _POLICY_AVAILABLE
-
-    def evaluate(self, tool_call: str) -> bool | None:
+    @staticmethod
+    def decide(tool_call: str) -> bool | None:
         """Evaluate a tool call string against policy rules.
 
         Returns:
-            True  — ALLOW (tool is in allow list)
-            False — DENY (tool is in deny list)
+            True  — ALLOW (tool matches allow list)
+            False — DENY (tool matches deny list)
             None  — UNKNOWN (requires escalation)
         """
         if not _POLICY_AVAILABLE:
-            log.debug("PolicyService: degraded mode, allowing %r", tool_call)
-            return True
+            log.debug("PolicyService: degraded mode, returning None for %r", tool_call)
+            return None
         try:
             extracted = extract_tool_call(tool_call)
-            return decide(extracted, self._config)
+            return decide(extracted, PartnerConfig())
         except Exception as exc:
-            log.debug("PolicyService.evaluate failed: %s", exc)
+            log.debug("PolicyService.decide failed: %s", exc)
             return None
 
-    def is_allowed(self, tool_call: str) -> bool:
-        """Return True if tool call is explicitly allowed."""
-        return self.evaluate(tool_call) is True
+    @staticmethod
+    def is_allowed(tool_call: str) -> bool:
+        """Convenience: True if tool call is explicitly allowed, False otherwise.
 
-    def is_denied(self, tool_call: str) -> bool:
-        """Return True if tool call is explicitly denied."""
-        return self.evaluate(tool_call) is False
+        Maps None (unknown) to False for safety.
+        """
+        result = PolicyService.decide(tool_call)
+        return result is True
 
-    def requires_escalation(self, tool_call: str) -> bool:
-        """Return True if tool call result is unknown (needs human review)."""
-        return self.evaluate(tool_call) is None
+    @staticmethod
+    def get_allow_list() -> list[str]:
+        """Return the current allow-list patterns.
+
+        Returns empty list if policy engine is unavailable.
+        """
+        return list(_DEFAULT_ALLOW)
+
+    @staticmethod
+    def get_deny_list() -> list[str]:
+        """Return the current deny-list patterns.
+
+        Returns empty list if policy engine is unavailable.
+        """
+        return list(_DEFAULT_DENY)

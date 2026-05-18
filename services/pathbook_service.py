@@ -1,38 +1,40 @@
 """
-PathbookService — Stable API for FRP (Failure Remediation Protocol) operations.
+PathbookService — Thin wrapper around FRP (Failure Remediation Protocol).
 
-Wraps frp_client for lookup and contribution of verified fix paths.
+Uses frp_client.py for pathbook lookup and contribution.
+Gracefully degrades when frp_client is not importable. Never raises on lookup failure.
 """
 
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
 
+# frp_client.py lives in the parent directory
+_parent_dir = str(Path(__file__).resolve().parent.parent)
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
+
+_FRP_AVAILABLE = False
+
 try:
-    from frp_client import (
-        compute_fingerprint,
-        contribute_frp,
-        lookup_frp,
-    )
+    from frp_client import compute_fingerprint, contribute_frp, lookup_frp
 
     _FRP_AVAILABLE = True
 except ImportError:
     _FRP_AVAILABLE = False
-    log.warning("frp_client not importable — PathbookService degraded to no-op mode")
+    log.warning("frp_client not importable — PathbookService in no-op mode")
 
 
 class PathbookService:
-    """Stable interface for FRP pathbook lookup and contribution."""
+    """Stateless interface for FRP pathbook lookup and contribution."""
 
-    @property
-    def is_available(self) -> bool:
-        """Whether the FRP backend is importable."""
-        return _FRP_AVAILABLE
-
-    def lookup(self, error_text: str, env_class: str | None = None) -> dict | None:
+    @staticmethod
+    def lookup(error_text: str, env_class: str | None = None) -> dict | None:
         """Look up a known fix path for the given error.
 
         Returns the FRP entry dict if found, None otherwise.
@@ -46,30 +48,25 @@ class PathbookService:
             log.debug("PathbookService.lookup failed: %s", exc)
             return None
 
+    @staticmethod
     def contribute(
-        self,
         title: str,
         error_text: str,
         env_class: str,
         fix_steps: list[str],
         *,
+        failed_attempts: list[str] | None = None,
         tags: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> dict | None:
+    ) -> dict:
         """Contribute a verified fix path to the pathbook registry.
 
-        Returns the created entry dict on success, None on failure.
-        Logs all contributions for audit trail.
+        Returns the created entry dict on success, or empty dict on failure.
         """
         if not _FRP_AVAILABLE:
-            log.warning("PathbookService.contribute called but frp_client unavailable")
-            return None
+            log.warning("PathbookService.contribute: frp_client unavailable")
+            return {}
         try:
-            log.info(
-                "PathbookService: contributing fix — title=%r env_class=%r",
-                title,
-                env_class,
-            )
             result = contribute_frp(
                 title=title,
                 error_text=error_text,
@@ -78,16 +75,16 @@ class PathbookService:
                 tags=tags or [],
                 metadata=metadata or {},
             )
-            log.info("PathbookService: contribution accepted — id=%s", result.get("id"))
-            return result
+            return result if result else {}
         except Exception as exc:
-            log.warning("PathbookService.contribute failed: %s", exc)
-            return None
+            log.debug("PathbookService.contribute failed: %s", exc)
+            return {}
 
-    def fingerprint(self, error_text: str, env_class: str) -> str:
+    @staticmethod
+    def fingerprint(error_text: str, env_class: str) -> str:
         """Compute the FRP fingerprint for an error + environment pair.
 
-        Returns empty string if frp_client unavailable.
+        Returns the SHA-256 hex string, or empty string if unavailable.
         """
         if not _FRP_AVAILABLE:
             return ""

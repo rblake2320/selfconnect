@@ -63,3 +63,5 @@ include = ["self_connect.py", "claudego/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "test_self_connect.py"]
+asyncio_mode = "auto"
+tmp_path_retention_policy = "none"
