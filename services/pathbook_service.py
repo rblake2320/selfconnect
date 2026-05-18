@@ -53,13 +53,24 @@ class PathbookService:
         title: str,
         error_text: str,
         env_class: str,
-        fix_steps: list[str],
+        fix_steps: list[dict[str, Any]],
         *,
-        failed_attempts: list[str] | None = None,
-        tags: list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
+        failed_attempts: list[dict[str, Any]] | None = None,
+        verify_steps: list[dict[str, Any]] | None = None,
+        jwt: str | None = None,
+        token_savings_estimate: int = 0,
     ) -> dict:
         """Contribute a verified fix path to the pathbook registry.
+
+        Args:
+            title: Human-readable name for this fix.
+            error_text: The error signature text.
+            env_class: Environment class (e.g. "windows-bash").
+            fix_steps: List of dicts with step/action/command keys.
+            failed_attempts: Optional list of prior failed attempt dicts.
+            verify_steps: Optional verification step dicts.
+            jwt: Auth token for the FRP registry (anonymous if None).
+            token_savings_estimate: Estimated tokens saved per use.
 
         Returns the created entry dict on success, or empty dict on failure.
         """
@@ -71,9 +82,11 @@ class PathbookService:
                 title=title,
                 error_text=error_text,
                 env_class=env_class,
+                failed_attempts=failed_attempts or [],
                 fix_steps=fix_steps,
-                tags=tags or [],
-                metadata=metadata or {},
+                verify_steps=verify_steps,
+                jwt=jwt,
+                token_savings_estimate=token_savings_estimate,
             )
             return result if result else {}
         except Exception as exc:

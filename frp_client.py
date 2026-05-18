@@ -165,6 +165,7 @@ def lookup_frp(
     env_class: str | None = None,
     *,
     include_drafts: bool = False,
+    min_match_score: float = 0.1,
 ) -> FRPEntry | None:
     """
     Query aihangout.ai for a verified fix path matching the error.
@@ -176,6 +177,9 @@ def lookup_frp(
         error_text: The error message or traceback text.
         env_class: Environment class (auto-detected if not provided).
         include_drafts: If True, also return draft-tier entries.
+        min_match_score: Minimum match_score (0.0-1.0) for text-search fallback results.
+            Fingerprint matches are always returned regardless of score.
+            Default 0.1 rejects clearly unrelated entries the API returns as fallbacks.
     """
     if not error_text:
         return None
@@ -204,13 +208,19 @@ def lookup_frp(
         pathbooks = data.get("pathbooks", [])
         if pathbooks:
             entry = pathbooks[0]
-            trust = entry.get("trust_tier", "draft")
-            if include_drafts or trust != "draft":
-                return entry
+            # Self-validate: server may return all entries on a fingerprint miss.
+            # Reject if the returned entry's fingerprint doesn't match what we asked for.
+            returned_fp = entry.get("error_fingerprint", "")
+            if returned_fp and returned_fp != fingerprint:
+                pass  # fall through to text-based fallback
+            else:
+                trust = entry.get("trust_tier", "draft")
+                if include_drafts or trust != "draft":
+                    return entry
     except Exception:
         pass
 
-    # Fallback: text-based search
+    # Fallback: text-based search (with match_score guard to prevent false positives)
     try:
         payload = json.dumps({
             "error": error_text[:500],
@@ -231,6 +241,11 @@ def lookup_frp(
         if pathbooks:
             entry = pathbooks[0]
             trust = entry.get("trust_tier", "draft")
+            score = entry.get("match_score", 0.0) or 0.0
+            # Reject low-confidence fallback matches — the API always returns something,
+            # but a score below min_match_score means the match is coincidental.
+            if score < min_match_score:
+                return None
             if include_drafts or trust != "draft":
                 return entry
     except Exception:
