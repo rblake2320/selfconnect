@@ -431,6 +431,8 @@ def send_string(
     text: str,
     char_delay: float = 0.05,
     mode: str = "auto",
+    *,
+    gate: "Any | None" = None,
 ) -> None:
     """
     Send text to the target window.
@@ -457,6 +459,17 @@ def send_string(
     Verified: one Claude session can inject text into another Claude session's
     terminal without stealing foreground focus (2026-04-30 live proof).
     """
+    # Identity gate (SC_REQUIRE_ULTRA or caller-provided gate).
+    # SC_REQUIRE_ULTRA=1 → gate is required; omitting it raises SecurityError.
+    # SC_IDENTITY_MODE=enforce|audit|bypass → full gated_send_string path.
+    import os as _os
+    if _os.environ.get("SC_REQUIRE_ULTRA") == "1" and gate is None:
+        raise RuntimeError(
+            "SC_REQUIRE_ULTRA=1 is set but no UltraGate was provided to send_string()."
+        )
+    if gate is not None:
+        gate.authorize_injection(target.hwnd, text)
+
     mode = mode.lower()
 
     if mode == "clipboard":
