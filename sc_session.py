@@ -10,6 +10,12 @@ Usage pattern:
     ok, tag = verify_peer(claimed_hwnd)
     if not ok:
         raise RuntimeError(f"Peer at 0x{claimed_hwnd:08x} failed identity verification")
+
+    # If session_stamp.py wrote needs_set=True (couldn't auto-discover HWND):
+    status = session_status()
+    if status["needs_set"]:
+        # Agent sees this and runs: python sc_session.py set <hwnd>
+        print(status["set_hint"])
 """
 from __future__ import annotations
 
@@ -87,8 +93,61 @@ def set_my_hwnd(hwnd: int, scid: str = '') -> None:
 
 
 def get_my_hwnd() -> Optional[int]:
-    """Return this agent's known Windows Terminal HWND, or None if not bootstrapped."""
-    return _session.get('my_hwnd')
+    """Return this agent's known Windows Terminal HWND, or None if not bootstrapped.
+
+    If session_stamp.py wrote needs_set=True, returns None and session_status()
+    will include a set_hint explaining how to self-correct.
+    """
+    hwnd = _session.get('my_hwnd')
+    # Treat hwnd=0 (stamp fallback sentinel) the same as unset
+    return hwnd if hwnd else None
+
+
+def session_status() -> dict:
+    """Return a dict summarising this session's identity state.
+
+    Keys:
+      hwnd        — int or None
+      hwnd_hex    — "0x00490d60" or "NOT SET"
+      scid        — str or None
+      verified    — bool
+      needs_set   — True if stamp wrote hwnd=0 (auto-discovery failed)
+      reason      — why the hwnd was chosen (from session_stamp.py)
+      set_hint    — human/agent-readable instruction when needs_set is True
+    """
+    # Prefer the enterprise .sessions/current.json if it exists and is richer
+    ent_file = Path(__file__).parent.parent / 'selfconnect-enterprise' / '.sessions' / 'current.json'
+    src: dict = {}
+    if ent_file.exists():
+        try:
+            src = json.loads(ent_file.read_text(encoding='utf-8'))
+        except Exception:
+            pass
+
+    hwnd      = src.get('hwnd') or _session.get('my_hwnd') or 0
+    scid      = src.get('scid') or _session.get('my_scid') or ''
+    verified  = src.get('verified', False)
+    needs_set = src.get('needs_set', hwnd == 0)
+    reason    = src.get('reason', 'manual-set' if hwnd else 'not-bootstrapped')
+
+    set_hint = ''
+    if needs_set or not hwnd:
+        set_hint = (
+            "HWND auto-discovery failed. To self-correct:\n"
+            "  1. From AXIOM: list_windows() → find your tab → send hwnd\n"
+            "  2. Or run:  python sc_session.py set <hwnd_hex>\n"
+            "  3. Or set env var SC_SESSION_HWND=<hwnd_hex> before next session"
+        )
+
+    return {
+        'hwnd':      hwnd or None,
+        'hwnd_hex':  f"0x{hwnd:08x}" if hwnd else 'NOT SET',
+        'scid':      scid or None,
+        'verified':  verified,
+        'needs_set': needs_set,
+        'reason':    reason,
+        'set_hint':  set_hint,
+    }
 
 
 def get_my_scid() -> Optional[str]:
@@ -150,10 +209,15 @@ if __name__ == '__main__':
     args = ap.parse_args()
 
     if args.cmd == 'status':
-        hwnd = get_my_hwnd()
-        print(f'my_hwnd  = {f"0x{hwnd:08x}" if hwnd else "NOT SET"}')
-        print(f'my_scid  = {get_my_scid() or "NOT SET"}')
+        s = session_status()
+        print(f'hwnd     = {s["hwnd_hex"]}')
+        print(f'scid     = {s["scid"] or "NOT SET"}')
+        print(f'verified = {s["verified"]}')
+        print(f'reason   = {s["reason"]}')
         print(f'registry = {"available" if _REGISTRY_AVAILABLE else "NOT AVAILABLE"}')
+        if s['needs_set']:
+            print()
+            print(s['set_hint'])
 
     elif args.cmd == 'set':
         hwnd = int(args.hwnd, 16) if args.hwnd.startswith('0x') else int(args.hwnd)
