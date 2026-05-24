@@ -30,3 +30,6 @@ Thumbs.db
 
 # Observer log artifacts
 observer_logs/
+
+# SelfConnect session runtime data
+.sessions/

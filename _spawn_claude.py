@@ -1,10 +1,35 @@
 """Spawn a new terminal, type into it via SelfConnect, then launch Claude."""
-import sys, os, time, subprocess, ctypes
+import sys, os, time, subprocess, ctypes, uuid
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 from self_connect import (
     list_windows, send_string, capture_window, save_capture, restore_window
 )
+
+# Birth-tag stamping (enterprise registry — additive, does not affect injection path)
+_ENT_SDK = os.path.join(os.path.dirname(__file__), '..', 'selfconnect-enterprise', 'sdk')
+sys.path.insert(0, os.path.normpath(_ENT_SDK))
+try:
+    from enterprise.registry import stamp_birth_tag
+    _BIRTH_TAG_AVAILABLE = True
+except ImportError:
+    _BIRTH_TAG_AVAILABLE = False
+
+_SESSIONS_DIR = os.path.join(os.path.dirname(__file__), '.sessions')
+os.makedirs(_SESSIONS_DIR, exist_ok=True)
+
+def _stamp_agent(hwnd: int, agent_id: str, model: str = 'claude-code') -> None:
+    """Stamp birth tag on spawned agent and write session file for self-discovery."""
+    if not _BIRTH_TAG_AVAILABLE:
+        return
+    try:
+        stamp_birth_tag(hwnd=hwnd, agent_id=agent_id, agent_type='claude_code', model=model)
+        session_file = os.path.join(_SESSIONS_DIR, f'{agent_id}.hwnd')
+        with open(session_file, 'w') as f:
+            f.write(f'{hwnd}\n{agent_id}\n{model}\n')
+        print(f'  [birth_tag] Stamped hwnd=0x{hwnd:08x} scid={agent_id} -> {session_file}')
+    except Exception as e:
+        print(f'  [birth_tag] Warning: stamp failed: {e}')
 
 user32 = ctypes.windll.user32
 
@@ -48,6 +73,10 @@ if not new_win:
             print(f"  hwnd={w.hwnd} title={w.title[:60]!r} exe={w.exe_name!r}")
     sys.exit(1)
 
+# Step 2b: Stamp birth tag on the new agent's window
+scid = f'claude-code-spawn-{new_win.hwnd:08x}'
+_stamp_agent(new_win.hwnd, scid)
+
 restore_window(new_win.hwnd)
 time.sleep(0.3)
 
@@ -68,9 +97,14 @@ time.sleep(15)
 img2 = save_capture(new_win.hwnd, path="proofs/spawn_step2_claude.png")
 print(f"  Captured: {img2}")
 
-# Step 5: Type handoff message
+# Step 5: Type handoff message (includes SC_HWND so agent can self-identify)
 print("Step 5: Sending handoff message...")
-handoff = 'Read the handoff file at "C:\\Users\\techai\\PKA testing\\Owner\'s Inbox\\selfconnect-handoff-2026-04-30.md" and self_connect.py. This is the SelfConnect SDK. Continue where we left off.'
+handoff = (
+    f'SC_BOOTSTRAP: your_hwnd=0x{new_win.hwnd:08x} your_scid={scid} '
+    f'| Read the handoff file at "C:\\Users\\techai\\PKA testing\\Owner\'s Inbox\\'
+    f'selfconnect-handoff-2026-04-30.md" and self_connect.py. '
+    f'This is the SelfConnect SDK. Continue where we left off.'
+)
 
 send_string(new_win, handoff)
 time.sleep(0.5)
