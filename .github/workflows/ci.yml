@@ -69,3 +69,6 @@ jobs:
 
       - name: Unit tests (no Win32 desktop needed)
         run: python -m pytest tests/ -v --tb=short
+
+      - name: SDK smoke tests
+        run: python test_self_connect.py
