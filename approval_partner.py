@@ -18,6 +18,7 @@ NO changes to settings.local.json, permissions.allow, or hooks required.
 This runs as a background sidecar process.
 """
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 import sys

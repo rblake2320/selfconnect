@@ -132,6 +132,7 @@ class TestWaitExecution:
 
 class TestCommandParsing:
     @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform != "win32", reason="ctypes.windll only available on Windows")
     async def test_click_command_resolves_detection(self, mock_event_bus):
         """click command must look up label in detections and use real coords."""
         from unittest.mock import patch, MagicMock
