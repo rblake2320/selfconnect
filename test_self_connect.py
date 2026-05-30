@@ -61,7 +61,7 @@ def test_version():
     check("version not empty", len(__version__) > 0)
     import self_connect
     check("__all__ defined", hasattr(self_connect, "__all__"))
-    check("__all__ has 60 exports", len(self_connect.__all__) == 60,
+    check("__all__ has 61 exports", len(self_connect.__all__) == 61,
           f"got {len(self_connect.__all__)}")
 
 
