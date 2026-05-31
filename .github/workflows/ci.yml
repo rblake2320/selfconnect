@@ -19,7 +19,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install ruff Pillow psutil pytest pytest-asyncio python-dotenv python-telegram-bot fastapi uvicorn httpx
+        run: pip install ruff Pillow psutil pytest pytest-asyncio python-dotenv python-telegram-bot fastapi uvicorn httpx cryptography dilithium-py
 
       - name: Ruff lint — all SDK files
         run: >
