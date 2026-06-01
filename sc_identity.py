@@ -645,6 +645,107 @@ class ProvenanceLedger:
             for e in entries:
                 f.write(json.dumps(e.__dict__, separators=(",", ":")) + "\n")
 
+    def export_eu_ai_act_bundle(
+        self,
+        system_name: str,
+        system_version: str,
+        deployer_did: str,
+        output_path: str,
+        extra_meta: Optional[dict] = None,
+    ) -> dict:
+        """
+        Export an EU AI Act Article 12 / Annex IV evidence bundle.
+
+        The EU AI Act (Regulation (EU) 2024/1689) requires high-risk AI systems
+        to maintain records sufficient to demonstrate compliance. Article 12
+        mandates logging of operations; Annex IV specifies the technical
+        documentation structure. Enforcement begins August 2, 2026.
+
+        This method produces a self-contained JSON bundle containing:
+          - System identity and version metadata
+          - Chain integrity proof (SHA-256 root hash + entry count)
+          - Full ledger entries (redacted payload hashes, not raw payloads)
+          - Actor DID inventory (all identities that appear in the ledger)
+          - Event type summary (counts per event_type)
+          - Bundle hash (SHA-256 of the canonical bundle, for notarisation)
+
+        The bundle is written to *output_path* and also returned as a dict.
+
+        Parameters
+        ----------
+        system_name:
+            Human-readable name of the AI system (e.g., "SelfConnect Enterprise").
+        system_version:
+            Version string (e.g., "1.4.0").
+        deployer_did:
+            DID of the deploying organisation or responsible person.
+        output_path:
+            File path to write the JSON bundle. Directory is created if needed.
+        extra_meta:
+            Optional dict of additional metadata to include in the bundle
+            (e.g., notified body reference, risk category, intended purpose).
+
+        Returns
+        -------
+        dict
+            The full evidence bundle as a Python dict.
+        """
+        with self._lock:
+            entries = list(self._entries)
+
+        # Chain integrity proof
+        chain_ok, bad_idx = self.verify_chain()
+        root_hash = entries[0].entry_hash if entries else self.GENESIS_HASH
+        tip_hash = entries[-1].entry_hash if entries else self.GENESIS_HASH
+
+        # Actor inventory
+        actor_dids: set[str] = set()
+        for e in entries:
+            if e.actor_did:
+                actor_dids.add(e.actor_did)
+            if e.target_did:
+                actor_dids.add(e.target_did)
+
+        # Event type summary
+        event_counts: dict[str, int] = {}
+        for e in entries:
+            event_counts[e.event_type] = event_counts.get(e.event_type, 0) + 1
+
+        bundle: dict = {
+            "schema": "selfconnect-eu-ai-act-bundle-v1",
+            "generated_at": time.time(),
+            "system": {
+                "name": system_name,
+                "version": system_version,
+                "deployer_did": deployer_did,
+            },
+            "chain_integrity": {
+                "ok": chain_ok,
+                "bad_entry_index": bad_idx,
+                "entry_count": len(entries),
+                "root_hash": root_hash,
+                "tip_hash": tip_hash,
+            },
+            "actor_inventory": sorted(actor_dids),
+            "event_summary": event_counts,
+            "entries": [e.__dict__ for e in entries],
+            "meta": extra_meta or {},
+        }
+
+        # Bundle hash — SHA-256 of canonical JSON (for notarisation / timestamping)
+        canonical = json.dumps(
+            {k: v for k, v in bundle.items() if k != "bundle_hash"},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        bundle["bundle_hash"] = hashlib.sha256(canonical).hexdigest()
+
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(bundle, f, indent=2)
+
+        return bundle
+
 
 # ---------------------------------------------------------------------------
 # MCPAuthAdapter  (wraps MCP tool calls with signed identity headers)
@@ -792,6 +893,95 @@ class A2ABindingAdapter:
 
     SCHEMA = "selfconnect-a2a-bound-card-v1"
 
+    # Patterns that indicate an injected instruction in a free-text field.
+    # Checked against the lower-cased string value.
+    # Rationale: Agent Card Poisoning (documented May 2026) — an attacker
+    # publishes a card with a valid cryptographic identity but stuffs the
+    # label/description field with prompt-injection instructions aimed at
+    # the consuming model. Authentication proves identity, not honesty.
+    _INJECTION_PATTERNS: tuple[str, ...] = (
+        "ignore ",
+        "ignore your",
+        "disregard ",
+        "forget ",
+        "override ",
+        "new instruction",
+        "system prompt",
+        "you are now",
+        "act as ",
+        "pretend ",
+        "jailbreak",
+        "do not follow",
+        "stop following",
+        "your new goal",
+        "your new task",
+        "execute the following",
+        "run the following",
+        "\n\n",           # double newline — common injection separator
+        "<|im_start|>",
+        "<|system|>",
+        "[system]",
+        "[instruction]",
+    )
+    _MAX_FIELD_LEN = 512  # legitimate labels/descriptions are short
+
+    @classmethod
+    def _sanitize_text_field(cls, value: str, field_name: str) -> tuple[bool, str]:
+        """
+        Scan a single free-text field for injection patterns.
+        Returns (True, "") if clean, or (False, reason) if suspicious.
+        """
+        if not isinstance(value, str):
+            return True, ""
+        lower = value.lower()
+        for pattern in cls._INJECTION_PATTERNS:
+            if pattern in lower:
+                return False, (
+                    f"agent card field {field_name!r} contains suspected "
+                    f"injection pattern: {pattern!r}"
+                )
+        if len(value) > cls._MAX_FIELD_LEN:
+            return False, (
+                f"agent card field {field_name!r} exceeds {cls._MAX_FIELD_LEN}-char "
+                f"limit ({len(value)} chars) — possible injection payload"
+            )
+        return True, ""
+
+    @classmethod
+    def scan_card_for_injection(cls, card: dict) -> tuple[bool, str]:
+        """
+        Scan all free-text fields in a bound card for injection patterns.
+        Called automatically by ``verify_bound_card`` before any trust is
+        extended — content validation is independent of signature verification.
+
+        Fields checked: label, description, name, title in the outer card and
+        the nested issuer_card; all string values in meta dicts.
+        """
+        for field in ("label", "description", "name", "title"):
+            val = card.get(field, "")
+            if val:
+                ok, reason = cls._sanitize_text_field(str(val), field)
+                if not ok:
+                    return False, reason
+        issuer = card.get("issuer_card", {})
+        for field in ("label", "description", "name"):
+            val = issuer.get(field, "")
+            if val:
+                ok, reason = cls._sanitize_text_field(str(val), f"issuer_card.{field}")
+                if not ok:
+                    return False, reason
+        for meta_src, prefix in (
+            (card.get("meta", {}), "meta"),
+            (issuer.get("meta", {}), "issuer_card.meta"),
+        ):
+            if isinstance(meta_src, dict):
+                for k, v in meta_src.items():
+                    if isinstance(v, str):
+                        ok, reason = cls._sanitize_text_field(v, f"{prefix}.{k}")
+                        if not ok:
+                            return False, reason
+        return True, ""
+
     def __init__(
         self,
         identity: AgentIdentity,
@@ -860,6 +1050,14 @@ class A2ABindingAdapter:
         """
         if card.get("schema") != A2ABindingAdapter.SCHEMA:
             return False, f"unexpected schema: {card.get('schema')!r}", None
+
+        # 0. Scan free-text fields for injection patterns BEFORE extending trust.
+        #    Mitigates Agent Card Poisoning (May 2026): a valid signature proves
+        #    identity but does not prevent injected instructions in description
+        #    fields from steering the consuming model.
+        ok_scan, scan_reason = A2ABindingAdapter.scan_card_for_injection(card)
+        if not ok_scan:
+            return False, f"card injection scan failed: {scan_reason}", None
 
         # 1. Verify issuer agent card signature
         issuer_card = card.get("issuer_card", {})
