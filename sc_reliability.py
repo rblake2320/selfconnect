@@ -530,3 +530,249 @@ class BoundaryProbe:
             "sentinel_k": sentinel_k,
             "reports": {k: r.to_dict() for k, r in reports.items()},
         }
+
+
+# ---------------------------------------------------------------------------
+# GoalDriftMonitor  (CISA/OWASP ASI01/ASI10 — behavioral baseline + alerting)
+# ---------------------------------------------------------------------------
+
+class DriftSeverity(str, Enum):
+    """Severity level of a detected goal drift event."""
+    INFO    = "info"     # minor deviation, within tolerance
+    WARNING = "warning"  # notable deviation, operator should review
+    ALERT   = "alert"    # significant drift, operator action required
+    CRITICAL = "critical" # drift exceeds hard threshold — KillSwitch candidate
+
+
+@dataclass
+class DriftEvent:
+    """A single recorded drift observation."""
+    ts: float
+    task_id: str
+    run_id: str
+    metric: str           # e.g. "pass_at_1", "consistency_score"
+    baseline: float
+    observed: float
+    delta: float          # observed - baseline
+    severity: DriftSeverity
+    detail: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "ts": self.ts,
+            "task_id": self.task_id,
+            "run_id": self.run_id,
+            "metric": self.metric,
+            "baseline": round(self.baseline, 4),
+            "observed": round(self.observed, 4),
+            "delta": round(self.delta, 4),
+            "severity": self.severity.value,
+            "detail": self.detail,
+        }
+
+
+class GoalDriftMonitor:
+    """
+    Behavioral baseline tracker and drift alerter.
+
+    Implements the CISA "Careful Adoption of Agentic AI" requirement:
+      "Establish behavioral baselines and monitor for goal drift, with
+       alerting on unexpected goal changes, anomalous tool sequences,
+       or deviations from the established baseline."  (C.A1.4)
+
+    Also satisfies OWASP Agentic Top 10 2026:
+      ASI01 (Agent Goal Hijack) — C.A1.4: behavioral baseline + alerting
+      ASI10 (Rogue Agents) — detect agents that stay within policy but drift
+
+    Usage::
+
+        monitor = GoalDriftMonitor(task_id="send_frame", window=10)
+
+        # After each reliability run, record the report:
+        monitor.record(report)
+
+        # Check for drift:
+        events = monitor.drift_events()
+        if any(e.severity == DriftSeverity.ALERT for e in events):
+            # escalate to operator / KillSwitch
+
+    Baseline is established from the first ``baseline_window`` reports.
+    Drift is measured as the absolute delta from the rolling baseline mean.
+    Severity thresholds are configurable; defaults are tuned for IL4/IL5.
+    """
+
+    # Default severity thresholds (absolute delta from baseline)
+    DEFAULT_THRESHOLDS: dict[str, dict[str, float]] = {
+        "pass_at_1": {
+            DriftSeverity.INFO.value:     0.02,
+            DriftSeverity.WARNING.value:  0.05,
+            DriftSeverity.ALERT.value:    0.10,
+            DriftSeverity.CRITICAL.value: 0.20,
+        },
+        "consistency_score": {
+            DriftSeverity.INFO.value:     0.03,
+            DriftSeverity.WARNING.value:  0.07,
+            DriftSeverity.ALERT.value:    0.15,
+            DriftSeverity.CRITICAL.value: 0.30,
+        },
+        "pass_at_k": {
+            DriftSeverity.INFO.value:     0.05,
+            DriftSeverity.WARNING.value:  0.10,
+            DriftSeverity.ALERT.value:    0.20,
+            DriftSeverity.CRITICAL.value: 0.40,
+        },
+    }
+
+    def __init__(
+        self,
+        task_id: str,
+        baseline_window: int = 5,
+        rolling_window: int = 10,
+        thresholds: Optional[dict[str, dict[str, float]]] = None,
+        on_alert: Optional[Callable[[DriftEvent], None]] = None,
+    ) -> None:
+        """
+        Parameters
+        ----------
+        task_id:
+            Identifier for the task being monitored (must match
+            ReliabilityReport.task_id).
+        baseline_window:
+            Number of initial reports used to establish the baseline.
+            Drift is not computed until this many reports have been recorded.
+        rolling_window:
+            Number of most-recent reports used for the rolling mean comparison.
+        thresholds:
+            Override the default severity thresholds. Keys are metric names;
+            values are dicts mapping severity level strings to float deltas.
+        on_alert:
+            Optional callback invoked synchronously for every DriftEvent with
+            severity >= WARNING. Use to wire into KillSwitch or operator queue.
+        """
+        self.task_id = task_id
+        self.baseline_window = baseline_window
+        self.rolling_window = rolling_window
+        self.thresholds = thresholds or self.DEFAULT_THRESHOLDS
+        self.on_alert = on_alert
+        self._reports: list[ReliabilityReport] = []
+        self._events: list[DriftEvent] = []
+        self._lock = threading.RLock()
+
+    # ── recording ─────────────────────────────────────────────────────────
+
+    def record(self, report: ReliabilityReport) -> list[DriftEvent]:
+        """
+        Record a new ReliabilityReport and compute drift against the baseline.
+
+        Returns the list of DriftEvents generated by this report (may be empty
+        if the baseline has not yet been established).
+        """
+        with self._lock:
+            self._reports.append(report)
+            new_events: list[DriftEvent] = []
+
+            if len(self._reports) <= self.baseline_window:
+                # Still building the baseline — no drift computation yet
+                return new_events
+
+            baseline_reports = self._reports[:self.baseline_window]
+            baseline = {
+                "pass_at_1":        statistics.mean(r.pass_at_1 for r in baseline_reports),
+                "consistency_score": statistics.mean(r.consistency_score for r in baseline_reports),
+                "pass_at_k":        statistics.mean(r.pass_at_k for r in baseline_reports),
+            }
+
+            for metric, base_val in baseline.items():
+                observed = getattr(report, metric)
+                delta = observed - base_val  # negative = degradation
+                thresholds = self.thresholds.get(metric, {})
+
+                # Determine severity from absolute delta (degradation only)
+                abs_delta = abs(delta)
+                severity = None
+                if abs_delta >= thresholds.get(DriftSeverity.CRITICAL.value, 1.0):
+                    severity = DriftSeverity.CRITICAL
+                elif abs_delta >= thresholds.get(DriftSeverity.ALERT.value, 1.0):
+                    severity = DriftSeverity.ALERT
+                elif abs_delta >= thresholds.get(DriftSeverity.WARNING.value, 1.0):
+                    severity = DriftSeverity.WARNING
+                elif abs_delta >= thresholds.get(DriftSeverity.INFO.value, 1.0):
+                    severity = DriftSeverity.INFO
+
+                if severity is not None and delta < 0:
+                    # Only alert on degradation (negative delta = worse performance)
+                    event = DriftEvent(
+                        ts=report.ts,
+                        task_id=self.task_id,
+                        run_id=report.run_id,
+                        metric=metric,
+                        baseline=base_val,
+                        observed=observed,
+                        delta=delta,
+                        severity=severity,
+                        detail=(
+                            f"{metric} degraded {abs_delta:.3f} from baseline "
+                            f"{base_val:.3f} → {observed:.3f}"
+                        ),
+                    )
+                    new_events.append(event)
+                    self._events.append(event)
+                    if self.on_alert and severity in (
+                        DriftSeverity.WARNING,
+                        DriftSeverity.ALERT,
+                        DriftSeverity.CRITICAL,
+                    ):
+                        try:
+                            self.on_alert(event)
+                        except Exception:
+                            pass  # never let the callback crash the harness
+
+            return new_events
+
+    # ── query ─────────────────────────────────────────────────────────────
+
+    def drift_events(
+        self,
+        min_severity: DriftSeverity = DriftSeverity.INFO,
+    ) -> list[DriftEvent]:
+        """Return all recorded drift events at or above *min_severity*."""
+        order = [
+            DriftSeverity.INFO,
+            DriftSeverity.WARNING,
+            DriftSeverity.ALERT,
+            DriftSeverity.CRITICAL,
+        ]
+        min_idx = order.index(min_severity)
+        with self._lock:
+            return [e for e in self._events if order.index(e.severity) >= min_idx]
+
+    def baseline_stats(self) -> Optional[dict[str, float]]:
+        """
+        Return the established baseline means, or None if not yet established.
+        """
+        with self._lock:
+            if len(self._reports) <= self.baseline_window:
+                return None
+            baseline_reports = self._reports[:self.baseline_window]
+            return {
+                "pass_at_1":        statistics.mean(r.pass_at_1 for r in baseline_reports),
+                "consistency_score": statistics.mean(r.consistency_score for r in baseline_reports),
+                "pass_at_k":        statistics.mean(r.pass_at_k for r in baseline_reports),
+                "n_baseline":       float(self.baseline_window),
+                "n_total":          float(len(self._reports)),
+            }
+
+    def is_critical(self) -> bool:
+        """True if any CRITICAL drift event has been recorded."""
+        return any(e.severity == DriftSeverity.CRITICAL for e in self.drift_events())
+
+    def summary(self) -> str:
+        with self._lock:
+            n = len(self._reports)
+            n_events = len(self._events)
+            critical = sum(1 for e in self._events if e.severity == DriftSeverity.CRITICAL)
+            alerts = sum(1 for e in self._events if e.severity == DriftSeverity.ALERT)
+            return (
+                f"GoalDriftMonitor(task={self.task_id!r} reports={n} "
+                f"events={n_events} alerts={alerts} critical={critical})"
+            )

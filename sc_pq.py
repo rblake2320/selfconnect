@@ -122,6 +122,76 @@ class HybridSignature:
             ts=d.get("ts", 0.0),
         )
 
+    def to_jwt_claims(self, message: bytes) -> dict:
+        """
+        Serialize this hybrid signature as a JWT-compatible claims dict.
+
+        Implements the serialization format aligned with RFC 9964 ("JSON Web
+        Signature (JWS) Using CRYSTALS-Dilithium") and the IETF
+        draft-ietf-pquip-hybrid-signature-spectrums approach for hybrid
+        classical+PQ signatures.
+
+        The returned dict can be embedded in a JWT ``cnf`` (confirmation)
+        claim or used as a standalone signed-object payload. It is
+        interoperable with any framework adapter that speaks JWS/JWT
+        (LangGraph, OpenAI Agents SDK, Semantic Kernel, etc.).
+
+        Structure::
+
+            {
+              "alg": "Ed25519+ML-DSA-65",        # composite algorithm name
+              "ed25519_sig": "<base64url>",
+              "mldsa_sig":   "<base64url>",
+              "mldsa_level": "ML-DSA-65",
+              "msg_hash":    "<sha256-hex>",      # SHA-256 of the signed message
+              "iat":         1234567890,           # issued-at (Unix timestamp)
+            }
+
+        Parameters
+        ----------
+        message:
+            The original message bytes that were signed. Used to include
+            the SHA-256 hash so verifiers can confirm message integrity
+            without needing the raw message.
+
+        Returns
+        -------
+        dict
+            JWT-compatible claims dict.
+        """
+        import hashlib
+        return {
+            "alg": f"Ed25519+{self.mldsa_level.value}",
+            "ed25519_sig": base64.urlsafe_b64encode(self.ed25519_sig).rstrip(b"=").decode(),
+            "mldsa_sig": base64.urlsafe_b64encode(self.mldsa_sig).rstrip(b"=").decode(),
+            "mldsa_level": self.mldsa_level.value,
+            "msg_hash": hashlib.sha256(message).hexdigest(),
+            "iat": int(self.ts),
+        }
+
+    @classmethod
+    def from_jwt_claims(cls, claims: dict) -> "HybridSignature":
+        """
+        Reconstruct a HybridSignature from JWT claims produced by
+        ``to_jwt_claims``.
+
+        Handles both standard base64 and base64url (with or without padding).
+        """
+        def _decode(s: str) -> bytes:
+            # Add padding if needed for base64url
+            padded = s + "==" [:(4 - len(s) % 4) % 4]
+            try:
+                return base64.urlsafe_b64decode(padded)
+            except Exception:
+                return base64.b64decode(s)
+
+        return cls(
+            ed25519_sig=_decode(claims["ed25519_sig"]),
+            mldsa_sig=_decode(claims["mldsa_sig"]),
+            mldsa_level=MLDSALevel(claims["mldsa_level"]),
+            ts=float(claims.get("iat", 0)),
+        )
+
     def __repr__(self) -> str:
         return (
             f"HybridSignature(ed25519={len(self.ed25519_sig)}B "
