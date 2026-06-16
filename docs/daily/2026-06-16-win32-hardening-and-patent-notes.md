@@ -1,9 +1,10 @@
 # SelfConnect Win32 Hardening And Patent Notes
 
 Date/time: 2026-06-16 02:39:40 -05:00  
+Final wrap-up: 2026-06-16 02:44:44 -05:00  
 Branch: `test/win32-hardening-v1`  
 Repository: `https://github.com/rblake2320/selfconnect.git`  
-Status: local branch prepared for GitHub push; not merged into `master`.
+Status: branch pushed to GitHub for laptop access; not merged into `master`.
 
 ## Executive Summary
 
@@ -75,6 +76,25 @@ Important lesson: live peer coordination through shared terminal `WM_CHAR` can c
   - Ed25519 identity signing through `sc_identity`.
   - named-pipe verification path.
 - Notes TPM upgrade path with `NCryptCreateClaim` / hardware-backed identity as future work.
+
+`a25d4b2 experiments: fix chained_channel.py B1/B2/B3 + impersonation + safe target`
+
+- Fixed UIA wrapper loading with `comtypes.client.GetModule("UIAutomationCore.dll")`.
+- Fixed named-pipe handle ABI:
+  - `CreateNamedPipeW.restype = ctypes.c_void_p`.
+  - `CreateFileW.restype = ctypes.c_void_p`.
+  - `INVALID_HANDLE_VALUE` checked with pointer-width `ctypes.c_size_t(-1).value`.
+- Fixed UIA event dispatch by using the full prefixed callback name:
+  - `IUIAutomationEventHandler_HandleAutomationEvent`.
+- Added Role B `ImpersonateNamedPipeClient` coverage for the OS-verified caller leg.
+- Added explicit Ed25519 software-signing note and TPM upgrade path through `NCryptCreateClaim`.
+- Added a throwaway `conhost.exe` target so live-fire probes do not write into unrelated agent windows.
+
+`1ebba94 fix: ruff cleanup on chained_channel.py (ClassVar, f-string, import order)`
+
+- Cleaned the experiment file enough for `ruff` to pass.
+- Fixed Role A target selection so an explicit `--target` stays an integer HWND instead of becoming a tuple.
+- Preserved the same chained-channel behavior while making the saved GitHub copy runnable.
 
 ## Verification Results
 
