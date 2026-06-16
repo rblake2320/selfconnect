@@ -45,6 +45,21 @@ Diagnostic failures worth preserving:
 - Built wheel currently includes only `self_connect.py` at top level; it omits `sc_identity.py`, `sc_firewall.py`, `sc_reliability.py`, `sc_pq.py`, `sc_shell.py`, and `sc_resume.py`.
 - Core installed wheel starts `MessageListener`, but the listener thread exits immediately when `pythoncom` is absent.
 
+Post-patch checkpoint on `test/win32-hardening-v1`:
+
+- `_win32_abi.py` added as the centralized, testable Win32 ABI module.
+- `self_connect.py` uses `_win32_abi.py` for pointer-sized callbacks/prototypes.
+- `MessageListener` survives a core install without `pythoncom`.
+- Wheel version is now `0.10.1`.
+- Wheel includes `_win32_abi.py`, `self_connect.py`, `sc_identity.py`, `sc_firewall.py`, `sc_reliability.py`, `sc_pq.py`, `sc_shell.py`, and `sc_resume.py`.
+- `self_connect.capabilities` is cached at import and exposes `win32`, `uia_text`, `uia_events`, `printwindow`, `named_pipe_impersonation`, and `tpm_identity`.
+- `python -m ruff check _win32_abi.py self_connect.py tests/test_win32_hardening.py` -> pass.
+- `python -m py_compile _win32_abi.py self_connect.py sc_identity.py sc_firewall.py sc_reliability.py sc_pq.py sc_shell.py sc_resume.py` -> pass.
+- `python test_self_connect.py` -> `68/68 passed`.
+- `python -m pytest tests -q --ignore=tests/test_trust_layer.py` -> `155 passed, 8 skipped`.
+- `tests/test_trust_layer.py` in isolated temp venv with `dilithium-py` -> `87 passed`.
+- Installed wheel check: `MessageListener` stays running without `pythoncom`, then stops cleanly.
+
 ## Confirmed Win32 Issues
 
 1. HWND ABI risk.
@@ -66,6 +81,11 @@ Diagnostic failures worth preserving:
    - `submit_claude_input()` uses dual `WM_CHAR 0x0D`.
    - Docs say `WM_KEYDOWN/WM_KEYUP` is ignored by Windows Terminal/Claude Code in some cases.
    - Do not change this blindly; add a live probe first.
+
+5. Peer terminal write collision.
+   - During live peer coordination, two agents wrote into the same terminal at once and produced interleaved `WM_CHAR` text.
+   - Do not use shared terminal `WM_CHAR` as the coordination/control plane when multiple agents may write concurrently.
+   - Additive peer registry/control-plane work must happen beside existing `WM_CHAR` routing before any cutover.
 
 ## Win32 Capability Promotion Plan
 
@@ -106,6 +126,22 @@ Promote new experiments as adapters, not rewrites:
 ```
 
 7. Add live submit probes before changing Enter behavior.
+
+Completed in local patch:
+
+- Items 1-5.
+
+Still gated:
+
+- Capability registry/probe.
+- Additive peer registry/control plane.
+- `WM_COPYDATA` pointer round-trip proof before any control-plane use of pointer-carrying messages.
+
+External experiment update from Claude 1:
+
+- UIA TextChanged live-fire proof is met in `experiments/win32_probe/uia_textchanged_fire.py`.
+- Proof condition: COM pump running, `WM_CHAR` inject, callback fired with correct text delta.
+- This unblocks push-based read work on the next implementation timeline, but polling should remain until the adapter is integrated and tested in this repo.
 
 ## Design Rule
 

@@ -30,7 +30,7 @@ Run as a script to list all visible windows:
   python self_connect.py
 """
 
-__version__ = "0.10.0"
+__version__ = "0.10.1"
 __all__ = [  # noqa: RUF022  # grouped by version/category, not alphabetical
     # Core types
     "WindowTarget", "WindowPool",
@@ -87,6 +87,26 @@ import time
 import uuid as _uuid
 from dataclasses import asdict, dataclass, field
 from typing import Optional
+
+import _win32_abi as _abi
+
+_DWORD_PTR = _abi.DWORD_PTR
+_WNDENUMPROC = _abi.WNDENUMPROC
+_configure_win32_prototypes = _abi.configure_win32_prototypes
+_handle_value = _abi.handle_value
+
+_WIN32_TYPES = {
+    "HWND": _abi.HWND,
+    "HDC": _abi.HDC,
+    "BOOL": _abi.BOOL,
+    "UINT": _abi.UINT,
+    "DWORD": _abi.DWORD,
+    "WPARAM": _abi.WPARAM,
+    "LPARAM": _abi.LPARAM,
+    "LRESULT": _abi.LRESULT,
+    "DWORD_PTR": _abi.DWORD_PTR,
+    "WNDENUMPROC": _abi.WNDENUMPROC,
+}
 
 # ── Win32 constants ───────────────────────────────────────────────────────────
 INPUT_KEYBOARD       = 1
@@ -170,10 +190,144 @@ user32   = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 gdi32    = ctypes.windll.gdi32
 
+_configure_win32_prototypes(user32, kernel32, gdi32)
+
+
+def _probe_uia_text() -> bool:
+    try:
+        import comtypes.client as _cc  # type: ignore
+        import comtypes.gen.UIAutomationClient as _uia  # type: ignore
+
+        auto = _cc.CreateObject(
+            "{ff48dba4-60ef-4201-aa87-54103eef594e}",
+            interface=_uia.IUIAutomation,
+        )
+        hwnd = kernel32.GetConsoleWindow()
+        if hwnd:
+            return auto.ElementFromHandle(hwnd) is not None
+        return auto is not None
+    except Exception:
+        return False
+
+
+def _probe_uia_events() -> bool:
+    try:
+        import comtypes.client as _cc  # type: ignore
+        import comtypes.gen.UIAutomationClient as _uia  # type: ignore
+
+        auto = _cc.CreateObject(
+            "{ff48dba4-60ef-4201-aa87-54103eef594e}",
+            interface=_uia.IUIAutomation,
+        )
+        hwnd = kernel32.GetConsoleWindow()
+        elem = auto.ElementFromHandle(hwnd) if hwnd else None
+        return bool(elem and hasattr(auto, "AddAutomationEventHandler"))
+    except Exception:
+        return False
+
+
+def _probe_printwindow() -> bool:
+    def _try(hwnd: int) -> bool:
+        if not hwnd:
+            return False
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return False
+        width = rect.right - rect.left
+        height = rect.bottom - rect.top
+        if width <= 0 or height <= 0:
+            return False
+        hdc_screen = user32.GetDC(0)
+        hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+        hbmp = gdi32.CreateCompatibleBitmap(hdc_screen, width, height)
+        gdi32.SelectObject(hdc_mem, hbmp)
+        try:
+            return bool(user32.PrintWindow(hwnd, hdc_mem, PW_RENDERFULLCONTENT))
+        except Exception:
+            return False
+        finally:
+            gdi32.DeleteObject(hbmp)
+            gdi32.DeleteDC(hdc_mem)
+            user32.ReleaseDC(0, hdc_screen)
+
+    candidates = [kernel32.GetConsoleWindow(), user32.GetForegroundWindow()]
+
+    def _cb(hwnd, _):
+        hwnd = _handle_value(hwnd)
+        if user32.IsWindowVisible(hwnd):
+            candidates.append(hwnd)
+        return len(candidates) < 24
+
+    try:
+        user32.EnumWindows(_WNDENUMPROC(_cb), 0)
+    except Exception:
+        pass
+    seen = set()
+    for hwnd in candidates:
+        hwnd = _handle_value(hwnd)
+        if hwnd in seen:
+            continue
+        seen.add(hwnd)
+        if _try(hwnd):
+            return True
+    return False
+
+
+def _probe_named_pipe_impersonation() -> bool:
+    try:
+        advapi32 = ctypes.windll.advapi32
+        return (
+            hasattr(kernel32, "CreateNamedPipeW")
+            and hasattr(kernel32, "ConnectNamedPipe")
+            and hasattr(advapi32, "ImpersonateNamedPipeClient")
+            and hasattr(advapi32, "RevertToSelf")
+        )
+    except Exception:
+        return False
+
+
+def _probe_tpm_identity() -> bool:
+    try:
+        ncrypt = ctypes.WinDLL("ncrypt.dll")
+        provider = ctypes.c_void_p()
+        ncrypt.NCryptOpenStorageProvider.argtypes = [
+            ctypes.POINTER(ctypes.c_void_p),
+            wintypes.LPCWSTR,
+            _abi.DWORD,
+        ]
+        ncrypt.NCryptOpenStorageProvider.restype = ctypes.c_long
+        ncrypt.NCryptFreeObject.argtypes = [ctypes.c_void_p]
+        ncrypt.NCryptFreeObject.restype = ctypes.c_long
+        status = ncrypt.NCryptOpenStorageProvider(
+            ctypes.byref(provider),
+            "Microsoft Platform Crypto Provider",
+            0,
+        )
+        if status != 0 or not provider.value:
+            return False
+        ncrypt.NCryptFreeObject(provider)
+        return True
+    except Exception:
+        return False
+
+
+def _probe_capabilities() -> dict[str, bool]:
+    return {
+        "win32": True,
+        "uia_text": _probe_uia_text(),
+        "uia_events": _probe_uia_events(),
+        "printwindow": _probe_printwindow(),
+        "named_pipe_impersonation": _probe_named_pipe_impersonation(),
+        "tpm_identity": _probe_tpm_identity(),
+    }
+
+
+capabilities = _probe_capabilities()
+
 
 # ── ctypes structures ─────────────────────────────────────────────────────────
 class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [
+    _fields_ = [  # noqa: RUF012
         ("wVk",         ctypes.c_ushort),
         ("wScan",       ctypes.c_ushort),
         ("dwFlags",     ctypes.c_ulong),
@@ -185,10 +339,10 @@ class _INPUT_UNION(ctypes.Union):
     _fields_ = [("ki", KEYBDINPUT), ("_pad", ctypes.c_byte * 24)]  # noqa: RUF012
 
 class INPUT(ctypes.Structure):
-    _fields_ = [("type", ctypes.c_ulong), ("u", _INPUT_UNION)]
+    _fields_ = [("type", ctypes.c_ulong), ("u", _INPUT_UNION)]  # noqa: RUF012
 
 class BITMAPINFOHEADER(ctypes.Structure):
-    _fields_ = [
+    _fields_ = [  # noqa: RUF012
         ("biSize",          ctypes.c_uint32),
         ("biWidth",         ctypes.c_int32),
         ("biHeight",        ctypes.c_int32),
@@ -275,9 +429,9 @@ def get_own_terminal_pid() -> int:
 def list_windows() -> list[WindowTarget]:
     """Return all visible top-level windows as WindowTarget objects."""
     results: list[WindowTarget] = []
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
 
     def _cb(hwnd, _):
+        hwnd = _handle_value(hwnd)
         if user32.IsWindowVisible(hwnd):
             title = _get_window_title(hwnd)
             if title:
@@ -289,23 +443,23 @@ def list_windows() -> list[WindowTarget]:
                 ))
         return True
 
-    user32.EnumWindows(WNDENUMPROC(_cb), 0)
+    user32.EnumWindows(_WNDENUMPROC(_cb), 0)
     return results
 
 
 def find_child_by_class(parent_hwnd: int, target_class: str) -> int:
     """Return first child window matching target_class, or 0."""
-    found = ctypes.c_int(0)
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+    found = [0]
 
     def _cb(hwnd, _):
+        hwnd = _handle_value(hwnd)
         if _get_class_name(hwnd) == target_class:
-            found.value = hwnd
+            found[0] = hwnd
             return False
         return True
 
-    user32.EnumChildWindows(parent_hwnd, WNDENUMPROC(_cb), 0)
-    return found.value
+    user32.EnumChildWindows(parent_hwnd, _WNDENUMPROC(_cb), 0)
+    return found[0]
 
 
 def find_target(
@@ -500,16 +654,16 @@ def get_child_texts(hwnd: int) -> "list[tuple[int, str, str]]":
     without taking a screenshot — zero inference cost.
     """
     results: list[tuple[int, str, str]] = []
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
 
     def _cb(child_hwnd, _):
+        child_hwnd = _handle_value(child_hwnd)
         cls = _get_class_name(child_hwnd)
         text = _get_window_title(child_hwnd)
         if text:
             results.append((child_hwnd, cls, text))
         return True
 
-    user32.EnumChildWindows(hwnd, WNDENUMPROC(_cb), 0)
+    user32.EnumChildWindows(hwnd, _WNDENUMPROC(_cb), 0)
     return results
 
 
@@ -660,14 +814,14 @@ def submit_claude_input(hwnd: int) -> bool:
     _input_site: list[int] = []
 
     def _enum_cb(child: int, _: int) -> bool:
+        child = _handle_value(child)
         buf = ctypes.create_unicode_buffer(64)
         user32.GetClassNameW(child, buf, 64)
         if "InputSite" in buf.value:
             _input_site.append(child)
         return True
 
-    _cb_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
-    user32.EnumChildWindows(hwnd, _cb_type(_enum_cb), 0)
+    user32.EnumChildWindows(hwnd, _WNDENUMPROC(_enum_cb), 0)
 
     if _input_site:
         user32.PostMessageW(_input_site[0], WM_CHAR, 0x000D, lParam)
@@ -850,7 +1004,7 @@ def _smto(hwnd: int, msg: int, wparam: int, lparam: int,
     Returns the message result, or 0 on timeout/error.
     SMTO_ABORTIFHUNG: returns immediately if the target is not responding.
     """
-    result = ctypes.c_size_t(0)
+    result = _DWORD_PTR(0)
     user32.SendMessageTimeoutW(
         hwnd, msg, wparam, lparam,
         SMTO_ABORTIFHUNG, timeout_ms,
@@ -982,7 +1136,10 @@ def get_text(hwnd: int) -> str:
     if not length:
         return ""
     buf = ctypes.create_unicode_buffer(length + 2)
-    user32.SendMessageW(hwnd, WM_GETTEXT, length + 1, buf)
+    user32.SendMessageW(
+        hwnd, WM_GETTEXT, length + 1,
+        ctypes.cast(buf, ctypes.c_void_p).value or 0,
+    )
     return buf.value
 
 
@@ -1017,9 +1174,9 @@ def click_button(parent_hwnd: int, button_text: str = "",
     Returns True if a matching button was found and BM_CLICK was sent.
     """
     found = [False]
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
 
     def _cb(child_hwnd, _):
+        child_hwnd = _handle_value(child_hwnd)
         cls = _get_class_name(child_hwnd)
         if button_class.lower() not in cls.lower():
             return True
@@ -1031,7 +1188,7 @@ def click_button(parent_hwnd: int, button_text: str = "",
         found[0] = True
         return False  # stop enumeration
 
-    cb = WNDENUMPROC(_cb)
+    cb = _WNDENUMPROC(_cb)
     user32.EnumChildWindows(parent_hwnd, cb, 0)
     return found[0]
 
@@ -1093,9 +1250,9 @@ def list_child_controls(hwnd: int) -> list[dict]:
     Critical for discovering what controls exist before targeting them.
     """
     results: list[dict] = []
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
 
     def _cb(child_hwnd, _):
+        child_hwnd = _handle_value(child_hwnd)
         cls = _get_class_name(child_hwnd)
         text = _get_window_title(child_hwnd)
         r = wintypes.RECT()
@@ -1108,7 +1265,7 @@ def list_child_controls(hwnd: int) -> list[dict]:
         })
         return True
 
-    cb = WNDENUMPROC(_cb)
+    cb = _WNDENUMPROC(_cb)
     user32.EnumChildWindows(hwnd, cb, 0)
     return results
 
@@ -1120,10 +1277,10 @@ def find_child_by_text(hwnd: int, text: str, partial: bool = True) -> int:
     partial=False: exact match (case-insensitive).
     """
     found = [0]
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
     needle = text.lower()
 
     def _cb(child_hwnd, _):
+        child_hwnd = _handle_value(child_hwnd)
         title = _get_window_title(child_hwnd).lower()
         if partial and needle in title:
             found[0] = child_hwnd
@@ -1133,7 +1290,7 @@ def find_child_by_text(hwnd: int, text: str, partial: bool = True) -> int:
             return False
         return True
 
-    cb = WNDENUMPROC(_cb)
+    cb = _WNDENUMPROC(_cb)
     user32.EnumChildWindows(hwnd, cb, 0)
     return found[0]
 
@@ -1809,15 +1966,28 @@ class MessageListener:
 
     def _loop(self) -> None:
         """Poll loop — runs in daemon thread."""
-        import pythoncom  # type: ignore
         try:
-            pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
+            import pythoncom  # type: ignore
         except Exception:
-            pass
+            pythoncom = None  # type: ignore[assignment]
+        if pythoncom is not None:
+            try:
+                pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
+            except Exception:
+                pass
 
         while not self._stop_event.wait(self.poll):
             try:
-                text = get_text_uia(self.own_hwnd)
+                text = ""
+                try:
+                    text = get_text_uia(self.own_hwnd)
+                except Exception:
+                    pass
+                if not text:
+                    try:
+                        text = "\n".join(t for _, _, t in get_child_texts(self.own_hwnd))
+                    except Exception:
+                        pass
                 if not text:
                     continue
                 frames = parse_all_frames(text)
