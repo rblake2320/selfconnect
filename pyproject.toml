@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "selfconnect"
-version = "0.10.3"
+version = "0.10.4"
 description = "OS-native Win32 bridge for AI agent orchestration — PostMessage, PrintWindow, UIA, cross-machine mesh, Telegram approvals, ClaudeGo dashboard."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -81,6 +81,7 @@ include = [
     "self_connect.py",
     "sc_cli.py",
     "sc_mcp.py",
+    "sc_mesh_registry.py",
     "sc_identity.py",
     "sc_firewall.py",
     "sc_reliability.py",
@@ -99,6 +100,7 @@ include = [
 [project.scripts]
 selfconnect = "sc_cli:main"
 selfconnect-mcp = "sc_mcp:main"
+selfconnect-mesh = "sc_mesh_registry:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "test_self_connect.py"]

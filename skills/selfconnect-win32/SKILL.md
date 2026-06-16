@@ -17,6 +17,7 @@ git status --short --branch
 python -m pip show selfconnect
 selfconnect doctor --json
 python -m sc_cli guard --hwnd 0x123456 --expect-pid 1234 --expect-class CASCADIA_HOSTING_WINDOW_CLASS
+selfconnect-mesh list
 ```
 
 2. If running from source instead of an installed wheel:
@@ -64,6 +65,37 @@ Use this separation for message paths:
   non-terminal target is intentional.
 - Keep `WM_CHAR` routing as a fallback until a sidecar control plane is proven.
 - Keep TPM, DACL pipe, ETW, MSIX, and service-mode work optional by default.
+
+## Spawning And Mesh Discipline
+
+- When spawning Codex, set its permissions profile first if possible; otherwise
+  monitor approvals and approve/deny deliberately.
+- Claude sessions may already have the user's approval profile configured; still
+  register the spawned window before assigning work.
+- Gemini sessions may need approval monitoring.
+- Always identify the new HWND, PID, title, exe, and class before injecting a
+  handoff.
+- Do not assume every terminal is in the mesh. Register only active mesh windows:
+
+```powershell
+selfconnect-mesh scan --query Codex
+selfconnect-mesh register --role codex-2 --hwnd 0x123456 --agent codex --task "specific task" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
+```
+
+- Roles must be unique. Do not create multiple `B` roles; use names like
+  `codex-1`, `claude-1`, `rmc-1`, `gemini-1`, or task-specific roles.
+- On migration or successor spawn, register the new role or use `--replace` for
+  the migrated role.
+- Before idle or after auto-compact, run:
+
+```powershell
+selfconnect-mesh update --role codex-1 --status compacting --task "waiting for resume"
+selfconnect-mesh heartbeat --role codex-1
+selfconnect-mesh list
+```
+
+- Do not run registry writes in parallel; `selfconnect-mesh` uses an atomic JSON
+  file, not a locking database.
 
 ## MCP Server
 

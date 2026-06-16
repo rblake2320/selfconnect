@@ -141,6 +141,39 @@ Current artifacts:
 - Current proof is SCM/SID helper only; a real service payload still needs a
   native service executable, pywin32 wrapper, or experiment wrapper.
 
+### Job Object Sandbox Result
+
+Claude1 reported `job_sandbox.py` PASS on branch `experiment/win32-probe`,
+commit `48c5d94`:
+
+- Job Object `KILL_ON_JOB_CLOSE`.
+- `ActiveProcesses=1` confirmed live.
+- active process limit: `1`.
+- memory limit: `256MB`.
+- child process killed by the OS on `CloseHandle(job)`.
+- Result: OS-enforced containment proof passed. This is the containment path
+  that app-only ExecGuard / SCFH could not provide.
+
+Next step is to pull or port that probe into this branch after reviewing the
+exact implementation.
+
+### TPM Attestation Result
+
+Claude1 reported `tpm_attestation.py` NA on branch `experiment/win32-probe`,
+commit `48c5d94`:
+
+- `NCryptCreateClaim(NCRYPT_CLAIM_PLATFORM)` returned `E_INVALIDARG`.
+- Current diagnosis: malformed call shape, not a hardware/TPM capability limit.
+- Needs a doc-grounded `NCryptBufferDesc` with nonce and PCR mask.
+- Keep TPM signing proof as valid; do not claim remote-verifiable platform
+  attestation until the `NCryptCreateClaim` invocation is corrected.
+
+Claude1 next-four status after commit `48c5d94`:
+
+- `target_guard`: PASS.
+- `tpm_attestation`: NA / diagnosed.
+- `job_sandbox`: PASS.
+
 ### WinVerifyTrust Pre-Execution Check
 
 What it gives SelfConnect:

@@ -1,10 +1,12 @@
 import sys
+import tempfile
 from pathlib import Path
 from typing import ClassVar
 
 import pytest
 import sc_cli
 import sc_mcp
+import sc_mesh_registry
 
 
 class _FakeWindow:
@@ -57,6 +59,68 @@ def test_mcp_input_gate_is_closed_by_default(monkeypatch):
     assert sc_mcp._mcp_input_allowed() is False
     monkeypatch.setenv("SELFCONNECT_MCP_ALLOW_INPUT", "true")
     assert sc_mcp._mcp_input_allowed() is True
+
+
+def test_mesh_registry_infers_agent_type():
+    assert sc_mesh_registry.infer_agent_type("codex 1") == "codex"
+    assert sc_mesh_registry.infer_agent_type("ckaude 1") == "claude"
+    assert sc_mesh_registry.infer_agent_type("Team Gemini") == "gemini"
+
+
+def test_mesh_registry_rejects_duplicate_active_role(monkeypatch):
+    fake = _FakeSelfConnect()
+    monkeypatch.setattr(sc_cli, "_load_sc", lambda: fake)
+    monkeypatch.setattr(sc_cli, "_window_valid_visible", lambda hwnd: (True, True))
+    temp_dir = tempfile.TemporaryDirectory()
+    path = Path(temp_dir.name) / "mesh.json"
+
+    try:
+        first = sc_mesh_registry.register_agent(
+            _FakeWindow.hwnd,
+            "codex-1",
+            registry_path=path,
+            expected_class=_FakeWindow.class_name,
+        )
+        assert first["ok"] is True
+
+        class _OtherWindow(_FakeWindow):
+            hwnd = 0x9999
+            title = "Other Codex"
+
+        fake.windows = [_OtherWindow()]
+        second = sc_mesh_registry.register_agent(
+            _OtherWindow.hwnd,
+            "codex-1",
+            registry_path=path,
+            expected_class=_OtherWindow.class_name,
+        )
+        assert second["ok"] is False
+        assert "role already registered" in second["error"]
+    finally:
+        temp_dir.cleanup()
+
+
+def test_mesh_registry_heartbeat_updates_guard_status(monkeypatch):
+    fake = _FakeSelfConnect()
+    monkeypatch.setattr(sc_cli, "_load_sc", lambda: fake)
+    monkeypatch.setattr(sc_cli, "_window_valid_visible", lambda hwnd: (True, True))
+    temp_dir = tempfile.TemporaryDirectory()
+    path = Path(temp_dir.name) / "mesh.json"
+
+    try:
+        registered = sc_mesh_registry.register_agent(
+            _FakeWindow.hwnd,
+            "claude-1",
+            registry_path=path,
+            expected_class=_FakeWindow.class_name,
+        )
+        assert registered["ok"] is True
+
+        beat = sc_mesh_registry.heartbeat("claude-1", registry_path=path)
+        assert beat["ok"] is True
+        assert beat["agent"]["guard_ok"] is True
+    finally:
+        temp_dir.cleanup()
 
 
 def test_print_json_escapes_unicode_for_windows_console(capsys):
@@ -139,8 +203,10 @@ def test_pyproject_exports_package_adapter_entry_points():
     text = Path("pyproject.toml").read_text()
     assert 'selfconnect = "sc_cli:main"' in text
     assert 'selfconnect-mcp = "sc_mcp:main"' in text
+    assert 'selfconnect-mesh = "sc_mesh_registry:main"' in text
     assert '"sc_cli.py"' in text
     assert '"sc_mcp.py"' in text
+    assert '"sc_mesh_registry.py"' in text
     assert '"experiments/win32_probe/CAPABILITY_BACKLOG.md"' in text
     assert '"experiments/win32_probe/SERVICE_SID_DAEMON.md"' in text
     assert '"experiments/win32_probe/chained_channel.py"' in text

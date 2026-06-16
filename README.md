@@ -1,4 +1,4 @@
-# SelfConnect SDK v0.10.3
+# SelfConnect SDK v0.10.4
 
 **OS-native bridge between AI agents and Windows desktop apps.**  
 PostMessage + PrintWindow. No browser. No accessibility layer. No API between agents.
@@ -74,6 +74,8 @@ selfconnect windows --query "Claude"
 selfconnect guard --hwnd 0x123456 --expect-pid 1234 --expect-class CASCADIA_HOSTING_WINDOW_CLASS
 selfconnect read --hwnd 0x123456
 selfconnect capture --hwnd 0x123456 --path proof.png
+selfconnect-mesh scan --query Claude
+selfconnect-mesh register --role codex-1 --hwnd 0x123456 --task "package guard" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
 ```
 
 Input delivery is intentionally gated:
@@ -134,6 +136,24 @@ The branch also carries a repo-local Codex skill at
 `skills/selfconnect-win32/` and the composed Win32 proof at
 `experiments/win32_probe/chained_channel.py`; both are included in the built
 wheel for traceability.
+
+---
+
+## Mesh Registry
+
+Use `selfconnect-mesh` to track which terminals are part of the active mesh.
+Do not infer mesh membership from every open terminal.
+
+```bash
+selfconnect-mesh scan --query Claude
+selfconnect-mesh register --role claude-1 --hwnd 0x123456 --task "TPM attestation" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
+selfconnect-mesh update --role claude-1 --status compacting --task "auto-compact pause"
+selfconnect-mesh heartbeat --role claude-1
+selfconnect-mesh list
+```
+
+Roles should be unique. If a role migrates to a new HWND, use `--replace` so the
+registry shows that the old route was intentionally superseded.
 
 ---
 
