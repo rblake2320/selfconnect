@@ -80,6 +80,12 @@ Recommended proof:
   migration.
 - Verify events with Windows tooling and preserve event schema.
 
+Current artifact:
+
+- `experiments/win32_probe/etw_provider.py`
+- Smoke result on 2026-06-16: `EventRegister`, `EventWriteString`, and
+  `EventUnregister` returned `0`.
+
 ### TPM Key Attestation
 
 What it gives SelfConnect:
@@ -127,6 +133,13 @@ Recommended proof:
 - Expose only a local named-pipe API to the user session.
 - Keep UI/terminal agent code unprivileged.
 - Do not require the whole app to run elevated.
+
+Current artifacts:
+
+- `experiments/win32_probe/service_sid_probe.py`
+- `experiments/win32_probe/SERVICE_SID_DAEMON.md`
+- Current proof is SCM/SID helper only; a real service payload still needs a
+  native service executable, pywin32 wrapper, or experiment wrapper.
 
 ### WinVerifyTrust Pre-Execution Check
 

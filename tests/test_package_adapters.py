@@ -142,7 +142,10 @@ def test_pyproject_exports_package_adapter_entry_points():
     assert '"sc_cli.py"' in text
     assert '"sc_mcp.py"' in text
     assert '"experiments/win32_probe/CAPABILITY_BACKLOG.md"' in text
+    assert '"experiments/win32_probe/SERVICE_SID_DAEMON.md"' in text
     assert '"experiments/win32_probe/chained_channel.py"' in text
+    assert '"experiments/win32_probe/etw_provider.py"' in text
+    assert '"experiments/win32_probe/service_sid_probe.py"' in text
     assert '"skills/selfconnect-win32/**"' in text
 
 

@@ -89,7 +89,10 @@ include = [
     "sc_resume.py",
     "claudego/**",
     "experiments/win32_probe/CAPABILITY_BACKLOG.md",
+    "experiments/win32_probe/SERVICE_SID_DAEMON.md",
     "experiments/win32_probe/chained_channel.py",
+    "experiments/win32_probe/etw_provider.py",
+    "experiments/win32_probe/service_sid_probe.py",
     "skills/selfconnect-win32/**",
 ]
 
