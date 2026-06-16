@@ -1,4 +1,4 @@
-# SelfConnect SDK v0.10.2
+# SelfConnect SDK v0.10.3
 
 **OS-native bridge between AI agents and Windows desktop apps.**  
 PostMessage + PrintWindow. No browser. No accessibility layer. No API between agents.
@@ -71,6 +71,7 @@ Windows systems:
 selfconnect doctor --json
 selfconnect doctor --windows
 selfconnect windows --query "Claude"
+selfconnect guard --hwnd 0x123456 --expect-pid 1234 --expect-class CASCADIA_HOSTING_WINDOW_CLASS
 selfconnect read --hwnd 0x123456
 selfconnect capture --hwnd 0x123456 --path proof.png
 ```
@@ -78,9 +79,20 @@ selfconnect capture --hwnd 0x123456 --path proof.png
 Input delivery is intentionally gated:
 
 ```bash
-selfconnect send --hwnd 0x123456 --text "hello" --submit --allow-input
+selfconnect send --hwnd 0x123456 --text "hello" --submit --allow-input --expect-pid 1234 --expect-class CASCADIA_HOSTING_WINDOW_CLASS
 # or set SELFCONNECT_ALLOW_INPUT=1
 ```
+
+The send path has two gates:
+
+- `--allow-input` proves the caller is allowed to type.
+- `--expect-*` proves the HWND still points at the intended target.
+- Terminal classes are required by default to prevent accidental writes into
+  windows such as Notepad.
+
+If you intentionally inspected the current target and want to send without an
+expected PID/exe/class/title, pass `--confirm-current-target`.
+If you intentionally need a non-terminal target, pass `--allow-non-terminal`.
 
 ---
 
@@ -99,6 +111,7 @@ The MCP server exposes:
 - `list_windows`
 - `read_window`
 - `capture_window`
+- `verify_target`
 - `send_text`
 
 The `send_text` tool is disabled unless explicitly enabled:
@@ -107,6 +120,15 @@ The `send_text` tool is disabled unless explicitly enabled:
 set SELFCONNECT_MCP_ALLOW_INPUT=1
 selfconnect-mcp
 ```
+
+The MCP `send_text` tool also requires target verification fields, or
+`confirm_current_target=true` after the caller has inspected the target. It
+requires a terminal class by default unless `require_terminal=false`.
+
+`doctor` reports platform capability probes. Some probes, such as
+`tpm_identity` and `named_pipe_impersonation`, indicate local OS support and
+experiment/enterprise adapter availability; they are not claims that every
+adapter is enabled in the core SDK path.
 
 The branch also carries a repo-local Codex skill at
 `skills/selfconnect-win32/` and the composed Win32 proof at

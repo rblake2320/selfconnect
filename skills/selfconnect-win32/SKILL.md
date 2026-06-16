@@ -16,6 +16,7 @@ Prefer package commands and capability probes before writing one-off snippets.
 git status --short --branch
 python -m pip show selfconnect
 selfconnect doctor --json
+python -m sc_cli guard --hwnd 0x123456 --expect-pid 1234 --expect-class CASCADIA_HOSTING_WINDOW_CLASS
 ```
 
 2. If running from source instead of an installed wheel:
@@ -52,7 +53,15 @@ Use this separation for message paths:
 
 - Do not type into windows until the target HWND, PID, title, exe, and class are checked.
 - Use `selfconnect send` only with `--allow-input` or `SELFCONNECT_ALLOW_INPUT=1`.
+- Use `selfconnect send` with `--expect-pid`, `--expect-exe`, `--expect-class`, or
+  `--expect-title`; otherwise it fails closed unless `--confirm-current-target`
+  is provided after inspection.
+- Terminal classes are required by default. Use `--allow-non-terminal` only when
+  deliberately testing a non-terminal target.
 - For MCP, `send_text` must remain disabled unless `SELFCONNECT_MCP_ALLOW_INPUT=1`.
+- For MCP, call `verify_target` before `send_text`, and pass the same expected
+  target fields into `send_text`. Keep `require_terminal=true` unless a
+  non-terminal target is intentional.
 - Keep `WM_CHAR` routing as a fallback until a sidecar control plane is proven.
 - Keep TPM, DACL pipe, ETW, MSIX, and service-mode work optional by default.
 
@@ -70,6 +79,7 @@ Available tools:
 - `list_windows`
 - `read_window`
 - `capture_window`
+- `verify_target`
 - `send_text`
 
 Enable MCP input only for controlled tests:
@@ -78,6 +88,11 @@ Enable MCP input only for controlled tests:
 $env:SELFCONNECT_MCP_ALLOW_INPUT = "1"
 selfconnect-mcp
 ```
+
+Treat `capabilities` as platform probes. For example, `tpm_identity=true` and
+`named_pipe_impersonation=true` mean the machine appears to support those
+primitives; the core SDK path may still use Ed25519 software identity while
+enterprise or experiment paths use TPM/DACL impersonation.
 
 ## Validation
 

@@ -8,12 +8,28 @@ list targets, read text, capture windows, and optionally send input.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import platform
 import sys
 from pathlib import Path
 from typing import Any
+
+CAPABILITY_SCOPE = {
+    "win32": "sdk-core platform probe",
+    "uia_text": "optional SDK read adapter when UIA dependencies are installed",
+    "uia_events": "platform probe; event-driven adapter is experimental",
+    "printwindow": "sdk-core capture adapter",
+    "named_pipe_impersonation": "platform probe; experiment/enterprise adapter",
+    "tpm_identity": "platform probe; experiment/enterprise adapter",
+}
+TERMINAL_CLASSES = (
+    "CASCADIA_HOSTING_WINDOW_CLASS",
+    "ConsoleWindowClass",
+    "PseudoConsoleWindow",
+    "mintty",
+)
 
 
 def _load_sc():
@@ -69,6 +85,141 @@ def find_window_by_hwnd(hwnd: int):
     return None
 
 
+def _process_session_id(pid: int) -> int | None:
+    try:
+        session_id = ctypes.c_ulong(0)
+        ok = ctypes.windll.kernel32.ProcessIdToSessionId(
+            int(pid), ctypes.byref(session_id)
+        )
+        return int(session_id.value) if ok else None
+    except Exception:
+        return None
+
+
+def _window_valid_visible(hwnd: int) -> tuple[bool, bool]:
+    try:
+        sc = _load_sc()
+        return bool(sc.user32.IsWindow(hwnd)), bool(sc.user32.IsWindowVisible(hwnd))
+    except Exception:
+        return False, False
+
+
+def _matches_text(actual: str, expected: str) -> bool:
+    return expected.strip().lower() in actual.strip().lower()
+
+
+def verify_target(
+    hwnd: int,
+    *,
+    expected_pid: int | None = None,
+    expected_exe: str = "",
+    expected_class: str = "",
+    expected_title: str = "",
+    allow_classes: tuple[str, ...] = TERMINAL_CLASSES,
+    require_terminal: bool = True,
+    require_expectation: bool = True,
+    own_pid: int | None = None,
+) -> dict[str, Any]:
+    """Verify that an HWND still points at the intended target.
+
+    This closes the gap between "input is allowed" and "this is the right
+    window." By default at least one expected property is required so callers do
+    not accidentally write to a recycled or misidentified HWND.
+    """
+    hwnd = parse_hwnd(hwnd)
+    valid, visible = _window_valid_visible(hwnd)
+    target = find_window_by_hwnd(hwnd)
+
+    actual = window_to_dict(target) if target else {
+        "hwnd": hwnd,
+        "pid": 0,
+        "exe_name": "",
+        "class_name": "",
+        "title": "",
+    }
+    expected = {
+        "pid": expected_pid,
+        "exe_name": expected_exe,
+        "class_name": expected_class,
+        "title_contains": expected_title,
+        "allow_classes": list(allow_classes),
+    }
+    supplied = {
+        key: value for key, value in {
+            "pid": expected_pid,
+            "exe_name": expected_exe,
+            "class_name": expected_class,
+            "title_contains": expected_title,
+        }.items()
+        if value not in (None, "", 0)
+    }
+    checks: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    session_id = _process_session_id(actual["pid"]) if actual["pid"] else None
+    resolved_own_pid = own_pid
+    is_self = bool(resolved_own_pid and actual["pid"] == resolved_own_pid)
+    is_terminal = actual["class_name"] in allow_classes
+
+    if not valid:
+        reasons.append("invalid hwnd")
+
+    if target is None:
+        reasons.append("window not visible or not enumerated")
+
+    if is_self:
+        reasons.append("target pid matches own_pid")
+
+    if require_terminal and not is_terminal:
+        reasons.append(f"class {actual['class_name'] or '<unknown>'} is not an allowed terminal class")
+
+    if require_expectation and not supplied:
+        reasons.append("no target expectations supplied")
+
+    if expected_pid not in (None, 0):
+        ok = int(actual["pid"]) == int(expected_pid)
+        checks.append({"field": "pid", "expected": int(expected_pid), "actual": actual["pid"], "ok": ok})
+        if not ok:
+            reasons.append("pid mismatch")
+
+    if expected_exe:
+        ok = actual["exe_name"].lower() == expected_exe.lower()
+        checks.append({"field": "exe_name", "expected": expected_exe, "actual": actual["exe_name"], "ok": ok})
+        if not ok:
+            reasons.append("exe mismatch")
+
+    if expected_class:
+        ok = actual["class_name"].lower() == expected_class.lower()
+        checks.append({"field": "class_name", "expected": expected_class, "actual": actual["class_name"], "ok": ok})
+        if not ok:
+            reasons.append("class mismatch")
+
+    if expected_title:
+        ok = _matches_text(actual["title"], expected_title)
+        checks.append({"field": "title", "expected_contains": expected_title, "actual": actual["title"], "ok": ok})
+        if not ok:
+            reasons.append("title mismatch")
+
+    return {
+        "hwnd": hwnd,
+        "valid": valid,
+        "visible": visible,
+        "pid": actual["pid"],
+        "exe": actual["exe_name"],
+        "class": actual["class_name"],
+        "title": actual["title"],
+        "session_id": session_id,
+        "own_pid": resolved_own_pid,
+        "is_self": is_self,
+        "is_terminal": is_terminal,
+        "ok": not reasons,
+        "reasons": reasons,
+        "actual": actual,
+        "expected": expected,
+        "checks": checks,
+        "errors": reasons,
+    }
+
+
 def doctor_report(include_windows: bool = False, query: str = "", limit: int = 20) -> dict[str, Any]:
     sc = _load_sc()
     windows = sc.list_windows()
@@ -78,6 +229,7 @@ def doctor_report(include_windows: bool = False, query: str = "", limit: int = 2
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "capabilities": dict(getattr(sc, "capabilities", {})),
+        "capability_scope": CAPABILITY_SCOPE,
         "visible_window_count": len(windows),
     }
     if include_windows:
@@ -144,6 +296,13 @@ def send_text_to_window(
     char_delay: float = 0.05,
     allow_input: bool = False,
     env_name: str = "SELFCONNECT_ALLOW_INPUT",
+    expected_pid: int | None = None,
+    expected_exe: str = "",
+    expected_class: str = "",
+    expected_title: str = "",
+    confirm_current_target: bool = False,
+    require_terminal: bool = True,
+    own_pid: int | None = None,
 ) -> dict[str, Any]:
     sc = _load_sc()
     hwnd = parse_hwnd(hwnd)
@@ -155,9 +314,31 @@ def send_text_to_window(
             "hint": f"pass --allow-input or set {env_name}=1",
         }
 
+    guard = verify_target(
+        hwnd,
+        expected_pid=expected_pid,
+        expected_exe=expected_exe,
+        expected_class=expected_class,
+        expected_title=expected_title,
+        require_terminal=require_terminal,
+        require_expectation=not confirm_current_target,
+        own_pid=own_pid,
+    )
+    if not guard["ok"]:
+        return {
+            "ok": False,
+            "hwnd": hwnd,
+            "error": "target verification failed",
+            "guard": guard,
+            "hint": (
+                "pass --expect-pid/--expect-exe/--expect-class/--expect-title "
+                "or --confirm-current-target after inspecting the current window"
+            ),
+        }
+
     target = find_window_by_hwnd(hwnd)
     if target is None:
-        return {"ok": False, "hwnd": hwnd, "error": "window not found"}
+        return {"ok": False, "hwnd": hwnd, "error": "window disappeared after verification"}
 
     payload = text + ("\r" if submit else "")
     sc.send_string(target, payload, char_delay=char_delay)
@@ -168,11 +349,12 @@ def send_text_to_window(
         "exe_name": target.exe_name,
         "title": target.title,
         "chars_sent": len(payload),
+        "guard": guard,
     }
 
 
 def _print_json(data: Any) -> int:
-    print(json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False))
+    print(json.dumps(data, indent=2, sort_keys=True, ensure_ascii=True))
     return 0
 
 
@@ -212,12 +394,37 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--path", default="")
     p.add_argument("--no-crop", action="store_true")
 
+    p = sub.add_parser("guard", help="verify an HWND still points at the expected target")
+    p.add_argument("--hwnd", required=True, type=parse_hwnd)
+    p.add_argument("--expect-pid", type=int, default=None)
+    p.add_argument("--expect-exe", default="")
+    p.add_argument("--expect-class", default="")
+    p.add_argument("--expect-title", default="", help="expected title substring")
+    p.add_argument("--own-pid", type=int, default=None)
+    p.add_argument("--allow-non-terminal", action="store_true")
+    p.add_argument(
+        "--confirm-current-target",
+        action="store_true",
+        help="allow a report without expectations after manual inspection",
+    )
+
     p = sub.add_parser("send", help="type text into a target window")
     p.add_argument("--hwnd", required=True, type=parse_hwnd)
     p.add_argument("--text", required=True)
     p.add_argument("--submit", action="store_true", help="append Enter")
     p.add_argument("--char-delay", type=float, default=0.05)
     p.add_argument("--allow-input", action="store_true", help="required unless SELFCONNECT_ALLOW_INPUT=1")
+    p.add_argument("--expect-pid", type=int, default=None)
+    p.add_argument("--expect-exe", default="")
+    p.add_argument("--expect-class", default="")
+    p.add_argument("--expect-title", default="", help="expected title substring")
+    p.add_argument("--own-pid", type=int, default=None)
+    p.add_argument("--allow-non-terminal", action="store_true")
+    p.add_argument(
+        "--confirm-current-target",
+        action="store_true",
+        help="allow send without expectations after manual target inspection",
+    )
 
     return parser
 
@@ -251,6 +458,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "capture":
             return _print_json(capture_window(args.hwnd, args.path, crop=not args.no_crop))
 
+        if args.command == "guard":
+            return _print_json(verify_target(
+                args.hwnd,
+                expected_pid=args.expect_pid,
+                expected_exe=args.expect_exe,
+                expected_class=args.expect_class,
+                expected_title=args.expect_title,
+                require_terminal=not args.allow_non_terminal,
+                require_expectation=not args.confirm_current_target,
+                own_pid=args.own_pid,
+            ))
+
         if args.command == "send":
             return _print_json(send_text_to_window(
                 args.hwnd,
@@ -258,6 +477,13 @@ def main(argv: list[str] | None = None) -> int:
                 submit=args.submit,
                 char_delay=args.char_delay,
                 allow_input=args.allow_input,
+                expected_pid=args.expect_pid,
+                expected_exe=args.expect_exe,
+                expected_class=args.expect_class,
+                expected_title=args.expect_title,
+                confirm_current_target=args.confirm_current_target,
+                require_terminal=not args.allow_non_terminal,
+                own_pid=args.own_pid,
             ))
 
         parser.error(f"unknown command: {args.command}")

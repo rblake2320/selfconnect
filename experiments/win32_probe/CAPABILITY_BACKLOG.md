@@ -27,6 +27,11 @@ probes:
 - `SendInput` / `send_keys`.
 - `BM_CLICK`, `WM_COMMAND`, `WM_SETTEXT`, and related control messages.
 - capture-exclusion APIs.
+- safe target guard for shippable CLI/MCP input:
+  - live HWND verification.
+  - expected PID/exe/class/title matching.
+  - terminal-class requirement by default.
+  - explicit non-terminal override.
 - `MessageListener`.
 - role migration and checkpointing.
 - app-level egress gating plus WFP policy tooling.

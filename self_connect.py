@@ -30,7 +30,7 @@ Run as a script to list all visible windows:
   python self_connect.py
 """
 
-__version__ = "0.10.2"
+__version__ = "0.10.3"
 __all__ = [  # noqa: RUF022  # grouped by version/category, not alphabetical
     # Core types
     "WindowTarget", "WindowPool", "capabilities",
@@ -322,6 +322,9 @@ def _probe_capabilities() -> dict[str, bool]:
     }
 
 
+# Platform capability probes. A True value means the local OS/dependencies appear
+# to support that primitive; it does not guarantee the production SDK adapter is
+# enabled for every capability.
 capabilities = _probe_capabilities()
 
 

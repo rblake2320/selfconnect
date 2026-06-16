@@ -5,7 +5,8 @@ Run with:
     selfconnect-mcp
 
 Input delivery is disabled by default. Set ``SELFCONNECT_MCP_ALLOW_INPUT=1`` to
-enable the ``send_text`` tool.
+enable the ``send_text`` tool. The send tool still requires target verification
+or an explicit current-target confirmation.
 """
 
 from __future__ import annotations
@@ -54,13 +55,43 @@ def build_server():
         return sc_cli.capture_window(hwnd, path=path, crop=crop)
 
     @server.tool()
+    def verify_target(
+        hwnd: int,
+        expected_pid: int = 0,
+        expected_exe: str = "",
+        expected_class: str = "",
+        expected_title: str = "",
+        confirm_current_target: bool = False,
+        require_terminal: bool = True,
+        own_pid: int = 0,
+    ) -> dict[str, Any]:
+        """Verify an HWND still points at the expected PID/exe/class/title."""
+        return sc_cli.verify_target(
+            hwnd,
+            expected_pid=expected_pid or None,
+            expected_exe=expected_exe,
+            expected_class=expected_class,
+            expected_title=expected_title,
+            require_terminal=require_terminal,
+            require_expectation=not confirm_current_target,
+            own_pid=own_pid or None,
+        )
+
+    @server.tool()
     def send_text(
         hwnd: int,
         text: str,
         submit: bool = False,
         char_delay: float = 0.05,
+        expected_pid: int = 0,
+        expected_exe: str = "",
+        expected_class: str = "",
+        expected_title: str = "",
+        confirm_current_target: bool = False,
+        require_terminal: bool = True,
+        own_pid: int = 0,
     ) -> dict[str, Any]:
-        """Type text into a window. Disabled unless SELFCONNECT_MCP_ALLOW_INPUT=1."""
+        """Type text into a verified window. Also requires SELFCONNECT_MCP_ALLOW_INPUT=1."""
         return sc_cli.send_text_to_window(
             hwnd,
             text,
@@ -68,6 +99,13 @@ def build_server():
             char_delay=char_delay,
             allow_input=_mcp_input_allowed(),
             env_name="SELFCONNECT_MCP_ALLOW_INPUT",
+            expected_pid=expected_pid or None,
+            expected_exe=expected_exe,
+            expected_class=expected_class,
+            expected_title=expected_title,
+            confirm_current_target=confirm_current_target,
+            require_terminal=require_terminal,
+            own_pid=own_pid or None,
         )
 
     return server
