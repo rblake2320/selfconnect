@@ -39,6 +39,7 @@ import json
 import subprocess
 import sys
 import time
+from typing import ClassVar
 
 import comtypes
 import comtypes.client
@@ -49,8 +50,8 @@ import pythoncom
 _UIA_MOD = comtypes.client.GetModule("UIAutomationCore.dll")
 
 sys.path.insert(0, __file__.replace("\\experiments\\win32_probe\\chained_channel.py", ""))
+from sc_identity import AgentIdentity  # noqa: E402
 from self_connect import list_windows, send_string  # noqa: E402
-from sc_identity import AgentIdentity               # noqa: E402
 
 # ── constants ─────────────────────────────────────────────────────────────────
 PIPE_NAME                    = r"\\.\pipe\sc_chain"
@@ -206,8 +207,8 @@ def role_a(target_hwnd: int):
     token = f"SC_PROBE_{id(identity) & 0xFFFF:04x}"
 
     print(f"[A] did={identity.did}")
-    print(f"[A] NOTE: signing is Ed25519 SOFTWARE identity (not hardware TPM)")
-    print(f"[A]       TPM upgrade: replace .sign() with NCryptCreateClaim(NCRYPT_CLAIM_PLATFORM)")
+    print("[A] NOTE: signing is Ed25519 SOFTWARE identity (not hardware TPM)")
+    print("[A]       TPM upgrade: replace .sign() with NCryptCreateClaim(NCRYPT_CLAIM_PLATFORM)")
     print(f"[A] token={token}  target_hwnd={target_hwnd:#x}")
 
     pythoncom.CoInitialize()
@@ -225,7 +226,7 @@ def role_a(target_hwnd: int):
 
     # B3 FIX: comtypes dispatches on the full prefixed method name.
     class _Handler(comtypes.COMObject):
-        _com_interfaces_ = [_UIA_MOD.IUIAutomationEventHandler]
+        _com_interfaces_: ClassVar[list] = [_UIA_MOD.IUIAutomationEventHandler]
 
         def IUIAutomationEventHandler_HandleAutomationEvent(self, sender, eventId):
             fired.append(_read_delta(tp, baseline_len))
@@ -277,8 +278,8 @@ def role_a(target_hwnd: int):
 
 def role_b():
     print(f"[B] listening on {PIPE_NAME}")
-    print(f"[B] NOTE: NULL DACL = permissive; ImpersonateNamedPipeClient proves")
-    print(f"[B]       OS-verified-SID leg. Production: restrict DACL to caller SID.")
+    print("[B] NOTE: NULL DACL = permissive; ImpersonateNamedPipeClient proves")
+    print("[B]       OS-verified-SID leg. Production: restrict DACL to caller SID.")
     h = _create_pipe()
     _k32.ConnectNamedPipe(h, None)
     payload, impersonated = _pipe_read_with_impersonation(h)
@@ -310,8 +311,10 @@ if __name__ == "__main__":
     if args.role == "B":
         role_b()
     else:
-        hwnd, proc = (args.target, None) if args.target else _spawn_target(), None
-        if not args.target:
+        proc = None
+        if args.target:
+            hwnd = args.target
+        else:
             hwnd, proc = _spawn_target()
             print(f"[A] throwaway target hwnd={hwnd:#x}")
         try:
