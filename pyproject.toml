@@ -88,6 +88,7 @@ include = [
     "sc_shell.py",
     "sc_resume.py",
     "claudego/**",
+    "experiments/win32_probe/CAPABILITY_BACKLOG.md",
     "experiments/win32_probe/chained_channel.py",
     "skills/selfconnect-win32/**",
 ]
