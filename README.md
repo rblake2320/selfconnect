@@ -1,4 +1,4 @@
-# SelfConnect SDK v0.10.0
+# SelfConnect SDK v0.10.2
 
 **OS-native bridge between AI agents and Windows desktop apps.**  
 PostMessage + PrintWindow. No browser. No accessibility layer. No API between agents.
@@ -48,10 +48,70 @@ Zero API calls between agents. Zero network traffic. Two functions from `user32.
 ```bash
 pip install selfconnect                  # core (Pillow + psutil)
 pip install selfconnect[uia]             # + UIA text extraction
+pip install selfconnect[mcp]             # + MCP server adapter
 pip install selfconnect[full]            # + UIA + comtypes
 pip install selfconnect[telegram]        # + Telegram approval bridge
 pip install selfconnect[claudego]        # + ClaudeGo web dashboard
 ```
+
+From this GitHub branch for cross-machine testing:
+
+```bash
+pip install "selfconnect[full,mcp] @ git+https://github.com/rblake2320/selfconnect.git@test/win32-hardening-v1"
+```
+
+---
+
+## Package Probes
+
+The package installs a `selfconnect` command for repeatable testing on other
+Windows systems:
+
+```bash
+selfconnect doctor --json
+selfconnect doctor --windows
+selfconnect windows --query "Claude"
+selfconnect read --hwnd 0x123456
+selfconnect capture --hwnd 0x123456 --path proof.png
+```
+
+Input delivery is intentionally gated:
+
+```bash
+selfconnect send --hwnd 0x123456 --text "hello" --submit --allow-input
+# or set SELFCONNECT_ALLOW_INPUT=1
+```
+
+---
+
+## MCP Server
+
+Install the optional MCP dependency and run:
+
+```bash
+pip install "selfconnect[mcp] @ git+https://github.com/rblake2320/selfconnect.git@test/win32-hardening-v1"
+selfconnect-mcp
+```
+
+The MCP server exposes:
+
+- `doctor`
+- `list_windows`
+- `read_window`
+- `capture_window`
+- `send_text`
+
+The `send_text` tool is disabled unless explicitly enabled:
+
+```bash
+set SELFCONNECT_MCP_ALLOW_INPUT=1
+selfconnect-mcp
+```
+
+The branch also carries a repo-local Codex skill at
+`skills/selfconnect-win32/` and the composed Win32 proof at
+`experiments/win32_probe/chained_channel.py`; both are included in the built
+wheel for traceability.
 
 ---
 

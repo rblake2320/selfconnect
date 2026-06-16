@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "selfconnect"
-version = "0.10.1"
+version = "0.10.2"
 description = "OS-native Win32 bridge for AI agent orchestration — PostMessage, PrintWindow, UIA, cross-machine mesh, Telegram approvals, ClaudeGo dashboard."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -43,6 +43,9 @@ pq = [
 shell = [
     "cryptography>=42.0.0",
 ]
+mcp = [
+    "mcp>=1.0.0",
+]
 telegram = [
     "python-dotenv>=1.0.0",
     "python-telegram-bot>=22.0",
@@ -65,6 +68,7 @@ full = [
     "uvicorn[standard]>=0.34.0",
     "cryptography>=42.0.0",
     "dilithium-py>=1.0.0",
+    "mcp>=1.0.0",
 ]
 
 [project.urls]
@@ -75,6 +79,8 @@ Repository = "https://github.com/rblake2320/selfconnect"
 include = [
     "_win32_abi.py",
     "self_connect.py",
+    "sc_cli.py",
+    "sc_mcp.py",
     "sc_identity.py",
     "sc_firewall.py",
     "sc_reliability.py",
@@ -82,7 +88,13 @@ include = [
     "sc_shell.py",
     "sc_resume.py",
     "claudego/**",
+    "experiments/win32_probe/chained_channel.py",
+    "skills/selfconnect-win32/**",
 ]
+
+[project.scripts]
+selfconnect = "sc_cli:main"
+selfconnect-mcp = "sc_mcp:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "test_self_connect.py"]
