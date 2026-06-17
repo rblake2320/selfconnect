@@ -82,6 +82,7 @@ include = [
     "sc_cli.py",
     "sc_mcp.py",
     "sc_mesh_registry.py",
+    "sc_echo_filter.py",
     "sc_identity.py",
     "sc_firewall.py",
     "sc_reliability.py",
@@ -94,6 +95,9 @@ include = [
     "experiments/win32_probe/chained_channel.py",
     "experiments/win32_probe/etw_provider.py",
     "experiments/win32_probe/service_sid_probe.py",
+    "experiments/win32_probe/uia_echo_filter_probe.py",
+    "experiments/win32_probe/results/uia_echo_filter_PASS_redacted.json",
+    "docs/UIA_ECHO_FILTER_TERMCONTROL.md",
     "skills/selfconnect-win32/**",
 ]
 

@@ -235,11 +235,15 @@ def test_pyproject_exports_package_adapter_entry_points():
     assert '"sc_cli.py"' in text
     assert '"sc_mcp.py"' in text
     assert '"sc_mesh_registry.py"' in text
+    assert '"sc_echo_filter.py"' in text
     assert '"experiments/win32_probe/CAPABILITY_BACKLOG.md"' in text
     assert '"experiments/win32_probe/SERVICE_SID_DAEMON.md"' in text
     assert '"experiments/win32_probe/chained_channel.py"' in text
     assert '"experiments/win32_probe/etw_provider.py"' in text
     assert '"experiments/win32_probe/service_sid_probe.py"' in text
+    assert '"experiments/win32_probe/uia_echo_filter_probe.py"' in text
+    assert '"experiments/win32_probe/results/uia_echo_filter_PASS_redacted.json"' in text
+    assert '"docs/UIA_ECHO_FILTER_TERMCONTROL.md"' in text
     assert '"skills/selfconnect-win32/**"' in text
 
 
