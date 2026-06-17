@@ -201,7 +201,6 @@ def heartbeat(role: str, *, mesh: str = DEFAULT_MESH, registry_path: str | Path 
         int(existing["hwnd"]),
         expected_pid=int(existing["pid"]),
         expected_class=existing["class_name"],
-        expected_title=existing["title"][:24],
         require_expectation=True,
         require_terminal=bool(existing.get("is_terminal", True)),
     )
