@@ -144,7 +144,8 @@ def _find_term_control(uia, mod, hwnd: int):
     for i in range(found.Length):
         el = found.GetElement(i)
         try:
-            tp   = el.GetCurrentPattern(10014)  # IUIAutomationTextPattern
+            # GetCurrentPattern returns IUnknown; QueryInterface to typed interface.
+            tp   = el.GetCurrentPattern(10014).QueryInterface(mod.IUIAutomationTextPattern)
             text = tp.DocumentRange.GetText(-1)
             if len(text) > best_len:
                 best_el, best_tp, best_len = el, tp, len(text)
@@ -155,25 +156,75 @@ def _find_term_control(uia, mod, hwnd: int):
 
 # ── throwaway target ──────────────────────────────────────────────────────────
 
-def _spawn_conhost() -> tuple[int, subprocess.Popen]:
-    """Spawn an isolated conhost safe for WM_CHAR injection."""
-    proc = subprocess.Popen(
-        ["conhost.exe", "cmd.exe", "/K", "echo SC_TARGET_READY"],
-        creationflags=subprocess.CREATE_NEW_CONSOLE,
-    )
+_WT_PATHS = [
+    r"C:\Users\techai\AppData\Local\Microsoft\WindowsApps\wt.exe",
+    r"C:\Program Files\WindowsApps\Microsoft.WindowsTerminal_1.21.3231.0_x64__8wekyb3d8bbwe\wt.exe",
+]
+
+
+def _find_wt() -> str | None:
+    import os
+    for p in _WT_PATHS:
+        if os.path.exists(p):
+            return p
+    # Last-resort: glob WindowsApps
+    import glob
+    hits = glob.glob(r"C:\Users\techai\AppData\Local\Microsoft\WindowsApps\wt.exe")
+    return hits[0] if hits else None
+
+
+def _spawn_conhost() -> tuple[int, subprocess.Popen | None]:
+    """Spawn an isolated throwaway terminal safe for WM_CHAR injection.
+
+    Tries Windows Terminal tab first (ConPTY, UIA-visible). Falls back to
+    standalone conhost. Returns (hwnd, proc_or_None) — proc is None when
+    the window was spawned inside an existing WT instance.
+    """
     sys.path.insert(0, str(_repo_root()))
     from self_connect import list_windows  # type: ignore[import]
+
+    title = f"SC_PROBE_{uuid.uuid4().hex[:6].upper()}"
+    wt = _find_wt()
+    proc = None
+
+    if wt:
+        # WT new-tab: the new tab window is owned by the existing WT process.
+        subprocess.Popen(
+            [wt, "-w", "0", "new-tab", "--title", title,
+             "cmd.exe", "/K", "echo SC_TARGET_READY"],
+            creationflags=subprocess.DETACHED_PROCESS,
+        )
+    else:
+        proc = subprocess.Popen(
+            [r"C:\Windows\System32\conhost.exe",
+             r"C:\Windows\System32\cmd.exe", "/K", "echo SC_TARGET_READY"],
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
+        )
+
     deadline = time.time() + 20
     hwnd = None
     while time.time() < deadline and hwnd is None:
         time.sleep(0.5)
         for w in list_windows():
-            if getattr(w, "pid", 0) == proc.pid:
-                hwnd = w.hwnd
-                break
+            if wt:
+                # WT tab: match by window title
+                if title in w.title:
+                    hwnd = w.hwnd
+                    break
+            else:
+                # Standalone conhost: match by PID
+                if proc and getattr(w, "pid", 0) == proc.pid:
+                    hwnd = w.hwnd
+                    break
+
     if hwnd is None:
-        proc.terminate()
-        raise RuntimeError("Throwaway conhost target did not appear within 20 s")
+        if proc:
+            proc.terminate()
+        raise RuntimeError(
+            f"Throwaway target {title!r} did not appear within 20 s. "
+            "On headless/service sessions without a visible desktop, "
+            "pass --hwnd with an existing throwaway terminal hwnd."
+        )
     time.sleep(1.5)
     return hwnd, proc
 
@@ -317,7 +368,9 @@ def run_probe(
 
     # ── inject nonce ──────────────────────────────────────────────────────────
     rec.timestamp_send = time.time()
-    send_string(target_win, nonce)
+    # \r submits the nonce to cmd.exe; without it the chars sit in readline
+    # buffer and ConPTY does not commit them to the UIA scrollback until Enter.
+    send_string(target_win, nonce + "\r")
 
     # ── wait for text change (event or poll) ──────────────────────────────────
     deadline     = rec.timestamp_send + timeout_s
@@ -357,6 +410,14 @@ def run_probe(
     except Exception:
         pass
 
+    # Close the throwaway target.
+    # WT tab: send exit\r to terminate the cmd session (closes the tab).
+    # Standalone proc: terminate the process.
+    try:
+        send_string(target_win, "exit\r")
+        time.sleep(0.5)
+    except Exception:
+        pass
     if proc:
         proc.terminate()
 
