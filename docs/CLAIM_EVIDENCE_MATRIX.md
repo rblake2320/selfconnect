@@ -18,6 +18,7 @@ not been live-tested or committed as a probe, it is marked as pending.
 | Echo filtering / false-positive suppression | Proven as reusable helper | `sc_echo_filter.py`, `tests/test_uia_echo_filter.py` |
 | Browser local page control | Proven on Edge local fixture | `experiments/win32_probe/browser_local_proof.py`, `experiments/win32_probe/results/browser_local_proof_PASS_redacted.json` |
 | Browser UIA live handoff channel | Proven as private defensive snapshot | `docs/PATENT_PRIOR_ART_SNAPSHOT.md`; UIA Value/Invoke worked where Chromium ignored terminal-style channels |
+| Lancelot/UAB public overlap boundary | Documented private competitive-defense note | `docs/LANCELOT_UAB_COMPETITIVE_DEFENSE.md`; avoid generic desktop-control claims and preserve SelfConnect lane around SID-bound leases, target guard, echo-filtered readback, and no-CDP UIA browser proof |
 | Protected checkpoint detection | Proven on local mock checkpoint | `docs/BROWSER_LOCAL_PROOF.md`, browser PASS artifact |
 | CAPTCHA bypass | Not claimed | `docs/BROWSER_LOCAL_PROOF.md`, `docs/PROVEN_VS_UNTESTED.md` |
 | Named pipe + DACL + impersonation | Proven in experiment/enterprise lane | `experiments/win32_probe/CAPABILITY_BACKLOG.md`; production DACL hardening still pending |
@@ -28,7 +29,7 @@ not been live-tested or committed as a probe, it is marked as pending.
 | ETW provider smoke | Proven as isolated probe | `experiments/win32_probe/etw_provider.py`, `CAPABILITY_BACKLOG.md` |
 | Service SID daemon posture | Documented/probed, not productized | `experiments/win32_probe/service_sid_probe.py`, `SERVICE_SID_DAEMON.md` |
 | Job Object containment | Proven in experiment/enterprise lane | `CAPABILITY_BACKLOG.md`; runtime adapter pending |
-| MCP/package distribution | Proven | `sc_mcp.py`, `pyproject.toml`, package tests, built wheel inspection |
+| MCP/package distribution | Proven as optional adapter | `sc_mcp.py`, `pyproject.toml`, package tests, built wheel inspection. Boundary: MCP is not required for the proven WM_CHAR terminal path, UIA browser path, echo-filtered readback, target guard, or lease-gate model |
 
 ## Positioning Boundary
 
@@ -40,6 +41,8 @@ The current defensible position is:
 
 The current non-claims are:
 
+- generic universal app bridge / first desktop-control bridge;
+- first AI-to-AI communication through desktop automation;
 - unrestricted browser automation across public sites;
 - CAPTCHA bypass or anti-bot evasion;
 - production TPM attestation;

@@ -16,6 +16,7 @@ external disclosure package before legal review.
 | --- | --- | --- |
 | Windows MCP / ODR | Microsoft MCP on Windows docs | Registry/discovery of MCP agent connectors on Windows |
 | Native desktop automation for agents | `agent-desktop`, `agent-ctrl`, UI Automata-style tools | Accessibility-tree observation and action over desktop apps |
+| Lancelot/UAB | Project Lancelot UAB page and public UAB repository | Universal app bridge, desktop control cascade, MCP/CLI/HTTP interfaces, AI-to-AI desktop automation, flow learning, UIA/CDP/COM/raw-input paths |
 | Windows named pipes | Microsoft named-pipe security docs | IPC and access control primitives |
 | UI Automation security research | Akamai UIA abuse research | UIA as a powerful automation/attack surface |
 | General screen/desktop agents | Screen/desktop automation demos and products | Computer-use automation, screenshots, OCR, accessibility trees |
@@ -46,6 +47,8 @@ Do not claim:
 
 - that no prior art exists;
 - generic "AI controls desktop apps";
+- generic "AI-to-AI desktop automation";
+- generic adaptive desktop-control cascades;
 - generic "MCP connector registry";
 - generic named-pipe security;
 - CAPTCHA bypass;
