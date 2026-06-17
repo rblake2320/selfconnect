@@ -98,6 +98,7 @@ include = [
     "experiments/win32_probe/uia_echo_filter_probe.py",
     "experiments/win32_probe/results/uia_echo_filter_PASS_redacted.json",
     "docs/UIA_ECHO_FILTER_TERMCONTROL.md",
+    "docs/PROVEN_VS_UNTESTED.md",
     "skills/selfconnect-win32/**",
 ]
 
