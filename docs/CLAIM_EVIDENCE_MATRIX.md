@@ -19,7 +19,8 @@ not been live-tested or committed as a probe, it is marked as pending.
 | Browser local page control | Proven on Edge local fixture | `experiments/win32_probe/browser_local_proof.py`, `experiments/win32_probe/results/browser_local_proof_PASS_redacted.json` |
 | Protected checkpoint detection | Proven on local mock checkpoint | `docs/BROWSER_LOCAL_PROOF.md`, browser PASS artifact |
 | CAPTCHA bypass | Not claimed | `docs/BROWSER_LOCAL_PROOF.md`, `docs/PROVEN_VS_UNTESTED.md` |
-| Named pipe + DACL + impersonation | Proven in experiment/enterprise lane | `experiments/win32_probe/CAPABILITY_BACKLOG.md`; production control-plane integration pending |
+| Named pipe + DACL + impersonation | Proven in experiment/enterprise lane | `experiments/win32_probe/CAPABILITY_BACKLOG.md`; production DACL hardening still pending |
+| Pipe-authenticated role leases/generations | Proven as isolated control-plane proof | `sc_mesh_lease.py`, `experiments/win32_probe/pipe_role_lease_probe.py`, redacted PASS artifact |
 | TPM/CNG key use | Proven in experiment/enterprise lane | `experiments/win32_probe/CAPABILITY_BACKLOG.md`; full attestation pending |
 | TPM platform attestation | Pending | `NCryptCreateClaim` descriptor fix still required |
 | ETW provider smoke | Proven as isolated probe | `experiments/win32_probe/etw_provider.py`, `CAPABILITY_BACKLOG.md` |
@@ -45,7 +46,7 @@ The current non-claims are:
 
 ## Next Highest-Value Evidence
 
-1. Productionize named-pipe role leases/generation IDs for the control plane.
+1. Wire role leases/generation IDs into governed `sc_cli send` / MCP `send_text`.
 2. Finish TPM platform attestation with correct `NCryptBufferDesc`.
 3. Add browser multi-tab/stale-tab proof.
 4. Add governed audit event for protected checkpoint pause.

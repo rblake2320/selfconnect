@@ -51,6 +51,10 @@ These have been tested in this branch or recorded as committed probes:
 - UIA `TextChanged` event proof on Windows Terminal / ConPTY.
 - Echo filtering using nonce/hash/readback records.
 - Mesh registry role tracking and `explore` / `governed` profiles.
+- Pipe-authenticated role lease/generation proof:
+  - named-pipe request bound to OS caller identity;
+  - generation increments across migration;
+  - stale generation/HWND UI fallback rejected.
 - Package commands and MCP adapter surface.
 - Local browser proof on Microsoft Edge:
   - isolated browser profile launched to `127.0.0.1`;
@@ -61,7 +65,8 @@ These have been tested in this branch or recorded as committed probes:
   - mock protected checkpoint detected and not bypassed.
 - ETW provider smoke probe.
 - Service SID helper/probe documentation.
-- Named pipe + DACL + impersonation proof in experiments/enterprise lane.
+- Named pipe + DACL + impersonation proof in experiments/enterprise lane, plus
+  a pipe-authenticated role lease proof for future control-plane integration.
 - TPM/CNG identity proof in experiments/enterprise lane, with full attestation
   still requiring more work.
 - Job Object containment proof in experiments/enterprise lane.

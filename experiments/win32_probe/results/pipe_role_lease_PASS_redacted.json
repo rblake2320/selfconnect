@@ -1,0 +1,21 @@
+{
+  "current_allowed": true,
+  "impersonated": true,
+  "initial_generation": 1,
+  "latency_ms": 102.70929336547852,
+  "migrated_generation": 2,
+  "na_reason": "",
+  "notes": [
+    "Named pipe request was bound to OS caller identity via ImpersonateNamedPipeClient.",
+    "Role lease generation advanced after migration.",
+    "UI fallback gate allowed the current tuple and rejected stale generation/HWND tuples.",
+    "Raw SID, pipe name, HWNDs, and titles are redacted or hashed in the artifact."
+  ],
+  "owner_sid_hash": "688b7d43a987148401f3a4d681a63ecf1fb16412cf611067b72cd88fb81cbe27",
+  "pipe_name_hash": "217ad2df48c84f473fad4f88484d619f47ef8b3f7b9b1d481318e630b893acc7",
+  "redacted": true,
+  "renewed": true,
+  "stale_generation_rejected": true,
+  "stale_hwnd_rejected": true,
+  "verdict": "PASS"
+}
