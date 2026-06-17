@@ -21,6 +21,7 @@ not been live-tested or committed as a probe, it is marked as pending.
 | CAPTCHA bypass | Not claimed | `docs/BROWSER_LOCAL_PROOF.md`, `docs/PROVEN_VS_UNTESTED.md` |
 | Named pipe + DACL + impersonation | Proven in experiment/enterprise lane | `experiments/win32_probe/CAPABILITY_BACKLOG.md`; production DACL hardening still pending |
 | Pipe-authenticated role leases/generations | Proven as isolated control-plane proof | `sc_mesh_lease.py`, `experiments/win32_probe/pipe_role_lease_probe.py`, redacted PASS artifact |
+| Governed lease gate on guarded send/read path | Proven as optional in-process runtime gate | optional runtime governed enforcement on the guarded send/read path (role+birth_id+generation+hwnd+owner_sid_hash) layered over the explore-mode target guard; `sc_mesh_lease.evaluate_lease_gate`, `sc_cli.send_text_to_window`/`read_window`, `sc_mcp` tools, `tests/test_mesh_lease.py`, `tests/test_package_adapters.py`. Boundary: OPTIONAL, in-process, NOT a full daemon; explore mode unchanged (no-op); birth_id optional in gate (checked when provided, skipped when omitted for backward compat); runtime OS SID lookup is the next step (currently injectable / fails closed on `<unknown-sid>`) |
 | TPM/CNG key use | Proven in experiment/enterprise lane | `experiments/win32_probe/CAPABILITY_BACKLOG.md`; full attestation pending |
 | TPM platform attestation | Pending | `NCryptCreateClaim` descriptor fix still required |
 | ETW provider smoke | Proven as isolated probe | `experiments/win32_probe/etw_provider.py`, `CAPABILITY_BACKLOG.md` |
@@ -46,7 +47,11 @@ The current non-claims are:
 
 ## Next Highest-Value Evidence
 
-1. Wire role leases/generation IDs into governed `sc_cli send` / MCP `send_text`.
+1. Done (optional in-process gate): role leases/generation IDs including birth_id
+   are wired into governed `sc_cli send`/`read` and MCP `send_text`/`read_window`
+   as an opt-in gate. Remaining: resolve the current OS owner SID at runtime
+   (`OpenProcessToken` -> `GetTokenInformation(TokenUser)` ->
+   `ConvertSidToStringSid`) so governed mode no longer requires an injected SID.
 2. Finish TPM platform attestation with correct `NCryptBufferDesc`.
 3. Add browser multi-tab/stale-tab proof.
 4. Add governed audit event for protected checkpoint pause.

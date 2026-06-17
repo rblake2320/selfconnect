@@ -1,7 +1,24 @@
-from sc_mesh_lease import LeaseDecision, RoleLeaseTable, hash_sid, hash_text
+import json
+
+from sc_mesh_lease import (
+    GOVERNED_PROFILE,
+    LeaseDecision,
+    RoleLeaseTable,
+    current_owner_sid,
+    evaluate_lease_gate,
+    hash_sid,
+    hash_text,
+)
 
 
-def _issue(table: RoleLeaseTable, *, hwnd=100, owner_sid="S-1-5-21-test", now=10.0):
+def _issue(
+    table: RoleLeaseTable,
+    *,
+    hwnd=100,
+    owner_sid="S-1-5-21-test",
+    now=10.0,
+    birth_id="",
+):
     return table.issue(
         mesh="default",
         role="agent-a",
@@ -13,6 +30,7 @@ def _issue(table: RoleLeaseTable, *, hwnd=100, owner_sid="S-1-5-21-test", now=10
         owner_sid=owner_sid,
         ttl_s=30,
         now=now,
+        birth_id=birth_id,
     )
 
 
@@ -148,3 +166,256 @@ def test_to_dict_shapes_are_json_ready():
     assert data["ok"] is True
     assert data["decision"] == "allow"
     assert data["lease"]["generation"] == 1
+
+
+def test_gate_explore_is_allow_noop_without_table():
+    gate = evaluate_lease_gate()
+    assert gate.ok is True
+    assert gate.decision == LeaseDecision.ALLOW
+    assert "explore" in gate.reason.lower()
+
+
+def test_gate_governed_allows_matching_lease():
+    table = RoleLeaseTable()
+    lease = _issue(table)
+    gate = evaluate_lease_gate(
+        profile=GOVERNED_PROFILE,
+        table=table,
+        mesh="default",
+        role="agent-a",
+        generation=lease.generation,
+        hwnd=lease.hwnd,
+        owner_sid="S-1-5-21-test",
+        now=11.0,
+    )
+    assert gate.ok is True
+    assert gate.decision == LeaseDecision.ALLOW
+
+
+def test_gate_governed_denies_wrong_generation():
+    table = RoleLeaseTable()
+    lease = _issue(table)
+    gate = evaluate_lease_gate(
+        profile=GOVERNED_PROFILE,
+        table=table,
+        mesh="default",
+        role="agent-a",
+        generation=lease.generation + 5,
+        hwnd=lease.hwnd,
+        owner_sid="S-1-5-21-test",
+        now=11.0,
+    )
+    assert gate.ok is False
+    assert "generation" in gate.reason
+
+
+def test_gate_governed_denies_wrong_hwnd():
+    table = RoleLeaseTable()
+    lease = _issue(table)
+    gate = evaluate_lease_gate(
+        profile=GOVERNED_PROFILE,
+        table=table,
+        mesh="default",
+        role="agent-a",
+        generation=lease.generation,
+        hwnd=lease.hwnd + 1,
+        owner_sid="S-1-5-21-test",
+        now=11.0,
+    )
+    assert gate.ok is False
+    assert "hwnd" in gate.reason
+
+
+def test_gate_governed_denies_wrong_owner_sid():
+    table = RoleLeaseTable()
+    lease = _issue(table)
+    gate = evaluate_lease_gate(
+        profile=GOVERNED_PROFILE,
+        table=table,
+        mesh="default",
+        role="agent-a",
+        generation=lease.generation,
+        hwnd=lease.hwnd,
+        owner_sid="S-1-5-21-other",
+        now=11.0,
+    )
+    assert gate.ok is False
+    assert "sid" in gate.reason
+
+
+def test_gate_explicit_lease_fields_enforce_even_in_explore_profile():
+    # role+generation supplied while profile left "explore" -> governed path.
+    gate = evaluate_lease_gate(
+        profile="explore",
+        table=None,
+        mesh="default",
+        role="agent-a",
+        generation=1,
+        hwnd=100,
+        owner_sid="S-1-5-21-test",
+    )
+    assert gate.ok is False
+    assert "table" in gate.reason
+
+
+def test_gate_governed_without_table_denies():
+    gate = evaluate_lease_gate(
+        profile=GOVERNED_PROFILE,
+        table=None,
+        mesh="default",
+        role="agent-a",
+        generation=1,
+        hwnd=100,
+        owner_sid="S-1-5-21-test",
+    )
+    assert gate.ok is False
+    assert "requires a lease table" in gate.reason
+
+
+def test_gate_governed_requires_role_and_generation():
+    table = RoleLeaseTable()
+    gate = evaluate_lease_gate(
+        profile=GOVERNED_PROFILE,
+        table=table,
+        mesh="default",
+        owner_sid="S-1-5-21-test",
+    )
+    assert gate.ok is False
+    assert "role and generation" in gate.reason
+
+
+def test_gate_never_leaks_raw_sid_but_includes_owner_sid_hash():
+    table = RoleLeaseTable()
+    lease = _issue(table)
+    raw_sid = "S-1-5-21-test"
+    gate = evaluate_lease_gate(
+        profile=GOVERNED_PROFILE,
+        table=table,
+        mesh="default",
+        role="agent-a",
+        generation=lease.generation,
+        hwnd=lease.hwnd,
+        owner_sid=raw_sid,
+        now=11.0,
+    )
+    serialized = json.dumps(gate.to_dict())
+    assert raw_sid not in serialized
+    assert gate.to_dict()["lease"]["owner_sid_hash"] == hash_sid(raw_sid)
+
+
+def test_current_owner_sid_injection_and_sentinel():
+    assert current_owner_sid(injected="S-1-5-x") == "S-1-5-x"
+    resolved = current_owner_sid(None)
+    assert isinstance(resolved, str)
+    assert resolved != ""
+
+
+# --- birth_id gate tests (req #3: role+birth_id+generation+hwnd+owner_sid_hash) ---
+
+
+def test_issue_stores_birth_id():
+    table = RoleLeaseTable()
+    lease = _issue(table, birth_id="b-abc12345")
+    assert lease.birth_id == "b-abc12345"
+
+
+def test_issue_birth_id_defaults_to_empty():
+    table = RoleLeaseTable()
+    lease = _issue(table)
+    assert lease.birth_id == ""
+
+
+def test_validate_allows_with_matching_birth_id():
+    table = RoleLeaseTable()
+    lease = _issue(table, birth_id="b-abc12345")
+    result = table.validate_ui_fallback(
+        mesh="default",
+        role="agent-a",
+        generation=lease.generation,
+        hwnd=lease.hwnd,
+        owner_sid="S-1-5-21-test",
+        birth_id="b-abc12345",
+        now=11.0,
+    )
+    assert result.ok is True
+
+
+def test_validate_rejects_wrong_birth_id():
+    table = RoleLeaseTable()
+    lease = _issue(table, birth_id="b-abc12345")
+    result = table.validate_ui_fallback(
+        mesh="default",
+        role="agent-a",
+        generation=lease.generation,
+        hwnd=lease.hwnd,
+        owner_sid="S-1-5-21-test",
+        birth_id="b-wrong",
+        now=11.0,
+    )
+    assert result.ok is False
+    assert "birth_id" in result.reason
+
+
+def test_validate_skips_birth_id_check_when_not_provided():
+    table = RoleLeaseTable()
+    lease = _issue(table, birth_id="b-abc12345")
+    result = table.validate_ui_fallback(
+        mesh="default",
+        role="agent-a",
+        generation=lease.generation,
+        hwnd=lease.hwnd,
+        owner_sid="S-1-5-21-test",
+        now=11.0,
+    )
+    assert result.ok is True
+
+
+def test_gate_governed_denies_wrong_birth_id():
+    table = RoleLeaseTable()
+    lease = _issue(table, birth_id="b-correct")
+    gate = evaluate_lease_gate(
+        profile=GOVERNED_PROFILE,
+        table=table,
+        mesh="default",
+        role="agent-a",
+        generation=lease.generation,
+        hwnd=lease.hwnd,
+        owner_sid="S-1-5-21-test",
+        birth_id="b-wrong",
+        now=11.0,
+    )
+    assert gate.ok is False
+    assert "birth_id" in gate.reason
+
+
+def test_gate_governed_allows_matching_birth_id():
+    table = RoleLeaseTable()
+    lease = _issue(table, birth_id="b-correct")
+    gate = evaluate_lease_gate(
+        profile=GOVERNED_PROFILE,
+        table=table,
+        mesh="default",
+        role="agent-a",
+        generation=lease.generation,
+        hwnd=lease.hwnd,
+        owner_sid="S-1-5-21-test",
+        birth_id="b-correct",
+        now=11.0,
+    )
+    assert gate.ok is True
+
+
+def test_to_dict_includes_birth_id_in_lease():
+    table = RoleLeaseTable()
+    lease = _issue(table, birth_id="b-abc12345")
+    result = table.validate_ui_fallback(
+        mesh="default",
+        role="agent-a",
+        generation=lease.generation,
+        hwnd=lease.hwnd,
+        owner_sid="S-1-5-21-test",
+        birth_id="b-abc12345",
+        now=11.0,
+    )
+    data = result.to_dict()
+    assert data["lease"]["birth_id"] == "b-abc12345"

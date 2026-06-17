@@ -34,6 +34,7 @@ class RoleLease:
     owner_sid_hash: str
     issued_at: float
     expires_at: float
+    birth_id: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -89,6 +90,7 @@ class RoleLeaseTable:
         owner_sid: str,
         ttl_s: float = 30.0,
         now: float | None = None,
+        birth_id: str = "",
     ) -> RoleLease:
         if not role.strip():
             raise ValueError("role is required")
@@ -114,6 +116,7 @@ class RoleLeaseTable:
             owner_sid_hash=hash_sid(owner_sid),
             issued_at=now,
             expires_at=now + float(ttl_s),
+            birth_id=birth_id,
         )
         self._leases[key] = lease
         return lease
@@ -129,6 +132,7 @@ class RoleLeaseTable:
         generation: int,
         hwnd: int,
         owner_sid: str,
+        birth_id: str | None = None,
         ttl_s: float = 30.0,
         now: float | None = None,
     ) -> LeaseValidation:
@@ -138,6 +142,7 @@ class RoleLeaseTable:
             generation=generation,
             hwnd=hwnd,
             owner_sid=owner_sid,
+            birth_id=birth_id,
             now=now,
         )
         if not validation.ok or validation.lease is None:
@@ -154,6 +159,7 @@ class RoleLeaseTable:
         generation: int,
         hwnd: int,
         owner_sid: str,
+        birth_id: str | None = None,
         now: float | None = None,
     ) -> LeaseValidation:
         lease = self.current(mesh, role)
@@ -168,4 +174,73 @@ class RoleLeaseTable:
             return LeaseValidation(LeaseDecision.DENY, "hwnd mismatch", lease)
         if hash_sid(owner_sid) != lease.owner_sid_hash:
             return LeaseValidation(LeaseDecision.DENY, "owner sid mismatch", lease)
+        if birth_id is not None and birth_id != lease.birth_id:
+            return LeaseValidation(LeaseDecision.DENY, "birth_id mismatch", lease)
         return LeaseValidation(LeaseDecision.ALLOW, "role generation and hwnd match", lease)
+
+
+GOVERNED_PROFILE = "governed"
+
+# Sentinel returned when the runtime OS SID is unavailable. It never matches a
+# real issued lease (which hashes a real SID), so governed mode fails closed.
+UNKNOWN_SID = "<unknown-sid>"
+
+
+def current_owner_sid(injected: str | None = None) -> str:
+    """Resolve the current OS owner SID for governed lease checks.
+
+    Returns ``injected`` verbatim when provided. Otherwise this is a best-effort
+    placeholder: real runtime OS SID integration
+    (``OpenProcessToken`` -> ``GetTokenInformation(TokenUser)`` ->
+    ``ConvertSidToStringSid``) is the documented NEXT STEP. Until that lands,
+    callers should inject ``owner_sid`` explicitly; if nothing is injected this
+    returns the sentinel ``"<unknown-sid>"`` so governed mode FAILS CLOSED
+    instead of silently allowing an unauthenticated action.
+    """
+    if injected is not None:
+        return injected
+    return UNKNOWN_SID
+
+
+def evaluate_lease_gate(
+    *,
+    profile: str = "explore",
+    table: RoleLeaseTable | None = None,
+    mesh: str = "default",
+    role: str | None = None,
+    generation: int | None = None,
+    hwnd: int = 0,
+    owner_sid: str | None = None,
+    birth_id: str | None = None,
+    now: float | None = None,
+) -> LeaseValidation:
+    """Optional governed enforcement layered over the explore-mode target guard.
+
+    Explore mode (default) is a no-op ALLOW: lease is not required. Governed mode
+    is triggered either by ``profile == "governed"`` or by the presence of
+    explicit lease fields (``role`` or ``generation``). In governed mode the
+    caller must present a lease table plus ``role`` + ``generation``; the
+    decision is delegated to ``RoleLeaseTable.validate_ui_fallback`` so only the
+    ``owner_sid_hash`` ever flows into the result, never a raw SID.
+    """
+    lease_fields_present = (role is not None) or (generation is not None)
+    governed = (str(profile).strip().lower() == GOVERNED_PROFILE) or lease_fields_present
+
+    if not governed:
+        return LeaseValidation(LeaseDecision.ALLOW, "explore mode: lease not required")
+
+    if table is None:
+        return LeaseValidation(LeaseDecision.DENY, "governed mode requires a lease table")
+    if not role or generation is None:
+        return LeaseValidation(LeaseDecision.DENY, "governed mode requires role and generation")
+
+    sid = current_owner_sid(owner_sid)
+    return table.validate_ui_fallback(
+        mesh=mesh,
+        role=role,
+        generation=int(generation),
+        hwnd=int(hwnd),
+        owner_sid=sid,
+        birth_id=birth_id,
+        now=now,
+    )

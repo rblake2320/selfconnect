@@ -80,10 +80,41 @@ Implementation note: the server reads the client message before calling
 the last message on that pipe instance. The client also opens the pipe with
 SQOS impersonation flags.
 
+## Wired Into The Shippable Send/Read Path (optional gate)
+
+The lease gate is now wired into the shippable guarded send/read path as an
+**opt-in, in-process runtime gate** — not a full service daemon:
+
+- Trigger: `profile="governed"` OR explicit lease fields (`role`/`generation`)
+  on `sc_cli.send_text_to_window` / `sc_cli.read_window` and the matching MCP
+  tools (`send_text` / `read_window`).
+- Layering: the explore-mode target guard still runs first and is still
+  required; the lease gate is checked **after** the target guard passes and
+  **before** any write (send) or at the **start** of a governed read.
+- Explore mode is byte-for-byte unchanged: when no governed signal is present
+  the lease gate is a no-op ALLOW and the existing return shapes are untouched
+  (governed read with no signal does not even add an `ok` key).
+- Checked tuple: `role + birth_id + generation + hwnd + owner_sid_hash` via
+  `RoleLeaseTable.validate_ui_fallback`. `birth_id` is optional at call time
+  (checked when provided, skipped when omitted for backward compatibility).
+- No raw SID: only `owner_sid_hash` flows into any returned `lease_gate` dict;
+  the raw SID is hashed/redacted (tested in `tests/test_mesh_lease.py`).
+- Fail-closed: if the runtime OS SID is unavailable and none is injected,
+  `current_owner_sid` returns the sentinel `"<unknown-sid>"`, which never
+  matches a real issued lease, so governed mode denies.
+- Evidence: `sc_mesh_lease.evaluate_lease_gate`, `tests/test_mesh_lease.py`,
+  `tests/test_package_adapters.py`.
+
+Current-SID runtime integration (`OpenProcessToken` ->
+`GetTokenInformation(TokenUser)` -> `ConvertSidToStringSid`) is the documented
+next step; until then governed callers inject `owner_sid` or fail closed.
+
 ## What It Does Not Yet Do
 
-- It is not yet wired into `sc_cli send` or `selfconnect-mesh heartbeat`.
-- It does not yet replace visible terminal routing.
+- The gate is in-process and optional; it does not yet replace visible terminal
+  routing, and it is not a long-running service daemon.
+- Runtime OS owner-SID resolution is not yet implemented (inject or fail closed).
+- `selfconnect-mesh heartbeat` does not yet consult the gate.
 - It uses a proof-local named pipe, not a long-running service daemon.
 - It hashes/redacts the OS caller SID instead of storing the raw SID.
 - It does not yet apply a custom DACL in this proof; production should restrict
@@ -91,13 +122,16 @@ SQOS impersonation flags.
 
 ## Next Runtime Step
 
-Add optional lease validation to `sc_cli send` and MCP `send_text`:
+Optional lease validation is now wired into `sc_cli send`/`read` and MCP
+`send_text`/`read_window`:
 
 ```text
-send_text requires either:
-  - explore mode: target guard only; or
-  - governed mode: target guard + current role lease.
+send_text / read_window resolve to either:
+  - explore mode (default): target guard only (no-op lease gate); or
+  - governed mode (profile=governed or explicit role/generation):
+        target guard + current role lease.
 ```
 
-For governed agents, `role + generation + hwnd + owner SID` should be checked
-before any UI fallback write/read action.
+For governed agents, `role + generation + hwnd + owner SID hash` is checked
+before any UI fallback write/read action. The remaining step is runtime OS
+owner-SID resolution so governed mode no longer needs an injected SID.

@@ -45,9 +45,29 @@ def build_server():
         return sc_cli.list_window_records(query, limit)
 
     @server.tool()
-    def read_window(hwnd: int, prefer_uia: bool = True) -> dict[str, Any]:
-        """Read text from a window using UIA first, then child-window text fallback."""
-        return sc_cli.read_window(hwnd, prefer_uia=prefer_uia)
+    def read_window(
+        hwnd: int,
+        prefer_uia: bool = True,
+        profile: str = "explore",
+        role: str = "",
+        generation: int = 0,
+        mesh: str = "default",
+        birth_id: str = "",
+    ) -> dict[str, Any]:
+        """Read text from a window using UIA first, then child-window text fallback.
+
+        Optional governed enforcement: pass ``profile="governed"`` or explicit
+        ``role``/``generation`` to require a current role lease before reading.
+        """
+        return sc_cli.read_window(
+            hwnd,
+            prefer_uia=prefer_uia,
+            profile=profile,
+            role=role or None,
+            generation=generation or None,
+            mesh=mesh,
+            birth_id=birth_id or None,
+        )
 
     @server.tool()
     def capture_window(hwnd: int, path: str = "", crop: bool = True) -> dict[str, Any]:
@@ -90,8 +110,20 @@ def build_server():
         confirm_current_target: bool = False,
         require_terminal: bool = True,
         own_pid: int = 0,
+        profile: str = "explore",
+        role: str = "",
+        generation: int = 0,
+        mesh: str = "default",
+        birth_id: str = "",
     ) -> dict[str, Any]:
-        """Type text into a verified window. Also requires SELFCONNECT_MCP_ALLOW_INPUT=1."""
+        """Type text into a verified window. Also requires SELFCONNECT_MCP_ALLOW_INPUT=1.
+
+        Optional governed enforcement: pass ``profile="governed"`` or explicit
+        ``role``/``generation`` to require a current role lease (role +
+        birth_id + generation + hwnd + owner SID hash) before the send. The
+        owner SID is not yet resolved at runtime, so governed sends fail closed
+        until a SID is injected via the CLI path (documented next step).
+        """
         return sc_cli.send_text_to_window(
             hwnd,
             text,
@@ -106,6 +138,11 @@ def build_server():
             confirm_current_target=confirm_current_target,
             require_terminal=require_terminal,
             own_pid=own_pid or None,
+            profile=profile,
+            role=role or None,
+            generation=generation or None,
+            mesh=mesh,
+            birth_id=birth_id or None,
         )
 
     return server

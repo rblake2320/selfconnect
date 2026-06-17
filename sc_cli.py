@@ -16,6 +16,26 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from sc_mesh_lease import GOVERNED_PROFILE, RoleLeaseTable, evaluate_lease_gate
+
+# Shared in-process lease table so the CLI and MCP adapters enforce against the
+# same governed lease state. Optional: only consulted in governed mode.
+_LEASE_TABLE = RoleLeaseTable()
+
+
+def get_lease_table() -> RoleLeaseTable:
+    """Return the process-wide shared role lease table (CLI/MCP share one)."""
+    return _LEASE_TABLE
+
+
+def _is_governed(profile: str, role: str | None, generation: int | None) -> bool:
+    return (
+        str(profile).strip().lower() == GOVERNED_PROFILE
+        or role is not None
+        or generation is not None
+    )
+
+
 CAPABILITY_SCOPE = {
     "win32": "sdk-core platform probe",
     "uia_text": "optional SDK read adapter when UIA dependencies are installed",
@@ -239,9 +259,38 @@ def doctor_report(include_windows: bool = False, query: str = "", limit: int = 2
     return report
 
 
-def read_window(hwnd: int, prefer_uia: bool = True) -> dict[str, Any]:
-    sc = _load_sc()
+def read_window(
+    hwnd: int,
+    prefer_uia: bool = True,
+    *,
+    profile: str = "explore",
+    role: str | None = None,
+    generation: int | None = None,
+    mesh: str = "default",
+    owner_sid: str | None = None,
+    birth_id: str | None = None,
+    lease_table: RoleLeaseTable | None = None,
+) -> dict[str, Any]:
     hwnd = parse_hwnd(hwnd)
+    if _is_governed(profile, role, generation):
+        gate = evaluate_lease_gate(
+            profile=profile,
+            table=lease_table if lease_table is not None else get_lease_table(),
+            mesh=mesh,
+            role=role,
+            generation=generation,
+            hwnd=hwnd,
+            owner_sid=owner_sid,
+            birth_id=birth_id,
+        )
+        if not gate.ok:
+            return {
+                "ok": False,
+                "hwnd": hwnd,
+                "error": "governed lease gate denied",
+                "lease_gate": gate.to_dict(),
+            }
+    sc = _load_sc()
     title = sc.get_window_text(hwnd)
     text = ""
     method = "none"
@@ -303,6 +352,13 @@ def send_text_to_window(
     confirm_current_target: bool = False,
     require_terminal: bool = True,
     own_pid: int | None = None,
+    profile: str = "explore",
+    role: str | None = None,
+    generation: int | None = None,
+    mesh: str = "default",
+    owner_sid: str | None = None,
+    birth_id: str | None = None,
+    lease_table: RoleLeaseTable | None = None,
 ) -> dict[str, Any]:
     sc = _load_sc()
     hwnd = parse_hwnd(hwnd)
@@ -336,13 +392,35 @@ def send_text_to_window(
             ),
         }
 
+    lease_gate_dict: dict[str, Any] | None = None
+    if _is_governed(profile, role, generation):
+        gate = evaluate_lease_gate(
+            profile=profile,
+            table=lease_table if lease_table is not None else get_lease_table(),
+            mesh=mesh,
+            role=role,
+            generation=generation,
+            hwnd=hwnd,
+            owner_sid=owner_sid,
+            birth_id=birth_id,
+        )
+        if not gate.ok:
+            return {
+                "ok": False,
+                "hwnd": hwnd,
+                "error": "governed lease gate denied",
+                "lease_gate": gate.to_dict(),
+                "guard": guard,
+            }
+        lease_gate_dict = gate.to_dict()
+
     target = find_window_by_hwnd(hwnd)
     if target is None:
         return {"ok": False, "hwnd": hwnd, "error": "window disappeared after verification"}
 
     payload = text + ("\r" if submit else "")
     sc.send_string(target, payload, char_delay=char_delay)
-    return {
+    result: dict[str, Any] = {
         "ok": True,
         "hwnd": hwnd,
         "pid": target.pid,
@@ -351,6 +429,9 @@ def send_text_to_window(
         "chars_sent": len(payload),
         "guard": guard,
     }
+    if lease_gate_dict is not None:
+        result["lease_gate"] = lease_gate_dict
+    return result
 
 
 def _print_json(data: Any) -> int:
