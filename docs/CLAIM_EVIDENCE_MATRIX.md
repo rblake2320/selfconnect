@@ -1,0 +1,52 @@
+# SelfConnect Claim Evidence Matrix
+
+Last updated: 2026-06-17
+
+This matrix ties current SelfConnect positioning to concrete proof artifacts on
+`test/win32-hardening-v1`. It is intentionally conservative: if a capability has
+not been live-tested or committed as a probe, it is marked as pending.
+
+| Claim area | Current status | Evidence |
+| --- | --- | --- |
+| OS-native terminal injection | Proven | `self_connect.send_string`, `test_self_connect.py`, existing WM_CHAR terminal mesh use |
+| Window capture readback | Proven | `capture_window`, `save_capture`, `test_self_connect.py` |
+| Target-safe sends | Proven in package path | `sc_cli.verify_target`, guarded `send`, `tests/test_package_adapters.py` |
+| Mesh role/task tracking | Proven in package path | `sc_mesh_registry.py`, `selfconnect-mesh list/register/update/heartbeat` |
+| Explore vs governed profiles | Proven as registry policy metadata | `sc_mesh_registry.py`, `docs/PROVEN_VS_UNTESTED.md` |
+| UIA terminal structured read | Proven | `experiments/win32_probe/uia_echo_filter_probe.py`, `docs/UIA_ECHO_FILTER_TERMCONTROL.md` |
+| UIA TextChanged event on Windows Terminal | Proven | `experiments/win32_probe/results/uia_echo_filter_PASS_redacted.json` |
+| Echo filtering / false-positive suppression | Proven as reusable helper | `sc_echo_filter.py`, `tests/test_uia_echo_filter.py` |
+| Browser local page control | Proven on Edge local fixture | `experiments/win32_probe/browser_local_proof.py`, `experiments/win32_probe/results/browser_local_proof_PASS_redacted.json` |
+| Protected checkpoint detection | Proven on local mock checkpoint | `docs/BROWSER_LOCAL_PROOF.md`, browser PASS artifact |
+| CAPTCHA bypass | Not claimed | `docs/BROWSER_LOCAL_PROOF.md`, `docs/PROVEN_VS_UNTESTED.md` |
+| Named pipe + DACL + impersonation | Proven in experiment/enterprise lane | `experiments/win32_probe/CAPABILITY_BACKLOG.md`; production control-plane integration pending |
+| TPM/CNG key use | Proven in experiment/enterprise lane | `experiments/win32_probe/CAPABILITY_BACKLOG.md`; full attestation pending |
+| TPM platform attestation | Pending | `NCryptCreateClaim` descriptor fix still required |
+| ETW provider smoke | Proven as isolated probe | `experiments/win32_probe/etw_provider.py`, `CAPABILITY_BACKLOG.md` |
+| Service SID daemon posture | Documented/probed, not productized | `experiments/win32_probe/service_sid_probe.py`, `SERVICE_SID_DAEMON.md` |
+| Job Object containment | Proven in experiment/enterprise lane | `CAPABILITY_BACKLOG.md`; runtime adapter pending |
+| MCP/package distribution | Proven | `sc_mcp.py`, `pyproject.toml`, package tests, built wheel inspection |
+
+## Positioning Boundary
+
+The current defensible position is:
+
+> SelfConnect has proven an OS-native Windows AI mesh over desktop surfaces,
+> with guarded targeting, structured readback, echo suppression, role tracking,
+> local browser fixture control, and optional governed assurance probes.
+
+The current non-claims are:
+
+- unrestricted browser automation across public sites;
+- CAPTCHA bypass or anti-bot evasion;
+- production TPM attestation;
+- production named-pipe control-plane replacement for terminal-visible routing;
+- full service-mode governed daemon.
+
+## Next Highest-Value Evidence
+
+1. Productionize named-pipe role leases/generation IDs for the control plane.
+2. Finish TPM platform attestation with correct `NCryptBufferDesc`.
+3. Add browser multi-tab/stale-tab proof.
+4. Add governed audit event for protected checkpoint pause.
+5. Wrap job-object containment as an optional runtime adapter.

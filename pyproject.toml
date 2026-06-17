@@ -100,6 +100,7 @@ include = [
     "experiments/win32_probe/results/browser_local_proof_PASS_redacted.json",
     "experiments/win32_probe/results/uia_echo_filter_PASS_redacted.json",
     "docs/BROWSER_LOCAL_PROOF.md",
+    "docs/CLAIM_EVIDENCE_MATRIX.md",
     "docs/UIA_ECHO_FILTER_TERMCONTROL.md",
     "docs/PROVEN_VS_UNTESTED.md",
     "skills/selfconnect-win32/**",

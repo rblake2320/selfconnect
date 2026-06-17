@@ -246,6 +246,7 @@ def test_pyproject_exports_package_adapter_entry_points():
     assert '"experiments/win32_probe/results/browser_local_proof_PASS_redacted.json"' in text
     assert '"experiments/win32_probe/results/uia_echo_filter_PASS_redacted.json"' in text
     assert '"docs/BROWSER_LOCAL_PROOF.md"' in text
+    assert '"docs/CLAIM_EVIDENCE_MATRIX.md"' in text
     assert '"docs/UIA_ECHO_FILTER_TERMCONTROL.md"' in text
     assert '"docs/PROVEN_VS_UNTESTED.md"' in text
     assert '"skills/selfconnect-win32/**"' in text
