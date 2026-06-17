@@ -52,6 +52,13 @@ These have been tested in this branch or recorded as committed probes:
 - Echo filtering using nonce/hash/readback records.
 - Mesh registry role tracking and `explore` / `governed` profiles.
 - Package commands and MCP adapter surface.
+- Local browser proof on Microsoft Edge:
+  - isolated browser profile launched to `127.0.0.1`;
+  - browser HWND/PID/exe/class/title target-guarded;
+  - local page text read through UIA;
+  - owned form filled through UIA;
+  - submitted sentinel observed;
+  - mock protected checkpoint detected and not bypassed.
 - ETW provider smoke probe.
 - Service SID helper/probe documentation.
 - Named pipe + DACL + impersonation proof in experiments/enterprise lane.
@@ -63,10 +70,10 @@ These have been tested in this branch or recorded as committed probes:
 
 These should not be claimed as working until tested:
 
-- Browser control through Chrome, Edge, or Firefox as normal desktop apps.
-- Browser page content readback through DOM, accessibility tree, UIA, or
-  screenshot/OCR fallback.
-- Browser form filling across real sites.
+- Browser control across real public sites.
+- Browser control parity across Chrome, Edge, and Firefox.
+- Browser page content readback through DOM or screenshot/OCR fallback.
+- Browser form filling across real public sites.
 - Multi-tab routing and stale-tab detection.
 - Browser download/upload workflows.
 - WebAuthn/passkey flows.
@@ -102,11 +109,10 @@ honest.
 
 ## Recommended Next Browser Proofs
 
-1. Local browser smoke proof:
-   - Launch Edge or Chrome to a local HTML test page.
-   - Verify HWND/PID/class/title.
-   - Read page text through UIA and capture fallback.
-   - Fill a normal form and verify submitted output.
+1. Harden browser smoke proof:
+   - Repeat the local proof on Chrome and Firefox where available.
+   - Add screenshot/OCR fallback classification.
+   - Keep the existing Edge PASS artifact redacted.
 
 2. Multi-tab proof:
    - Open two tabs with unique titles/nonces.
