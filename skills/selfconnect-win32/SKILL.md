@@ -75,6 +75,9 @@ Use this separation for message paths:
 - Gemini sessions may need approval monitoring.
 - Always identify the new HWND, PID, title, exe, and class before injecting a
   handoff.
+- Use the mesh `birth_id` as the durable per-terminal identity. Role names can
+  migrate or collide visually; `birth_id` distinguishes the actual terminal
+  instance. Include it in handoffs and status reports.
 - Do not assume every terminal is in the mesh. Register only active mesh windows:
 
 ```powershell
@@ -84,6 +87,8 @@ selfconnect-mesh register --role codex-2 --hwnd 0x123456 --agent codex --profile
 
 - Roles must be unique. Do not create multiple `B` roles; use names like
   `codex-1`, `claude-1`, `rmc-1`, `gemini-1`, or task-specific roles.
+- If a role migrates to a new terminal, use `--replace`; the registry will issue
+  a new `birth_id` and increment the role generation.
 - Set `--profile explore` for local capability testing and `--profile governed`
   for enterprise/government validation. Keep target verification on in both
   profiles; governance profile changes policy expectations, not basic

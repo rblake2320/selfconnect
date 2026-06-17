@@ -128,6 +128,55 @@ def test_mesh_registry_tracks_governance_profile(monkeypatch):
         temp_dir.cleanup()
 
 
+def test_mesh_registry_tracks_birth_id_and_generation(monkeypatch):
+    fake = _FakeSelfConnect()
+    monkeypatch.setattr(sc_cli, "_load_sc", lambda: fake)
+    monkeypatch.setattr(sc_cli, "_window_valid_visible", lambda hwnd: (True, True))
+    temp_dir = tempfile.TemporaryDirectory()
+    path = Path(temp_dir.name) / "mesh.json"
+
+    try:
+        first = sc_mesh_registry.register_agent(
+            _FakeWindow.hwnd,
+            "B",
+            registry_path=path,
+            expected_class=_FakeWindow.class_name,
+        )
+        assert first["ok"] is True
+        first_birth = first["agent"]["birth_id"]
+        assert first_birth.startswith("b-")
+        assert first["agent"]["generation"] == 1
+        assert first["agent"]["window_fingerprint"]
+
+        same = sc_mesh_registry.register_agent(
+            _FakeWindow.hwnd,
+            "B",
+            registry_path=path,
+            expected_class=_FakeWindow.class_name,
+        )
+        assert same["ok"] is True
+        assert same["agent"]["birth_id"] == first_birth
+        assert same["agent"]["generation"] == 1
+
+        class _MigratedWindow(_FakeWindow):
+            hwnd = 0x9999
+            title = "Team B migrated"
+
+        fake.windows = [_MigratedWindow()]
+        migrated = sc_mesh_registry.register_agent(
+            _MigratedWindow.hwnd,
+            "B",
+            registry_path=path,
+            expected_class=_MigratedWindow.class_name,
+            replace=True,
+        )
+        assert migrated["ok"] is True
+        assert migrated["agent"]["birth_id"] != first_birth
+        assert migrated["agent"]["generation"] == 2
+    finally:
+        temp_dir.cleanup()
+
+
 def test_mesh_registry_heartbeat_updates_guard_status(monkeypatch):
     fake = _FakeSelfConnect()
     monkeypatch.setattr(sc_cli, "_load_sc", lambda: fake)
@@ -224,6 +273,89 @@ def test_send_text_allows_matching_target_guard(monkeypatch):
         expected_class=_FakeWindow.class_name,
     )
     assert result["ok"] is True
+    assert fake.sent[0][1] == "hello\r"
+
+
+def test_send_text_explore_mode_unchanged_with_lease_params_omitted(monkeypatch):
+    fake = _FakeSelfConnect()
+    monkeypatch.setattr(sc_cli, "_load_sc", lambda: fake)
+    monkeypatch.setattr(sc_cli, "_window_valid_visible", lambda hwnd: (True, True))
+
+    result = sc_cli.send_text_to_window(
+        _FakeWindow.hwnd,
+        "hello",
+        submit=True,
+        allow_input=True,
+        expected_pid=_FakeWindow.pid,
+        expected_class=_FakeWindow.class_name,
+    )
+    assert result["ok"] is True
+    assert fake.sent[0][1] == "hello\r"
+    # Explore path adds no lease_gate key.
+    assert "lease_gate" not in result
+
+
+def test_send_text_governed_denies_without_matching_lease(monkeypatch):
+    from sc_mesh_lease import RoleLeaseTable
+
+    fake = _FakeSelfConnect()
+    monkeypatch.setattr(sc_cli, "_load_sc", lambda: fake)
+    monkeypatch.setattr(sc_cli, "_window_valid_visible", lambda hwnd: (True, True))
+
+    empty_table = RoleLeaseTable()
+    result = sc_cli.send_text_to_window(
+        _FakeWindow.hwnd,
+        "hello",
+        allow_input=True,
+        expected_pid=_FakeWindow.pid,
+        expected_class=_FakeWindow.class_name,
+        profile="governed",
+        role="agent-a",
+        generation=1,
+        owner_sid="X",
+        lease_table=empty_table,
+    )
+    assert result["ok"] is False
+    assert result["error"] == "governed lease gate denied"
+    assert "lease_gate" in result
+    assert fake.sent == []
+
+
+def test_send_text_governed_allows_with_matching_lease(monkeypatch):
+    from sc_mesh_lease import RoleLeaseTable
+
+    fake = _FakeSelfConnect()
+    monkeypatch.setattr(sc_cli, "_load_sc", lambda: fake)
+    monkeypatch.setattr(sc_cli, "_window_valid_visible", lambda hwnd: (True, True))
+
+    table = RoleLeaseTable()
+    table.issue(
+        mesh="default",
+        role="agent-a",
+        hwnd=int(_FakeWindow.hwnd),
+        pid=int(_FakeWindow.pid),
+        exe_name=_FakeWindow.exe_name,
+        class_name=_FakeWindow.class_name,
+        title=_FakeWindow.title,
+        owner_sid="X",
+        ttl_s=300,
+    )
+    result = sc_cli.send_text_to_window(
+        _FakeWindow.hwnd,
+        "hello",
+        submit=True,
+        allow_input=True,
+        expected_pid=_FakeWindow.pid,
+        expected_class=_FakeWindow.class_name,
+        profile="governed",
+        role="agent-a",
+        generation=1,
+        owner_sid="X",
+        lease_table=table,
+    )
+    assert result["ok"] is True
+    assert "lease_gate" in result
+    assert result["lease_gate"]["ok"] is True
     assert fake.sent[0][1] == "hello\r"
 
 

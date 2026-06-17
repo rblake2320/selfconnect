@@ -12,6 +12,7 @@ import json
 import os
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,19 @@ def default_registry_path() -> Path:
 
 def _now() -> float:
     return time.time()
+
+
+def _birth_id(role: str) -> str:
+    clean = "".join(ch.lower() if ch.isalnum() else "-" for ch in role.strip()).strip("-")
+    clean = clean or "agent"
+    return f"{clean}-{uuid.uuid4().hex[:8]}"
+
+
+def _window_fingerprint(*, hwnd: int, pid: int, class_name: str, title: str) -> str:
+    import hashlib
+
+    payload = f"{int(hwnd)}|{int(pid)}|{class_name}|{title}".encode("utf-8", errors="replace")
+    return hashlib.sha256(payload).hexdigest()[:16]
 
 
 def _empty_registry() -> dict[str, Any]:
@@ -62,6 +76,16 @@ def load_registry(path: str | Path | None = None) -> dict[str, Any]:
     for agent in data["agents"]:
         if isinstance(agent, dict):
             agent.setdefault("profile", DEFAULT_PROFILE)
+            agent.setdefault("birth_id", _birth_id(str(agent.get("role", "agent"))))
+            agent.setdefault("generation", 1)
+            agent.setdefault("created_at", agent.get("last_seen", data["updated_at"]))
+            if "window_fingerprint" not in agent:
+                agent["window_fingerprint"] = _window_fingerprint(
+                    hwnd=int(agent.get("hwnd", 0)),
+                    pid=int(agent.get("pid", 0)),
+                    class_name=str(agent.get("class_name", "")),
+                    title=str(agent.get("title", "")),
+                )
     return data
 
 
@@ -159,16 +183,29 @@ def register_agent(
         }
 
     actual = guard["actual"]
+    same_window = bool(existing and int(existing.get("hwnd", 0)) == int(hwnd))
+    generation = int(existing.get("generation", 0)) if existing and same_window else int(existing.get("generation", 0)) + 1 if existing else 1
+    birth_id = str(existing.get("birth_id")) if existing and same_window else _birth_id(role)
+    created_at = float(existing.get("created_at", _now())) if existing and same_window else _now()
     record = {
         "mesh": mesh,
         "role": role,
         "agent": agent_type or infer_agent_type(actual["title"], actual["exe_name"]),
         "label": label or role,
+        "birth_id": birth_id,
+        "generation": generation,
+        "created_at": created_at,
         "hwnd": int(hwnd),
         "pid": actual["pid"],
         "exe_name": actual["exe_name"],
         "class_name": actual["class_name"],
         "title": actual["title"],
+        "window_fingerprint": _window_fingerprint(
+            hwnd=int(hwnd),
+            pid=int(actual["pid"]),
+            class_name=str(actual["class_name"]),
+            title=str(actual["title"]),
+        ),
         "task": task,
         "status": status,
         "profile": normalized_profile,
@@ -252,11 +289,13 @@ def _print_json(data: Any) -> int:
 
 
 def _print_agents(registry: dict[str, Any]) -> int:
-    print(f"{'mesh':<12} {'role':<18} {'agent':<8} {'profile':<8} {'status':<10} {'hwnd':>12}  task")
-    print("-" * 100)
+    print(f"{'mesh':<12} {'role':<18} {'birth':<14} {'agent':<8} {'profile':<8} {'status':<10} {'hwnd':>12}  task")
+    print("-" * 116)
     for agent in registry.get("agents", []):
+        birth = str(agent.get("birth_id", ""))[:14]
         print(
             f"{agent.get('mesh', ''):<12} {agent.get('role', ''):<18} "
+            f"{birth:<14} "
             f"{agent.get('agent', ''):<8} {agent.get('profile', DEFAULT_PROFILE):<8} "
             f"{agent.get('status', ''):<10} "
             f"{int(agent.get('hwnd', 0)):>12}  {agent.get('task', '')[:40]}"

@@ -12,6 +12,7 @@ Each mesh role receives a lease from a sidecar control plane. The lease contains
 
 - mesh name;
 - role name;
+- registry birth ID / instance identity;
 - monotonic generation;
 - lease ID;
 - HWND;
@@ -21,9 +22,10 @@ Each mesh role receives a lease from a sidecar control plane. The lease contains
 - expiry time.
 
 When a role migrates to a new HWND, the control plane issues a higher
-generation. Any future UI fallback action must present:
+generation and the mesh registry issues a new `birth_id`. Any future UI fallback
+action must present:
 
-`role + generation + hwnd + owner SID`
+`role + birth_id + generation + hwnd + owner SID`
 
 If any field is stale, the action fails closed.
 
