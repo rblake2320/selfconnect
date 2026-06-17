@@ -75,7 +75,7 @@ selfconnect guard --hwnd 0x123456 --expect-pid 1234 --expect-class CASCADIA_HOST
 selfconnect read --hwnd 0x123456
 selfconnect capture --hwnd 0x123456 --path proof.png
 selfconnect-mesh scan --query Claude
-selfconnect-mesh register --role codex-1 --hwnd 0x123456 --task "package guard" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
+selfconnect-mesh register --role codex-1 --hwnd 0x123456 --profile explore --task "package guard" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
 ```
 
 Input delivery is intentionally gated:
@@ -146,7 +146,7 @@ Do not infer mesh membership from every open terminal.
 
 ```bash
 selfconnect-mesh scan --query Claude
-selfconnect-mesh register --role claude-1 --hwnd 0x123456 --task "TPM attestation" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
+selfconnect-mesh register --role claude-1 --hwnd 0x123456 --profile governed --task "TPM attestation" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
 selfconnect-mesh update --role claude-1 --status compacting --task "auto-compact pause"
 selfconnect-mesh heartbeat --role claude-1
 selfconnect-mesh list
@@ -154,6 +154,15 @@ selfconnect-mesh list
 
 Roles should be unique. If a role migrates to a new HWND, use `--replace` so the
 registry shows that the old route was intentionally superseded.
+
+Profiles make the product split explicit without forking the code:
+
+- `explore` is for everyday capability testing. Input is still target-guarded
+  so SelfConnect does not type into the wrong window, but heavy enterprise
+  controls are optional.
+- `governed` is for enterprise/government validation, where TPM identity, DACL
+  pipes, impersonation, sandboxing, ETW, and approval/audit controls can be
+  required around the same capabilities.
 
 ---
 

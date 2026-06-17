@@ -100,6 +100,34 @@ def test_mesh_registry_rejects_duplicate_active_role(monkeypatch):
         temp_dir.cleanup()
 
 
+def test_mesh_registry_tracks_governance_profile(monkeypatch):
+    fake = _FakeSelfConnect()
+    monkeypatch.setattr(sc_cli, "_load_sc", lambda: fake)
+    monkeypatch.setattr(sc_cli, "_window_valid_visible", lambda hwnd: (True, True))
+    temp_dir = tempfile.TemporaryDirectory()
+    path = Path(temp_dir.name) / "mesh.json"
+
+    try:
+        registered = sc_mesh_registry.register_agent(
+            _FakeWindow.hwnd,
+            "codex-1",
+            registry_path=path,
+            expected_class=_FakeWindow.class_name,
+        )
+        assert registered["ok"] is True
+        assert registered["agent"]["profile"] == "explore"
+
+        updated = sc_mesh_registry.update_agent("codex-1", profile="governed", registry_path=path)
+        assert updated["ok"] is True
+        assert updated["agent"]["profile"] == "governed"
+
+        rejected = sc_mesh_registry.update_agent("codex-1", profile="unsafe", registry_path=path)
+        assert rejected["ok"] is False
+        assert "profile must be one of" in rejected["error"]
+    finally:
+        temp_dir.cleanup()
+
+
 def test_mesh_registry_heartbeat_updates_guard_status(monkeypatch):
     fake = _FakeSelfConnect()
     monkeypatch.setattr(sc_cli, "_load_sc", lambda: fake)

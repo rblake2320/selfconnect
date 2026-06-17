@@ -79,11 +79,15 @@ Use this separation for message paths:
 
 ```powershell
 selfconnect-mesh scan --query Codex
-selfconnect-mesh register --role codex-2 --hwnd 0x123456 --agent codex --task "specific task" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
+selfconnect-mesh register --role codex-2 --hwnd 0x123456 --agent codex --profile explore --task "specific task" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
 ```
 
 - Roles must be unique. Do not create multiple `B` roles; use names like
   `codex-1`, `claude-1`, `rmc-1`, `gemini-1`, or task-specific roles.
+- Set `--profile explore` for local capability testing and `--profile governed`
+  for enterprise/government validation. Keep target verification on in both
+  profiles; governance profile changes policy expectations, not basic
+  right-window safety.
 - On migration or successor spawn, register the new role or use `--replace` for
   the migrated role.
 - Before idle or after auto-compact, run:

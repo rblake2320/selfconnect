@@ -19,6 +19,8 @@ import sc_cli
 
 REGISTRY_VERSION = 1
 DEFAULT_MESH = "default"
+DEFAULT_PROFILE = "explore"
+VALID_PROFILES = {"explore", "governed"}
 
 
 def default_registry_path() -> Path:
@@ -37,6 +39,13 @@ def _empty_registry() -> dict[str, Any]:
     return {"version": REGISTRY_VERSION, "updated_at": _now(), "agents": []}
 
 
+def _normalize_profile(profile: str | None) -> str:
+    value = (profile or DEFAULT_PROFILE).strip().lower()
+    if value not in VALID_PROFILES:
+        raise ValueError(f"profile must be one of: {', '.join(sorted(VALID_PROFILES))}")
+    return value
+
+
 def load_registry(path: str | Path | None = None) -> dict[str, Any]:
     registry_path = Path(path) if path else default_registry_path()
     if not registry_path.exists():
@@ -50,6 +59,9 @@ def load_registry(path: str | Path | None = None) -> dict[str, Any]:
     data.setdefault("version", REGISTRY_VERSION)
     data.setdefault("updated_at", _now())
     data.setdefault("agents", [])
+    for agent in data["agents"]:
+        if isinstance(agent, dict):
+            agent.setdefault("profile", DEFAULT_PROFILE)
     return data
 
 
@@ -102,6 +114,7 @@ def register_agent(
     agent_type: str = "",
     task: str = "",
     status: str = "active",
+    profile: str = DEFAULT_PROFILE,
     label: str = "",
     notes: str = "",
     replace: bool = False,
@@ -114,6 +127,10 @@ def register_agent(
 ) -> dict[str, Any]:
     if not role.strip():
         return {"ok": False, "error": "role is required"}
+    try:
+        normalized_profile = _normalize_profile(profile)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
 
     guard = sc_cli.verify_target(
         hwnd,
@@ -154,6 +171,7 @@ def register_agent(
         "title": actual["title"],
         "task": task,
         "status": status,
+        "profile": normalized_profile,
         "notes": notes,
         "session_id": guard["session_id"],
         "is_terminal": guard["is_terminal"],
@@ -174,6 +192,7 @@ def update_agent(
     mesh: str = DEFAULT_MESH,
     task: str | None = None,
     status: str | None = None,
+    profile: str | None = None,
     notes: str | None = None,
     registry_path: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -185,6 +204,11 @@ def update_agent(
         existing["task"] = task
     if status is not None:
         existing["status"] = status
+    if profile is not None:
+        try:
+            existing["profile"] = _normalize_profile(profile)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
     if notes is not None:
         existing["notes"] = notes
     existing["last_seen"] = _now()
@@ -228,12 +252,13 @@ def _print_json(data: Any) -> int:
 
 
 def _print_agents(registry: dict[str, Any]) -> int:
-    print(f"{'mesh':<12} {'role':<18} {'agent':<8} {'status':<10} {'hwnd':>12}  task")
-    print("-" * 90)
+    print(f"{'mesh':<12} {'role':<18} {'agent':<8} {'profile':<8} {'status':<10} {'hwnd':>12}  task")
+    print("-" * 100)
     for agent in registry.get("agents", []):
         print(
             f"{agent.get('mesh', ''):<12} {agent.get('role', ''):<18} "
-            f"{agent.get('agent', ''):<8} {agent.get('status', ''):<10} "
+            f"{agent.get('agent', ''):<8} {agent.get('profile', DEFAULT_PROFILE):<8} "
+            f"{agent.get('status', ''):<10} "
             f"{int(agent.get('hwnd', 0)):>12}  {agent.get('task', '')[:40]}"
         )
     return 0
@@ -259,6 +284,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--agent", default="")
     p.add_argument("--task", default="")
     p.add_argument("--status", default="active")
+    p.add_argument("--profile", choices=sorted(VALID_PROFILES), default=DEFAULT_PROFILE)
     p.add_argument("--label", default="")
     p.add_argument("--notes", default="")
     p.add_argument("--replace", action="store_true")
@@ -273,6 +299,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--mesh", default=DEFAULT_MESH)
     p.add_argument("--task", default=None)
     p.add_argument("--status", default=None)
+    p.add_argument("--profile", choices=sorted(VALID_PROFILES), default=None)
     p.add_argument("--notes", default=None)
 
     p = sub.add_parser("heartbeat")
@@ -304,6 +331,7 @@ def main(argv: list[str] | None = None) -> int:
             agent_type=args.agent,
             task=args.task,
             status=args.status,
+            profile=args.profile,
             label=args.label,
             notes=args.notes,
             replace=args.replace,
@@ -315,7 +343,7 @@ def main(argv: list[str] | None = None) -> int:
             allow_non_terminal=args.allow_non_terminal,
         ))
     if args.command == "update":
-        return _print_json(update_agent(args.role, mesh=args.mesh, task=args.task, status=args.status, notes=args.notes, registry_path=registry_path))
+        return _print_json(update_agent(args.role, mesh=args.mesh, task=args.task, status=args.status, profile=args.profile, notes=args.notes, registry_path=registry_path))
     if args.command == "heartbeat":
         return _print_json(heartbeat(args.role, mesh=args.mesh, registry_path=registry_path))
     if args.command == "remove":
