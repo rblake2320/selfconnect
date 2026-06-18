@@ -20,6 +20,7 @@ not been live-tested or committed as a probe, it is marked as pending.
 | Browser UIA live handoff channel | Proven as private defensive snapshot | `docs/PATENT_PRIOR_ART_SNAPSHOT.md`; UIA Value/Invoke worked where Chromium ignored terminal-style channels |
 | Lancelot/UAB public overlap boundary | Documented private competitive-defense note | `docs/LANCELOT_UAB_COMPETITIVE_DEFENSE.md`; avoid generic desktop-control claims and preserve SelfConnect lane around SID-bound leases, target guard, echo-filtered readback, and no-CDP UIA browser proof |
 | Historical AWS/DGX/Spark AI-to-AI work | Documented as related private antecedent, not direct SelfConnect proof | `docs/AWS_AI_TO_AI_EVIDENCE_INDEX.md`; December 2025 hub-mediated AI-to-AI milestones, January 2026 teacher-student/DMS patent evidence, February 2026 AI data-ownership backup |
+| Patent design-around defense | Documented private counsel-facing strategy | `docs/PATENT_DESIGN_AROUND_DEFENSE.md`; maps likely competitor workarounds to broader claim families and representative embodiments |
 | Protected checkpoint detection | Proven on local mock checkpoint | `docs/BROWSER_LOCAL_PROOF.md`, browser PASS artifact |
 | CAPTCHA bypass | Not claimed | `docs/BROWSER_LOCAL_PROOF.md`, `docs/PROVEN_VS_UNTESTED.md` |
 | Named pipe + DACL + impersonation | Proven in experiment/enterprise lane | `experiments/win32_probe/CAPABILITY_BACKLOG.md`; production DACL hardening still pending |
@@ -61,3 +62,5 @@ The current non-claims are:
 3. Add browser multi-tab/stale-tab proof.
 4. Add governed audit event for protected checkpoint pause.
 5. Wrap job-object containment as an optional runtime adapter.
+6. Build channel-router composition proof covering terminal `WM_CHAR`, browser
+   UIA Value/Invoke, metadata pipe/file registry, and governed lease gate.
