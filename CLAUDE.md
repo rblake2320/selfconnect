@@ -20,6 +20,12 @@ starting — it has working code, DPI notes, and known failures already document
 ls runbooks/   # see what's available
 ```
 
+For mesh agent startup/replacement, read:
+
+```bash
+type runbooks\mesh_agent_bootstrap_and_replacement.md
+```
+
 If you succeed at something after 3+ retry attempts, write it down:
 ```bash
 python runbook_writer.py --title "What I did" --what "What it achieves" --step "Step 1" --session 15
@@ -49,11 +55,15 @@ python runbook_writer.py --title "What I did" --what "What it achieves" --step "
 5. **Codex / GPT terminal** needs `codex --full-auto` or `codex -a never` to bypass
    interactive [Y/n] permission prompts. Without this, Codex freezes waiting for keyboard input.
 
-6. **UIA accessibility bridge for WebView2** (Antigravity, VS Code extensions):
+6. **Claude Code mesh packets must be one physical line unless using a handoff file.**
+   Newlines submit separate prompts and can interleave with Ron's typing or queued tool
+   output. For fresh/replacement agents, use `runbooks\mesh_agent_bootstrap_and_replacement.md`.
+
+7. **UIA accessibility bridge for WebView2** (Antigravity, VS Code extensions):
    Call `AccessibleObjectFromWindow(chrome_hwnd, OBJID_CLIENT, IID_IAccessible)` first to
    expand the UIA tree from ~2 nodes to ~268 nodes. Without this, the chat input is invisible.
 
-7. **`send_string()` vs `send_keys()`**: `send_string()` uses PostMessage(WM_CHAR) — background
+8. **`send_string()` vs `send_keys()`**: `send_string()` uses PostMessage(WM_CHAR) — background
    safe, works for ConPTY. `send_keys()` uses SendInput — requires foreground window.
 
 ---

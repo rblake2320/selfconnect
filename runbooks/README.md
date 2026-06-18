@@ -41,6 +41,7 @@ One-line description of what this achieves.
 | [capture_chrome_window.md](capture_chrome_window.md) | Capture Chrome/Edge/Electron window as PIL Image |
 | [inject_webview2_chat.md](inject_webview2_chat.md) | Type text into WebView2-hosted chat (Gemini, VS Code) |
 | [spawn_claude_terminal.md](spawn_claude_terminal.md) | Open new Windows Terminal tab running Claude Code |
+| [mesh_agent_bootstrap_and_replacement.md](mesh_agent_bootstrap_and_replacement.md) | Bootstrap fresh mesh agents and replace off-rails terminals |
 | [enter_claude_tui.md](enter_claude_tui.md) | Submit text / press Enter in Claude Code TUI |
 | [peer_approval_check.md](peer_approval_check.md) | Check peer terminal for approval prompt, inject y/n safely |
 | [cross_machine_mesh.md](cross_machine_mesh.md) | Start multi-machine AI mesh (Windows ↔ Spark-1 ↔ Spark-2) |
