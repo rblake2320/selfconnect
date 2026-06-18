@@ -66,6 +66,31 @@ procedure.
 | Off-rails | Two missed ACK probes, repeated local narration instead of SelfConnect reply, wrong-window send, or blocked hook/approval loop. | Mark old role `off_rails`; spawn replacement with a new role and `birth_id`. |
 | Unsafe | Target guard or lease validation fails. | Do not send. Fix target/registry first. |
 
+## Sharpness Tracking
+
+Long-lived agents should report enough state to decide whether they are still
+sharp enough for complex work:
+
+```powershell
+python -m sc_mesh_registry update --role claude-1 --tokens 125000 --compact-count 1 --missed-acks 0
+python -m sc_mesh_registry health
+```
+
+Token count is manual/estimated unless the agent UI exposes it. Do not make up a
+number; leave it unknown when unavailable.
+
+Bands:
+
+- Green: fresh heartbeat, no missed ACKs, low age.
+- Yellow: session older than 2 hours, one compaction, one missed ACK, stale
+  heartbeat, or token estimate around 120k+.
+- Red: session older than 4 hours, token estimate around 180k+, two missed ACKs,
+  repeated compactions, or `off_rails`/`stuck` status.
+
+Do not assign red agents patent, security, release, or cross-agent coordination
+work unless no fresh agent is available. Use red agents for read-only context and
+handoff.
+
 ## Replacement Procedure
 
 1. Read only the last 2,000-3,000 chars of the suspect terminal.

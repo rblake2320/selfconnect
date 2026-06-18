@@ -200,6 +200,83 @@ def test_mesh_registry_heartbeat_updates_guard_status(monkeypatch):
         temp_dir.cleanup()
 
 
+def test_mesh_registry_update_tracks_sharpness_counters(monkeypatch):
+    fake = _FakeSelfConnect()
+    monkeypatch.setattr(sc_cli, "_load_sc", lambda: fake)
+    monkeypatch.setattr(sc_cli, "_window_valid_visible", lambda hwnd: (True, True))
+    temp_dir = tempfile.TemporaryDirectory()
+    path = Path(temp_dir.name) / "mesh.json"
+
+    try:
+        registered = sc_mesh_registry.register_agent(
+            _FakeWindow.hwnd,
+            "codex-1",
+            registry_path=path,
+            expected_class=_FakeWindow.class_name,
+        )
+        assert registered["ok"] is True
+
+        updated = sc_mesh_registry.update_agent(
+            "codex-1",
+            token_estimate=125_000,
+            compact_count=1,
+            missed_acks=1,
+            registry_path=path,
+        )
+        assert updated["ok"] is True
+        assert updated["agent"]["token_estimate"] == 125_000
+        assert updated["agent"]["compact_count"] == 1
+        assert updated["agent"]["missed_acks"] == 1
+    finally:
+        temp_dir.cleanup()
+
+
+def test_mesh_registry_health_report_marks_old_stale_agent_red():
+    now = 10_000.0
+    registry = {
+        "agents": [
+            {
+                "role": "claude-1",
+                "birth_id": "claude-1-test",
+                "status": "active",
+                "created_at": now - (5 * 60 * 60),
+                "last_seen": now - (20 * 60),
+                "token_estimate": 190_000,
+                "compact_count": 2,
+                "missed_acks": 0,
+            }
+        ]
+    }
+
+    report = sc_mesh_registry.health_report(registry, now=now)
+    item = report["agents"][0]
+    assert item["risk"] == "red"
+    assert item["action"] == "compact_or_replace"
+    assert "session_age>=4h" in item["reasons"]
+    assert "heartbeat_stale>=15m" in item["reasons"]
+    assert "tokens>=180k" in item["reasons"]
+
+
+def test_mesh_registry_health_report_keeps_fresh_agent_green():
+    now = 10_000.0
+    registry = {
+        "agents": [
+            {
+                "role": "codex-1",
+                "birth_id": "codex-1-test",
+                "status": "active",
+                "created_at": now - 60,
+                "last_seen": now - 10,
+            }
+        ]
+    }
+
+    report = sc_mesh_registry.health_report(registry, now=now)
+    item = report["agents"][0]
+    assert item["risk"] == "green"
+    assert item["action"] == "continue"
+
+
 def test_print_json_escapes_unicode_for_windows_console(capsys):
     assert sc_cli._print_json({"title": "agent ✳"}) == 0
     out = capsys.readouterr().out

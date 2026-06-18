@@ -22,6 +22,11 @@ REGISTRY_VERSION = 1
 DEFAULT_MESH = "default"
 DEFAULT_PROFILE = "explore"
 VALID_PROFILES = {"explore", "governed"}
+STALE_HEARTBEAT_SECONDS = 15 * 60
+OLD_SESSION_SECONDS = 2 * 60 * 60
+VERY_OLD_SESSION_SECONDS = 4 * 60 * 60
+HIGH_TOKEN_ESTIMATE = 120_000
+VERY_HIGH_TOKEN_ESTIMATE = 180_000
 
 
 def default_registry_path() -> Path:
@@ -79,6 +84,9 @@ def load_registry(path: str | Path | None = None) -> dict[str, Any]:
             agent.setdefault("birth_id", _birth_id(str(agent.get("role", "agent"))))
             agent.setdefault("generation", 1)
             agent.setdefault("created_at", agent.get("last_seen", data["updated_at"]))
+            agent.setdefault("token_estimate", None)
+            agent.setdefault("compact_count", 0)
+            agent.setdefault("missed_acks", 0)
             if "window_fingerprint" not in agent:
                 agent["window_fingerprint"] = _window_fingerprint(
                     hwnd=int(agent.get("hwnd", 0)),
@@ -231,6 +239,9 @@ def update_agent(
     status: str | None = None,
     profile: str | None = None,
     notes: str | None = None,
+    token_estimate: int | None = None,
+    compact_count: int | None = None,
+    missed_acks: int | None = None,
     registry_path: str | Path | None = None,
 ) -> dict[str, Any]:
     registry = load_registry(registry_path)
@@ -248,6 +259,12 @@ def update_agent(
             return {"ok": False, "error": str(exc)}
     if notes is not None:
         existing["notes"] = notes
+    if token_estimate is not None:
+        existing["token_estimate"] = max(0, int(token_estimate))
+    if compact_count is not None:
+        existing["compact_count"] = max(0, int(compact_count))
+    if missed_acks is not None:
+        existing["missed_acks"] = max(0, int(missed_acks))
     existing["last_seen"] = _now()
     saved = save_registry(registry, registry_path)
     return {"ok": True, "path": str(saved), "agent": existing}
@@ -283,6 +300,94 @@ def remove_agent(role: str, *, mesh: str = DEFAULT_MESH, registry_path: str | Pa
     return {"ok": len(registry["agents"]) != before, "path": str(saved), "removed": before - len(registry["agents"])}
 
 
+def evaluate_sharpness(agent: dict[str, Any], *, now: float | None = None) -> dict[str, Any]:
+    """Compute a practical drift/sharpness risk from registry-visible signals."""
+    current = _now() if now is None else now
+    created_at = float(agent.get("created_at", current))
+    last_seen = float(agent.get("last_seen", created_at))
+    age_seconds = max(0.0, current - created_at)
+    heartbeat_age_seconds = max(0.0, current - last_seen)
+    status = str(agent.get("status", "")).lower()
+    token_estimate = agent.get("token_estimate")
+    compact_count = int(agent.get("compact_count") or 0)
+    missed_acks = int(agent.get("missed_acks") or 0)
+
+    score = 0
+    reasons: list[str] = []
+    if age_seconds >= VERY_OLD_SESSION_SECONDS:
+        score += 3
+        reasons.append("session_age>=4h")
+    elif age_seconds >= OLD_SESSION_SECONDS:
+        score += 1
+        reasons.append("session_age>=2h")
+
+    if heartbeat_age_seconds >= STALE_HEARTBEAT_SECONDS:
+        score += 2
+        reasons.append("heartbeat_stale>=15m")
+
+    if status in {"off_rails", "blocked", "stuck"}:
+        score += 4
+        reasons.append(f"status={status}")
+    elif status in {"degraded", "compacting"}:
+        score += 2
+        reasons.append(f"status={status}")
+
+    if compact_count >= 2:
+        score += 2
+        reasons.append("compact_count>=2")
+    elif compact_count == 1:
+        score += 1
+        reasons.append("compact_count=1")
+
+    if missed_acks >= 2:
+        score += 3
+        reasons.append("missed_acks>=2")
+    elif missed_acks == 1:
+        score += 1
+        reasons.append("missed_acks=1")
+
+    if token_estimate is not None:
+        tokens = int(token_estimate)
+        if tokens >= VERY_HIGH_TOKEN_ESTIMATE:
+            score += 3
+            reasons.append("tokens>=180k")
+        elif tokens >= HIGH_TOKEN_ESTIMATE:
+            score += 1
+            reasons.append("tokens>=120k")
+
+    if score >= 5:
+        risk = "red"
+        action = "compact_or_replace"
+    elif score >= 2:
+        risk = "yellow"
+        action = "checkpoint_and_probe"
+    else:
+        risk = "green"
+        action = "continue"
+
+    return {
+        "role": agent.get("role", ""),
+        "birth_id": agent.get("birth_id", ""),
+        "status": agent.get("status", ""),
+        "age_seconds": round(age_seconds, 3),
+        "heartbeat_age_seconds": round(heartbeat_age_seconds, 3),
+        "token_estimate": token_estimate,
+        "compact_count": compact_count,
+        "missed_acks": missed_acks,
+        "risk": risk,
+        "score": score,
+        "action": action,
+        "reasons": reasons,
+    }
+
+
+def health_report(registry: dict[str, Any], *, now: float | None = None) -> dict[str, Any]:
+    current = _now() if now is None else now
+    items = [evaluate_sharpness(agent, now=current) for agent in registry.get("agents", [])]
+    counts = {risk: sum(1 for item in items if item["risk"] == risk) for risk in ("green", "yellow", "red")}
+    return {"generated_at": current, "counts": counts, "agents": items}
+
+
 def _print_json(data: Any) -> int:
     print(json.dumps(data, indent=2, sort_keys=True, ensure_ascii=True))
     return 0
@@ -299,6 +404,29 @@ def _print_agents(registry: dict[str, Any]) -> int:
             f"{agent.get('agent', ''):<8} {agent.get('profile', DEFAULT_PROFILE):<8} "
             f"{agent.get('status', ''):<10} "
             f"{int(agent.get('hwnd', 0)):>12}  {agent.get('task', '')[:40]}"
+        )
+    return 0
+
+
+def _minutes(seconds: float) -> str:
+    return f"{seconds / 60:.0f}m"
+
+
+def _print_health(report: dict[str, Any]) -> int:
+    print(
+        f"{'role':<18} {'risk':<6} {'age':>6} {'idle':>6} "
+        f"{'tokens':>9} {'comp':>5} {'miss':>5} action"
+    )
+    print("-" * 86)
+    for item in report.get("agents", []):
+        tokens = item.get("token_estimate")
+        token_text = "unknown" if tokens is None else str(tokens)
+        print(
+            f"{item.get('role', ''):<18} {item.get('risk', ''):<6} "
+            f"{_minutes(float(item.get('age_seconds', 0))):>6} "
+            f"{_minutes(float(item.get('heartbeat_age_seconds', 0))):>6} "
+            f"{token_text:>9} {int(item.get('compact_count', 0)):>5} "
+            f"{int(item.get('missed_acks', 0)):>5} {item.get('action', '')}"
         )
     return 0
 
@@ -340,10 +468,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--status", default=None)
     p.add_argument("--profile", choices=sorted(VALID_PROFILES), default=None)
     p.add_argument("--notes", default=None)
+    p.add_argument("--tokens", type=int, default=None, help="manual token estimate for drift tracking")
+    p.add_argument("--compact-count", type=int, default=None)
+    p.add_argument("--missed-acks", type=int, default=None)
 
     p = sub.add_parser("heartbeat")
     p.add_argument("--role", required=True)
     p.add_argument("--mesh", default=DEFAULT_MESH)
+
+    p = sub.add_parser("health")
+    p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("remove")
     p.add_argument("--role", required=True)
@@ -382,9 +516,23 @@ def main(argv: list[str] | None = None) -> int:
             allow_non_terminal=args.allow_non_terminal,
         ))
     if args.command == "update":
-        return _print_json(update_agent(args.role, mesh=args.mesh, task=args.task, status=args.status, profile=args.profile, notes=args.notes, registry_path=registry_path))
+        return _print_json(update_agent(
+            args.role,
+            mesh=args.mesh,
+            task=args.task,
+            status=args.status,
+            profile=args.profile,
+            notes=args.notes,
+            token_estimate=args.tokens,
+            compact_count=args.compact_count,
+            missed_acks=args.missed_acks,
+            registry_path=registry_path,
+        ))
     if args.command == "heartbeat":
         return _print_json(heartbeat(args.role, mesh=args.mesh, registry_path=registry_path))
+    if args.command == "health":
+        report = health_report(load_registry(registry_path))
+        return _print_json(report) if args.json else _print_health(report)
     if args.command == "remove":
         return _print_json(remove_agent(args.role, mesh=args.mesh, registry_path=registry_path))
     parser.error(f"unknown command: {args.command}")
