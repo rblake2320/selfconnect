@@ -49,6 +49,34 @@ Ollama local JSON action
 This is the stronger local proof: the model did not only generate text, it chose
 an allowed action that was executed locally after validation.
 
+## Visible Local Demo
+
+PASS: the same action-agent flow was rerun with visible throwaway terminals left
+open for human inspection.
+
+Visible windows from the run:
+
+```text
+LOCAL-OLLAMA-1_VISIBLE_2DD47334
+SC_VISIBLE_RECEIVER_2DD47334
+```
+
+Artifact:
+
+```text
+experiments/win32_probe/results/local_model_visible_action_2DD47334.json
+```
+
+Probe:
+
+```powershell
+python experiments\win32_probe\local_model_visible_action_demo.py --model gemma3:latest
+```
+
+The actor terminal prints the raw local model JSON, the validated tool action,
+the guarded SelfConnect send result, and a PASS line. The receiver terminal
+prints the delivered packet.
+
 ## Mixed Claude Responder Result
 
 PARTIAL/BLOCKED: a local Ollama model produced a valid two-step plan to spawn a
