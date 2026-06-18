@@ -10,9 +10,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import subprocess
 import tempfile
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +40,14 @@ def default_registry_path() -> Path:
     return Path(local) / "SelfConnect" / "mesh_registry.json"
 
 
+def default_handoff_dir() -> Path:
+    root = os.environ.get("SELFCONNECT_HANDOFF_DIR")
+    if root:
+        return Path(root)
+    local = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+    return Path(local) / "SelfConnect" / "handoffs"
+
+
 def _now() -> float:
     return time.time()
 
@@ -45,6 +56,11 @@ def _birth_id(role: str) -> str:
     clean = "".join(ch.lower() if ch.isalnum() else "-" for ch in role.strip()).strip("-")
     clean = clean or "agent"
     return f"{clean}-{uuid.uuid4().hex[:8]}"
+
+
+def _slug(value: str) -> str:
+    clean = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip("-")
+    return clean.lower() or "agent"
 
 
 def _window_fingerprint(*, hwnd: int, pid: int, class_name: str, title: str) -> str:
@@ -388,6 +404,155 @@ def health_report(registry: dict[str, Any], *, now: float | None = None) -> dict
     return {"generated_at": current, "counts": counts, "agents": items}
 
 
+def _git_value(repo_path: Path, *args: str) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_path), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def repo_snapshot(repo_path: str | Path | None = None) -> dict[str, Any]:
+    path = Path(repo_path or Path.cwd()).resolve()
+    branch = _git_value(path, "rev-parse", "--abbrev-ref", "HEAD")
+    commit = _git_value(path, "rev-parse", "--short", "HEAD")
+    status = _git_value(path, "status", "--short", "--branch")
+    return {
+        "path": str(path),
+        "is_git": bool(branch and commit),
+        "branch": branch,
+        "commit": commit,
+        "status": status,
+        "dirty": bool("\n" in status or (status and not status.startswith("## "))),
+    }
+
+
+def _format_agent_line(agent: dict[str, Any], health: dict[str, Any]) -> str:
+    return (
+        f"- {agent.get('role', '')}: birth={agent.get('birth_id', '')} "
+        f"status={agent.get('status', '')} risk={health.get('risk', '')} "
+        f"hwnd={agent.get('hwnd', '')} task={agent.get('task', '')}"
+    )
+
+
+def write_compact_handoff(
+    role: str,
+    *,
+    mesh: str = DEFAULT_MESH,
+    summary: str = "",
+    next_action: str = "",
+    tests: str = "",
+    repo_path: str | Path | None = None,
+    handoff_dir: str | Path | None = None,
+    status: str = "handoff",
+    registry_path: str | Path | None = None,
+) -> dict[str, Any]:
+    registry = load_registry(registry_path)
+    existing = _find_agent(registry, mesh, role)
+    if not existing:
+        return {"ok": False, "error": "role not registered"}
+
+    current = _now()
+    health = evaluate_sharpness(existing, now=current)
+    snapshot = repo_snapshot(repo_path)
+    handoffs = Path(handoff_dir) if handoff_dir else default_handoff_dir()
+    handoffs.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.fromtimestamp(current).strftime("%Y%m%d-%H%M%S")
+    filename = f"{stamp}-{_slug(role)}-{_slug(str(existing.get('birth_id', '')))}.md"
+    path = handoffs / filename
+
+    all_health = {item["role"]: item for item in health_report(registry, now=current)["agents"]}
+    peer_lines = [
+        _format_agent_line(agent, all_health.get(str(agent.get("role", "")), {}))
+        for agent in registry.get("agents", [])
+    ]
+    content = "\n".join([
+        f"# SelfConnect Compact Handoff - {role}",
+        "",
+        f"- generated_at: {datetime.fromtimestamp(current).isoformat(timespec='seconds')}",
+        f"- mesh: {mesh}",
+        f"- role: {existing.get('role', '')}",
+        f"- birth_id: {existing.get('birth_id', '')}",
+        f"- generation: {existing.get('generation', '')}",
+        f"- agent: {existing.get('agent', '')}",
+        f"- profile: {existing.get('profile', '')}",
+        f"- status: {existing.get('status', '')}",
+        f"- health_risk: {health.get('risk', '')}",
+        f"- health_action: {health.get('action', '')}",
+        f"- hwnd: {existing.get('hwnd', '')}",
+        f"- pid: {existing.get('pid', '')}",
+        f"- class: {existing.get('class_name', '')}",
+        f"- title: {existing.get('title', '')}",
+        "",
+        "## Current Task",
+        str(existing.get("task", "")),
+        "",
+        "## Summary",
+        summary or "No summary provided.",
+        "",
+        "## Next Action",
+        next_action or "No next action provided.",
+        "",
+        "## Tests / Validation",
+        tests or "Not reported.",
+        "",
+        "## Repo Snapshot",
+        f"- path: {snapshot['path']}",
+        f"- is_git: {snapshot['is_git']}",
+        f"- branch: {snapshot['branch']}",
+        f"- commit: {snapshot['commit']}",
+        f"- dirty: {snapshot['dirty']}",
+        "",
+        "```text",
+        snapshot["status"],
+        "```",
+        "",
+        "## Mesh Snapshot",
+        *peer_lines,
+        "",
+    ])
+    path.write_text(content, encoding="utf-8")
+
+    existing["last_handoff_path"] = str(path)
+    existing["last_handoff_at"] = current
+    existing["compact_count"] = int(existing.get("compact_count") or 0) + 1
+    existing["last_seen"] = current
+    if status:
+        existing["status"] = status
+    saved = save_registry(registry, registry_path)
+    return {"ok": True, "path": str(path), "registry_path": str(saved), "agent": existing, "health": health, "repo": snapshot}
+
+
+def watch_report(registry: dict[str, Any], *, now: float | None = None) -> dict[str, Any]:
+    current = _now() if now is None else now
+    health_items = {item["role"]: item for item in health_report(registry, now=current)["agents"]}
+    rows: list[dict[str, Any]] = []
+    for agent in registry.get("agents", []):
+        health = health_items.get(str(agent.get("role", "")), {})
+        rows.append({
+            "role": agent.get("role", ""),
+            "birth_id": agent.get("birth_id", ""),
+            "agent": agent.get("agent", ""),
+            "profile": agent.get("profile", DEFAULT_PROFILE),
+            "status": agent.get("status", ""),
+            "risk": health.get("risk", ""),
+            "age_seconds": health.get("age_seconds", 0),
+            "heartbeat_age_seconds": health.get("heartbeat_age_seconds", 0),
+            "hwnd": agent.get("hwnd", 0),
+            "task": agent.get("task", ""),
+            "action": health.get("action", ""),
+        })
+    return {"generated_at": current, "agents": rows}
+
+
 def _print_json(data: Any) -> int:
     print(json.dumps(data, indent=2, sort_keys=True, ensure_ascii=True))
     return 0
@@ -427,6 +592,24 @@ def _print_health(report: dict[str, Any]) -> int:
             f"{_minutes(float(item.get('heartbeat_age_seconds', 0))):>6} "
             f"{token_text:>9} {int(item.get('compact_count', 0)):>5} "
             f"{int(item.get('missed_acks', 0)):>5} {item.get('action', '')}"
+        )
+    return 0
+
+
+def _print_watch(report: dict[str, Any]) -> int:
+    print(
+        f"{'role':<18} {'birth':<14} {'agent':<8} {'risk':<6} {'status':<10} "
+        f"{'age':>6} {'idle':>6} {'hwnd':>12}  task"
+    )
+    print("-" * 122)
+    for item in report.get("agents", []):
+        print(
+            f"{item.get('role', ''):<18} {str(item.get('birth_id', ''))[:14]:<14} "
+            f"{item.get('agent', ''):<8} {item.get('risk', ''):<6} "
+            f"{item.get('status', ''):<10} "
+            f"{_minutes(float(item.get('age_seconds', 0))):>6} "
+            f"{_minutes(float(item.get('heartbeat_age_seconds', 0))):>6} "
+            f"{int(item.get('hwnd', 0)):>12}  {str(item.get('task', ''))[:44]}"
         )
     return 0
 
@@ -478,6 +661,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("health")
     p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("watch")
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("handoff")
+    p.add_argument("--role", required=True)
+    p.add_argument("--mesh", default=DEFAULT_MESH)
+    p.add_argument("--summary", default="")
+    p.add_argument("--next", dest="next_action", default="")
+    p.add_argument("--tests", default="")
+    p.add_argument("--repo", default="")
+    p.add_argument("--handoff-dir", default="")
+    p.add_argument("--status", default="handoff")
 
     p = sub.add_parser("remove")
     p.add_argument("--role", required=True)
@@ -533,6 +729,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "health":
         report = health_report(load_registry(registry_path))
         return _print_json(report) if args.json else _print_health(report)
+    if args.command == "watch":
+        report = watch_report(load_registry(registry_path))
+        return _print_json(report) if args.json else _print_watch(report)
+    if args.command == "handoff":
+        return _print_json(write_compact_handoff(
+            args.role,
+            mesh=args.mesh,
+            summary=args.summary,
+            next_action=args.next_action,
+            tests=args.tests,
+            repo_path=args.repo or None,
+            handoff_dir=args.handoff_dir or None,
+            status=args.status,
+            registry_path=registry_path,
+        ))
     if args.command == "remove":
         return _print_json(remove_agent(args.role, mesh=args.mesh, registry_path=registry_path))
     parser.error(f"unknown command: {args.command}")

@@ -277,6 +277,73 @@ def test_mesh_registry_health_report_keeps_fresh_agent_green():
     assert item["action"] == "continue"
 
 
+def test_mesh_registry_writes_compact_handoff(monkeypatch):
+    fake = _FakeSelfConnect()
+    monkeypatch.setattr(sc_cli, "_load_sc", lambda: fake)
+    monkeypatch.setattr(sc_cli, "_window_valid_visible", lambda hwnd: (True, True))
+    temp_dir = tempfile.TemporaryDirectory()
+    path = Path(temp_dir.name) / "mesh.json"
+    handoff_dir = Path(temp_dir.name) / "handoffs"
+
+    try:
+        registered = sc_mesh_registry.register_agent(
+            _FakeWindow.hwnd,
+            "codex-1",
+            task="build compact handoff",
+            registry_path=path,
+            expected_class=_FakeWindow.class_name,
+        )
+        assert registered["ok"] is True
+
+        result = sc_mesh_registry.write_compact_handoff(
+            "codex-1",
+            summary="summary body",
+            next_action="next body",
+            tests="tests body",
+            repo_path=temp_dir.name,
+            handoff_dir=handoff_dir,
+            registry_path=path,
+        )
+        assert result["ok"] is True
+        handoff = Path(result["path"])
+        assert handoff.exists()
+        text = handoff.read_text(encoding="utf-8")
+        assert "# SelfConnect Compact Handoff - codex-1" in text
+        assert "summary body" in text
+        assert "next body" in text
+        assert "tests body" in text
+        assert result["agent"]["compact_count"] == 1
+        assert result["agent"]["last_handoff_path"] == str(handoff)
+        assert result["agent"]["status"] == "handoff"
+    finally:
+        temp_dir.cleanup()
+
+
+def test_mesh_registry_watch_report_includes_task_and_risk():
+    now = 10_000.0
+    registry = {
+        "agents": [
+            {
+                "role": "codex-1",
+                "birth_id": "codex-1-test",
+                "agent": "codex",
+                "profile": "explore",
+                "status": "active",
+                "created_at": now - 60,
+                "last_seen": now - 10,
+                "hwnd": 123,
+                "task": "current task",
+            }
+        ]
+    }
+
+    report = sc_mesh_registry.watch_report(registry, now=now)
+    row = report["agents"][0]
+    assert row["role"] == "codex-1"
+    assert row["risk"] == "green"
+    assert row["task"] == "current task"
+
+
 def test_print_json_escapes_unicode_for_windows_console(capsys):
     assert sc_cli._print_json({"title": "agent ✳"}) == 0
     out = capsys.readouterr().out

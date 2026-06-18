@@ -74,6 +74,7 @@ sharp enough for complex work:
 ```powershell
 python -m sc_mesh_registry update --role claude-1 --tokens 125000 --compact-count 1 --missed-acks 0
 python -m sc_mesh_registry health
+python -m sc_mesh_registry watch
 ```
 
 Token count is manual/estimated unless the agent UI exposes it. Do not make up a
@@ -90,6 +91,31 @@ Bands:
 Do not assign red agents patent, security, release, or cross-agent coordination
 work unless no fresh agent is available. Use red agents for read-only context and
 handoff.
+
+## Compact Handoff Command
+
+Before compaction, replacement, or a difficult task handoff, write a standard
+handoff artifact:
+
+```powershell
+python -m sc_mesh_registry handoff --role claude-1 --summary "what changed" --next "what the next agent should do" --tests "validation already run"
+```
+
+The handoff is written under:
+
+```text
+C:\Users\techai\AppData\Local\SelfConnect\handoffs\
+```
+
+The command also updates the registry with `last_handoff_path`,
+`last_handoff_at`, increments `compact_count`, and sets the role status to
+`handoff` unless a different `--status` is provided.
+
+Use `watch` for the operator view:
+
+```powershell
+python -m sc_mesh_registry watch
+```
 
 ## Replacement Procedure
 
