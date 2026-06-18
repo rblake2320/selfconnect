@@ -53,9 +53,59 @@ Current live check:
   this Windows session.
 - `/messages/poll/cc-spark2` and `/messages/poll/windows-a` returned empty
   inboxes.
+- SSH to Spark-1 succeeded:
+  `ssh rblake2320@192.168.12.132` -> host `spark-3cdf`,
+  `~/ai-business` present.
+- SSH to Spark-2 succeeded through Spark-1:
+  `ssh -J rblake2320@192.168.12.132 rblake2320@10.0.0.2` -> host
+  `spark-3173`, `~/ai-business` present.
 
-Interpretation: Spark-1's hub process is reachable, but Spark-2 and live hub
-agents were not online through the checked route at this time.
+Interpretation: both Spark machines are reachable by SSH. Spark-1's hub process
+is reachable, but live hub agents were not online through the checked hub route
+at this time.
+
+## Live Spark File Locations
+
+Both Spark machines contain local evidence under `~/ai-business`.
+
+Spark-1 (`spark-3cdf`) notable files:
+
+- `patent-evidence/INDEX.md`
+- `patent-evidence/COMPLETE_PATENT_EVIDENCE_WITH_MILESTONES.md`
+- `patents/AI_ARMY_AUTONOMOUS_COMMUNICATION_SYSTEM.md`
+- `PATENTS.md`
+- `DEFINITIVE_NLF_LEARNING_PROOF.md`
+- `learning_loop/LEARNINGS_DGX_SPARK.md`
+- `patents/PATENT_21_PROVENANCE_CHAIN.md`
+- `patents/PATENT_22_TEACHER_STUDENT_LEARNING.md`
+
+Spark-2 (`spark-3173`) notable files:
+
+- `patent-evidence/INDEX.md`
+- `patent-evidence/COMPLETE_PATENT_EVIDENCE_WITH_MILESTONES.md`
+- `patent-evidence/AI_ARMY_COLLABORATION_LOG.md`
+- `patents/AI_ARMY_AUTONOMOUS_COMMUNICATION_SYSTEM.md`
+- `PATENTS.md`
+- `SESSION_HANDOFF_CURRENT.md`
+- `TEACHER_STUDENT_SESSION_STATE.json`
+- `DEFINITIVE_NLF_LEARNING_PROOF.md`
+
+The live Spark heading scan showed:
+
+- `COMPLETE_PATENT_EVIDENCE_WITH_MILESTONES.md` covers 14 achieved milestones
+  from December 27-28, 2025, including AI coordination, autonomous self-control,
+  AI-to-AI troubleshooting, 25+ patent innovations, and timeline summary for
+  patent counsel.
+- `AI_ARMY_AUTONOMOUS_COMMUNICATION_SYSTEM.md` covers problems and solutions for
+  auto-reply, session identity, approval bottlenecks, network fragmentation,
+  file chat, hub server API, responder daemon, session registration, and network
+  resilience.
+- `AI_ARMY_COLLABORATION_LOG.md` on Spark-2 covers January 8, 2026 active
+  collaboration, request-response coordination, handoff protocol, new-member
+  onboarding, and status broadcasting.
+- `PATENTS.md` on both machines mirrors the AI Army patent portfolio and
+  includes core utility claims, teacher-student NLF, DMS, NLF+DMS, AWS evidence,
+  DynamoDB records, local evidence on both Sparks, and reproduction instructions.
 
 ## December 2025 AI-to-AI Milestones
 
