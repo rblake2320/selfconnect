@@ -5,7 +5,8 @@ This proves a stronger loop than generation:
 - it chooses a constrained JSON tool plan;
 - the harness applies only a whitelisted sandbox file edit;
 - tests are rerun locally;
-- after PASS, a short status packet is sent to codex-1 through SelfConnect.
+- after PASS, a durable outbox record is written and a short visual status
+  packet is sent to codex-1 through SelfConnect.
 
 No repo source files are edited by the local model. The repair happens in a
 temporary sandbox so the visible proof cannot damage the working tree.
@@ -37,6 +38,10 @@ sc_mesh_registry = __import__("sc_mesh_registry")
 
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _default_outbox_path() -> Path:
+    return Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "SelfConnect" / "local_model_outbox.jsonl"
 
 
 def _find_role(role: str, mesh: str = "default") -> dict[str, Any]:
@@ -84,6 +89,7 @@ def _write_actor_script(
     nonce: str,
     sandbox: Path,
     artifact_path: Path,
+    outbox_path: Path,
     codex: dict[str, Any],
 ) -> None:
     path.write_text(
@@ -104,6 +110,7 @@ def _write_actor_script(
             f"NONCE = {nonce!r}",
             f"SANDBOX = Path({str(sandbox)!r})",
             f"ARTIFACT_PATH = Path({str(artifact_path)!r})",
+            f"OUTBOX_PATH = Path({str(outbox_path)!r})",
             f"CODEX = json.loads({json.dumps(codex, sort_keys=True)!r})",
             "",
             "def emit(label, value=''):",
@@ -216,8 +223,22 @@ def _write_actor_script(
             "    emit('final_output', (second.stdout + second.stderr).replace('\\n', ' | ')[:700])",
             "    if second.returncode != 0:",
             "        raise RuntimeError('test still failing')",
-            "    emit('[7/7] sending status packet to codex-1 through SelfConnect')",
+            "    emit('[7/7] writing durable local-model outbox and visual Codex status')",
             "    status = f'[LOCAL-OLLAMA-1 -> CODEX-1] sandbox repair PASS nonce={NONCE} message={notify_message}'",
+            "    OUTBOX_PATH.parent.mkdir(parents=True, exist_ok=True)",
+            "    outbox_record = {",
+            "        'from': 'LOCAL-OLLAMA-1',",
+            "        'to': 'codex-1',",
+            "        'nonce': NONCE,",
+            "        'type': 'sandbox_repair_status',",
+            "        'message': notify_message,",
+            "        'initial_failed': True,",
+            "        'final_passed': True,",
+            "        'timestamp': time.time(),",
+            "    }",
+            "    with OUTBOX_PATH.open('a', encoding='utf-8') as fh:",
+            "        fh.write(json.dumps(outbox_record, sort_keys=True) + '\\n')",
+            "    emit('outbox_record', str(OUTBOX_PATH))",
             "    send_result = sc_cli.send_text_to_window(",
             "        int(CODEX['hwnd']),",
             "        status,",
@@ -232,8 +253,16 @@ def _write_actor_script(
             "    emit('send_to_codex', json.dumps(send_result, sort_keys=True))",
             "    if not send_result.get('ok'):",
             "        raise RuntimeError(f'send to codex failed: {send_result}')",
-            "    artifact.update({'verdict': 'PASS', 'initial_failed': first.returncode != 0, 'final_passed': True, 'send_to_codex_ok': True})",
-            "    emit('PASS', 'local model fixed sandbox bug, test passed, codex notified')",
+            "    artifact.update({",
+            "        'verdict': 'PASS',",
+            "        'initial_failed': first.returncode != 0,",
+            "        'final_passed': True,",
+            "        'outbox_written': True,",
+            "        'outbox_path': str(OUTBOX_PATH),",
+            "        'send_to_codex_window_ok': True,",
+            "        'codex_status_scope': 'visual delivery to Codex input/queue only; durable handoff is the outbox record',",
+            "    })",
+            "    emit('PASS', 'local model fixed sandbox bug, test passed, outbox written, visual Codex status sent')",
             "except Exception as exc:",
             "    artifact['failure'] = str(exc)",
             "    emit('FAIL', str(exc))",
@@ -293,6 +322,7 @@ def run_demo(
     out_dir = results_dir or Path("experiments/win32_probe/results")
     out_dir.mkdir(parents=True, exist_ok=True)
     artifact_path = out_dir / f"local_model_visible_repair_{suffix}.json"
+    outbox_path = _default_outbox_path()
     actor_script = temp_dir / "actor.py"
     _write_actor_script(
         actor_script,
@@ -300,6 +330,7 @@ def run_demo(
         nonce=nonce,
         sandbox=sandbox,
         artifact_path=artifact_path,
+        outbox_path=outbox_path,
         codex={
             "hwnd": int(codex["hwnd"]),
             "pid": int(codex["pid"]),
@@ -351,9 +382,10 @@ def run_demo(
             "title_hash": _sha256(str(codex.get("title", ""))),
         },
         "sandbox_hash": _sha256((sandbox / "buggy_math.py").read_text(encoding="utf-8")),
+        "outbox_path": str(outbox_path),
         "artifact_path": str(artifact_path),
         "windows_left_open": not close_after,
-        "control_path": "visible local model repair plan -> sandbox edit -> local unittest -> guarded SelfConnect status to codex-1",
+        "control_path": "visible local model repair plan -> sandbox edit -> local unittest -> durable outbox -> guarded visual SelfConnect status to codex-1",
     }
     if artifact_path.exists():
         artifact_path.write_text(json.dumps({**artifact, **summary}, indent=2, sort_keys=True), encoding="utf-8")

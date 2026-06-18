@@ -81,8 +81,12 @@ prints the delivered packet.
 
 PASS: the local model was given a tiny broken Python task in a temporary sandbox,
 selected a constrained repair action, the harness applied the sandbox-only edit,
-the local unittest suite moved from fail to pass, and the model's status was sent
-to `codex-1` through guarded SelfConnect transport.
+and the local unittest suite moved from fail to pass.
+
+The demo also sent a visual status line to `codex-1` through guarded
+SelfConnect transport. In an active Codex session this can land in the input
+queue rather than being consumed immediately, so it is evidence of delivery to
+the Codex terminal surface, not a completed Codex ACK.
 
 Visible actor window:
 
@@ -126,7 +130,15 @@ The local model returned this repair plan shape:
 ```
 
 The edit was constrained to a temp sandbox, not repo source. The status packet to
-Codex was a one-line message, not a command.
+Codex was a one-line message, not a command. Durable local-model coordination
+should use an outbox/inbox or named-pipe control plane, with visual sends used
+only as human-observable status.
+
+Wrapper design:
+
+```text
+docs/LOCAL_MODEL_SMART_WRAPPER.md
+```
 
 ## Mixed Claude Responder Result
 

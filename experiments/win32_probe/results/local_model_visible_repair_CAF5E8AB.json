@@ -21,6 +21,7 @@
   "redacted": true,
   "sandbox_hash": "b414e3e8a1cc84d091471727544c353f60db59fc2bea10ee562ece77410915be",
   "send_to_codex_ok": true,
+  "codex_status_scope": "visual delivery to Codex input/queue only; not a consumed ACK",
   "verdict": "PASS",
   "windows_left_open": true
 }
