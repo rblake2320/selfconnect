@@ -1,0 +1,22 @@
+{
+  "control_path": "Ollama local generate -> SelfConnect Win32 send_text_to_window -> throwaway terminal stdin -> receiver log verification",
+  "elapsed_ms": 2711.4,
+  "failure": "",
+  "model": "hermes3:3b",
+  "nonce": "SC_LOCAL_MODEL_BB728109",
+  "observed_nonce": true,
+  "ollama_response_hash": "53a07b2345055aa96d5b52da93ea3f9b966783d5a62515bf1740e48eb3c2ff77",
+  "packet_hash": "0ea4275af6855b1425d5f332ecd789c4b852dea7294eccccb05bbc25a4c9dbdf",
+  "readback_method": "uia_text",
+  "receiver": {
+    "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+    "hwnd": 1777276248,
+    "pid": 16680,
+    "process_pid": 61052,
+    "title_hash": "65d76344fc9120d2c0cd7684f7e37cf597bc56e24e11a2acba2c7c989218e8f5"
+  },
+  "receiver_log_hash": "bc96c97343a2c34f6a0158ab1627c3bf19bc8a10840bee28bf521f9cd1dad82f",
+  "redacted": true,
+  "send_ok": true,
+  "verdict": "PASS"
+}
