@@ -55,6 +55,18 @@ These have been tested in this branch or recorded as committed probes:
   - named-pipe request bound to OS caller identity;
   - generation increments across migration;
   - stale generation/HWND UI fallback rejected.
+- Channel-router composition model proof:
+  - terminal surface routes to `WM_CHAR`;
+  - browser surface routes to UIA Value/Invoke;
+  - metadata route stays off visible terminal text;
+  - governed mode requires a lease;
+  - stale generation and wrong target class fail closed;
+  - echo-filtered readback is included in the proof record.
+- Channel-router composition live proof:
+  - throwaway terminal leg passed with `TextChanged_event`;
+  - isolated local browser leg passed with UIA-class input/readback;
+  - no MCP control path was used;
+  - stricter public-browser no-keyboard rerun remains untested.
 - Package commands and MCP adapter surface.
 - Local browser proof on Microsoft Edge:
   - isolated browser profile launched to `127.0.0.1`;

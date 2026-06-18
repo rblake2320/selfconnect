@@ -53,6 +53,15 @@ Expected artifacts:
 - `docs/CHANNEL_ROUTER_COMPOSITION_PROOF.md`
 - unit tests for routing decisions that do not require a live desktop.
 
+Status:
+
+- Deterministic model proof: DONE on `test/win32-hardening-v1`.
+- Redacted PASS artifact: DONE.
+- Live throwaway/local PASS artifact: DONE.
+- Unit tests: DONE.
+- Strict public-browser no-keyboard rerun: still open as a separate stronger
+  evidence step.
+
 ### 2. Strict No-MCP Browser Rerun
 
 The current browser/Gmail handoff proof has the right control boundary: no MCP

@@ -371,6 +371,7 @@ def test_pyproject_exports_package_adapter_entry_points():
     assert '"sc_echo_filter.py"' in text
     assert '"experiments/win32_probe/CAPABILITY_BACKLOG.md"' in text
     assert '"experiments/win32_probe/SERVICE_SID_DAEMON.md"' in text
+    assert '"experiments/win32_probe/channel_router_composition_probe.py"' in text
     assert '"experiments/win32_probe/chained_channel.py"' in text
     assert '"experiments/win32_probe/browser_local_proof.py"' in text
     assert '"experiments/win32_probe/etw_provider.py"' in text
@@ -378,10 +379,17 @@ def test_pyproject_exports_package_adapter_entry_points():
     assert '"experiments/win32_probe/service_sid_probe.py"' in text
     assert '"experiments/win32_probe/uia_echo_filter_probe.py"' in text
     assert '"experiments/win32_probe/results/browser_local_proof_PASS_redacted.json"' in text
+    assert '"experiments/win32_probe/results/channel_router_composition_LIVE_PASS_redacted.json"' in text
+    assert '"experiments/win32_probe/results/channel_router_composition_PASS_redacted.json"' in text
     assert '"experiments/win32_probe/results/pipe_role_lease_PASS_redacted.json"' in text
     assert '"experiments/win32_probe/results/uia_echo_filter_PASS_redacted.json"' in text
     assert '"docs/BROWSER_LOCAL_PROOF.md"' in text
+    assert '"docs/CHANNEL_ROUTER_COMPOSITION_PROOF.md"' in text
     assert '"docs/CLAIM_EVIDENCE_MATRIX.md"' in text
+    assert '"docs/LANCELOT_UAB_COMPETITIVE_DEFENSE.md"' in text
+    assert '"docs/AWS_AI_TO_AI_EVIDENCE_INDEX.md"' in text
+    assert '"docs/PATENT_DESIGN_AROUND_DEFENSE.md"' in text
+    assert '"docs/OPEN_DEFENSE_BUILD_TARGETS.md"' in text
     assert '"docs/PATENT_PRIOR_ART_SNAPSHOT.md"' in text
     assert '"docs/PIPE_ROLE_LEASE_PROOF.md"' in text
     assert '"docs/UIA_ECHO_FILTER_TERMCONTROL.md"' in text
