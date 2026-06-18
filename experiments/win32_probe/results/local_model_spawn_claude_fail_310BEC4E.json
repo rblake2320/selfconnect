@@ -1,0 +1,38 @@
+{
+  "airgap_scope": "Local model planning/action side is local after model download; Claude Code side is cloud-connected and not airgapped.",
+  "claude_reply_observed": false,
+  "claude_responder": {
+    "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+    "cmd_pid": 50684,
+    "hwnd": 109844142,
+    "pid": 16680,
+    "title_hash": "d633f8a2af0ef73b5aa995cba4d1b1b14f9d1324e88585709ccf12787a48514c"
+  },
+  "claude_tail_hash": "4a992f89d8654645775d050eb603fd30984e9ad3c71f13c77048eaf2aea16c03",
+  "control_path": "local model JSON plan -> spawn Claude Code responder workspace -> SelfConnect prompt -> Claude SelfConnect ACK -> receiver log verification",
+  "elapsed_ms": 256606.1,
+  "failure": "text not observed in receiver log: SC_LOCAL_CLAUDE_310BEC4E",
+  "observed_blocker": "Claude responder received the prompt and attempted the command path, but Claude Code auto-mode classifier denied sc_cli.py send into a Windows Terminal hwnd.",
+  "local_action_side": "Ollama localhost JSON plan -> spawn Claude responder -> SelfConnect send",
+  "model": "gemma3:latest",
+  "model_output_hash": "b677c37194dfdc9496d11815a4433609f5ada7d88871690bb027715d7ff3c971",
+  "nonce": "SC_LOCAL_CLAUDE_310BEC4E",
+  "plan_json_hash": "da0063b52d2af5f6374d8fb1c21c1a0a27edf10976924a5f45080201816512db",
+  "plan_validated": true,
+  "receiver": {
+    "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+    "hwnd": 803936974,
+    "pid": 16680,
+    "process_pid": 60968,
+    "title_hash": "5b36809544c6a01bbdbb18864538d57ecda85847fcdb7e5dcb4cc4bb6955f71f"
+  },
+  "receiver_log_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "redacted": true,
+  "reply_timeout_s": 240.0,
+  "send_to_claude_ok": true,
+  "steps_requested": [
+    "spawn_claude_responder",
+    "ask_claude_ack"
+  ],
+  "verdict": "FAIL"
+}

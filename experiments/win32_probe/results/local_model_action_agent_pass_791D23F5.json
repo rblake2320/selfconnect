@@ -1,0 +1,26 @@
+{
+  "action_json_hash": "8588f11fcb0a19cef08bd9518bce880e196e82b3d7f4623e83461313c0240e64",
+  "action_message_hash": "37a625b8daef131f95ada2edf8174bbb78e7265fb3b5d87d9d538a997a8bd7df",
+  "action_validated": true,
+  "airgap_scope": "No cloud/API/MCP/CDP/WebDriver/browser extension required for this probe; Ollama endpoint is localhost only.",
+  "control_path": "Ollama local action JSON -> validated tool action -> SelfConnect Win32 send_text_to_window -> throwaway receiver log verification",
+  "elapsed_ms": 9424.3,
+  "failure": "",
+  "model": "gemma3:latest",
+  "model_output_hash": "b4599046d7fe1b46c2f17f3923795b1b18aef68ab50adca2cde31ca4e6de5f14",
+  "nonce": "SC_LOCAL_ACTION_791D23F5",
+  "observed_nonce": true,
+  "readback_method": "uia_text",
+  "receiver": {
+    "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+    "hwnd": 44370106,
+    "pid": 16680,
+    "process_pid": 7724,
+    "title_hash": "88daec8815d543dd3f979403dda55f78ff32254ba2933b9bfb6728bba6da7b65"
+  },
+  "receiver_log_hash": "d30ad9f3c64bdc278093e2a10f3e20d670b411bedb44e64c31e46f2cb2474e14",
+  "redacted": true,
+  "send_ok": true,
+  "tool_requested": "selfconnect_send",
+  "verdict": "PASS"
+}
