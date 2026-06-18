@@ -1,0 +1,26 @@
+{
+  "actor": {
+    "cmd_pid": 39788,
+    "hwnd": 37886722,
+    "title": "LOCAL-OLLAMA-1_REPAIR_CAF5E8AB"
+  },
+  "artifact_path": "experiments\\win32_probe\\results\\local_model_visible_repair_CAF5E8AB.json",
+  "codex_target": {
+    "birth_id": "codex-1-627e9ae4",
+    "hwnd": 28443124,
+    "role": "codex-1",
+    "title_hash": "123b6138cfd4e42d8ecd8b5296b4367c98b27bc3d22c9af7e9c831df08adb9bb"
+  },
+  "control_path": "visible local model repair plan -> sandbox edit -> local unittest -> guarded SelfConnect status to codex-1",
+  "elapsed_ms": 15847.2,
+  "failure": "",
+  "final_passed": true,
+  "initial_failed": true,
+  "model": "gemma3:latest",
+  "nonce": "SC_LOCAL_REPAIR_CAF5E8AB",
+  "redacted": true,
+  "sandbox_hash": "b414e3e8a1cc84d091471727544c353f60db59fc2bea10ee562ece77410915be",
+  "send_to_codex_ok": true,
+  "verdict": "PASS",
+  "windows_left_open": true
+}

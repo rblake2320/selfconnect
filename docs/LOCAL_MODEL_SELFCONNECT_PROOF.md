@@ -77,6 +77,57 @@ The actor terminal prints the raw local model JSON, the validated tool action,
 the guarded SelfConnect send result, and a PASS line. The receiver terminal
 prints the delivered packet.
 
+## Visible Repair + Codex Status Demo
+
+PASS: the local model was given a tiny broken Python task in a temporary sandbox,
+selected a constrained repair action, the harness applied the sandbox-only edit,
+the local unittest suite moved from fail to pass, and the model's status was sent
+to `codex-1` through guarded SelfConnect transport.
+
+Visible actor window:
+
+```text
+LOCAL-OLLAMA-1_REPAIR_CAF5E8AB
+```
+
+Artifact:
+
+```text
+experiments/win32_probe/results/local_model_visible_repair_CAF5E8AB.json
+```
+
+Probe:
+
+```powershell
+python experiments\win32_probe\local_model_visible_repair_demo.py --model gemma3:latest --codex-role codex-1
+```
+
+The local model returned this repair plan shape:
+
+```json
+{
+  "steps": [
+    {
+      "tool": "replace_text",
+      "args": {
+        "file": "buggy_math.py",
+        "old": "return a - b",
+        "new": "return a + b"
+      }
+    },
+    {
+      "tool": "notify_codex",
+      "args": {
+        "message": "Fixed the addition logic in buggy_math.py using a + b. NONCE=..."
+      }
+    }
+  ]
+}
+```
+
+The edit was constrained to a temp sandbox, not repo source. The status packet to
+Codex was a one-line message, not a command.
+
 ## Mixed Claude Responder Result
 
 PARTIAL/BLOCKED: a local Ollama model produced a valid two-step plan to spawn a
