@@ -247,6 +247,95 @@ def register_agent(
     return {"ok": True, "path": str(saved), "agent": record}
 
 
+def register_virtual_agent(
+    role: str,
+    *,
+    mesh: str = DEFAULT_MESH,
+    agent_type: str = "local_model",
+    task: str = "",
+    status: str = "standby",
+    profile: str = DEFAULT_PROFILE,
+    label: str = "",
+    notes: str = "",
+    transport: str = "mailbox",
+    endpoint: str = "",
+    model: str = "",
+    replace: bool = False,
+    registry_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Register an addressable mesh participant that has no live HWND.
+
+    This is for durable local model roles and other non-window endpoints. It
+    deliberately does not grant input authority; it only gives the role a mesh
+    identity, birth_id, generation, and heartbeatable registry row.
+    """
+    if not role.strip():
+        return {"ok": False, "error": "role is required"}
+    try:
+        normalized_profile = _normalize_profile(profile)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    registry = load_registry(registry_path)
+    existing = _find_agent(registry, mesh, role)
+    if existing and not replace and str(existing.get("transport", "")) != transport:
+        return {
+            "ok": False,
+            "error": "role already registered with a different transport",
+            "existing": existing,
+            "hint": "use --replace or choose a unique role",
+        }
+
+    same_virtual = bool(existing and int(existing.get("hwnd", 0) or 0) == 0)
+    generation = (
+        int(existing.get("generation", 0))
+        if existing and same_virtual
+        else int(existing.get("generation", 0)) + 1
+        if existing
+        else 1
+    )
+    birth_id = str(existing.get("birth_id")) if existing and same_virtual else _birth_id(role)
+    created_at = float(existing.get("created_at", _now())) if existing and same_virtual else _now()
+    title = label or role
+    record = {
+        "mesh": mesh,
+        "role": role,
+        "agent": agent_type,
+        "label": title,
+        "birth_id": birth_id,
+        "generation": generation,
+        "created_at": created_at,
+        "hwnd": 0,
+        "pid": 0,
+        "exe_name": "",
+        "class_name": "virtual",
+        "title": title,
+        "window_fingerprint": _window_fingerprint(
+            hwnd=0,
+            pid=0,
+            class_name="virtual",
+            title=title,
+        ),
+        "task": task,
+        "status": status,
+        "profile": normalized_profile,
+        "notes": notes,
+        "session_id": None,
+        "is_terminal": False,
+        "transport": transport,
+        "endpoint": endpoint,
+        "model": model,
+        "last_seen": _now(),
+    }
+    if existing:
+        existing.update(record)
+    else:
+        registry["agents"].append(record)
+
+    saved = save_registry(registry, registry_path)
+    return {"ok": True, "path": str(saved), "agent": record}
+
+
 def update_agent(
     role: str,
     *,
@@ -291,6 +380,12 @@ def heartbeat(role: str, *, mesh: str = DEFAULT_MESH, registry_path: str | Path 
     existing = _find_agent(registry, mesh, role)
     if not existing:
         return {"ok": False, "error": "role not registered"}
+    if int(existing.get("hwnd", 0) or 0) == 0 or existing.get("class_name") == "virtual":
+        existing["last_seen"] = _now()
+        existing["guard_ok"] = None
+        existing["guard_reasons"] = []
+        saved = save_registry(registry, registry_path)
+        return {"ok": True, "path": str(saved), "agent": existing, "guard": None}
     guard = sc_cli.verify_target(
         int(existing["hwnd"]),
         expected_pid=int(existing["pid"]),

@@ -83,6 +83,7 @@ include = [
     "sc_mcp.py",
     "sc_mesh_registry.py",
     "sc_mesh_lease.py",
+    "sc_local_model_role.py",
     "sc_echo_filter.py",
     "sc_identity.py",
     "sc_firewall.py",
@@ -123,6 +124,7 @@ include = [
 selfconnect = "sc_cli:main"
 selfconnect-mcp = "sc_mcp:main"
 selfconnect-mesh = "sc_mesh_registry:main"
+selfconnect-local-model = "sc_local_model_role:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "test_self_connect.py"]
