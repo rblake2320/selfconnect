@@ -84,6 +84,40 @@ This proves a local model can send into a live mesh participant when the target
 guard passes. It is not a command-execution proof and should stay constrained to
 short coordination/status packets until a lease-gated local-model role is wired.
 
+## Durable Local Model Role
+
+PASS: `LOCAL-OLLAMA-1` now has a durable mailbox role that does not depend on a
+visible terminal staying open. The role is registered as a virtual mesh
+participant with `hwnd=0`, `class_name=virtual`, `transport=mailbox`, stable
+`birth_id`, generation, model, inbox, and outbox paths.
+
+CLI:
+
+```powershell
+selfconnect-local-model init --role local-ollama-1 --model gemma3:latest
+selfconnect-local-model inbox --role local-ollama-1 --from-role codex-1 --text "task text"
+selfconnect-local-model outbox --role local-ollama-1 --to-role codex-1 --text "ACK ..."
+selfconnect-local-model read --role local-ollama-1 --box inbox
+selfconnect-local-model status --role local-ollama-1
+```
+
+Module:
+
+```text
+sc_local_model_role.py
+```
+
+Tests:
+
+```text
+tests/test_local_model_role.py
+```
+
+This closes the one-shot demo gap: when a visible local-model terminal closes,
+the role remains addressable through its mailbox and mesh registry row. The
+mailbox is a coordination channel, not an authority grant. Actual actions still
+flow through the validator and guarded transport.
+
 ## Visible Local Demo
 
 PASS: the same action-agent flow was rerun with visible throwaway terminals left
