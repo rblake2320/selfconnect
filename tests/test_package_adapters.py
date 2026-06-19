@@ -538,6 +538,7 @@ def test_pyproject_exports_package_adapter_entry_points():
     assert '"docs/PIPE_ROLE_LEASE_PROOF.md"' in text
     assert '"docs/UIA_ECHO_FILTER_TERMCONTROL.md"' in text
     assert '"docs/PROVEN_VS_UNTESTED.md"' in text
+    assert '"docs/SELFCONNECT_PRODUCT_BOUNDARIES.md"' in text
     assert '"skills/selfconnect-win32/**"' in text
 
 

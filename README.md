@@ -1,7 +1,9 @@
 # SelfConnect SDK v0.10.4
 
 **OS-native bridge between AI agents and Windows desktop apps.**  
-PostMessage + PrintWindow. No browser. No accessibility layer. No API between agents.
+SelfConnect started with `PostMessage(WM_CHAR)` and `PrintWindow`; it now also
+uses target-guarded sends, UIA readback, echo filtering, mesh birth IDs, and
+optional governed adapters when the deployment needs them.
 
 ```python
 from self_connect import list_windows, send_string, save_capture
@@ -39,7 +41,12 @@ AI Agent A                         AI Agent B
     └─ PrintWindow(hwnd_A) <──────────  ┘  B reads A's screen
 ```
 
-Zero API calls between agents. Zero network traffic. Two functions from `user32.dll`.
+The core terminal path still needs no API between agents and no network traffic.
+Modern SelfConnect keeps that fast path, then adds optional adapters around it
+instead of forcing every user into the heaviest governance mode.
+
+For the current product boundary, read
+`docs/SELFCONNECT_PRODUCT_BOUNDARIES.md`.
 
 ---
 
@@ -136,6 +143,24 @@ The branch also carries a repo-local Codex skill at
 `skills/selfconnect-win32/` and the composed Win32 proof at
 `experiments/win32_probe/chained_channel.py`; both are included in the built
 wheel for traceability.
+
+---
+
+## Product Profiles
+
+SelfConnect has three operating profiles:
+
+- `explore`: normal personal use and capability testing. Fast by default, with
+  target verification still enabled so the wrong window does not get typed into.
+- `governed`: enterprise validation. The same capabilities can be wrapped with
+  leases, identity checks, service mode, ETW, audit, and MCP adapter policy.
+- government/high-assurance: fail-closed deployment posture with WORM, TPM/CNG,
+  job sandboxing, service SID, off-host evidence, and ATO documentation where
+  required.
+
+The design rule is: capabilities stay reusable; policy wrappers change by
+profile. Normal SelfConnect should not become hard to use just because the
+government lane exists.
 
 ---
 
@@ -361,8 +386,9 @@ Full export list and signatures: see `CLAUDE.md` → Key Files section.
 | `SendInput` from background | NO | Always goes to foreground |
 | Separate `PostMessage(WM_CHAR, 13)` for Enter | NO | Ignored by Windows Terminal |
 | `WM_KEYDOWN/WM_KEYUP` for VK_RETURN | NO | Ignored by Windows Terminal |
-| `PostMessage(WM_CHAR)` to Chrome_RenderWidgetHostHWND | YES | WebView2/Electron chat injection — requires UIA `set_focus()` first |
-| `SendInput` to WebView2 (OSR mode) | NO | Offscreen rendering blocks all external input |
+| `PostMessage(WM_CHAR)` to Chrome/Chromium browser surfaces | MIXED/NO | Current browser proof shows Chromium page surfaces need UIA Value/Invoke rather than terminal-style `WM_CHAR` |
+| UIA `ValuePattern` / `InvokePattern` to browser surfaces | YES | Proven for controlled browser UI/form actions without CDP/WebDriver/extension |
+| `SendInput` to WebView2/Chromium surfaces | MIXED/NO | Synthetic keyboard is unreliable; synthetic mouse can work in some cases |
 | Clipboard paste into WebView2 | NO | Claude Code subprocess is sandboxed from clipboard |
 | UIA `set_focus()` without Win32 foreground | YES | Transfers Blink focus internally — works behind lock screen |
 | UIA `invoke()` on WebView2 buttons | YES | Submits chat, dismisses popups — no click events needed |
@@ -389,23 +415,27 @@ All proved live in multi-session tests (see `proofs/` and `docs/`):
 
    Full chain: `Claude Code → Python Win32 UIA+WM_CHAR → Antigravity Electron → Gemini 3.1 Pro`
 
-8. **Browser automation — zero external dependencies** (Session 10) —
-   Full live test against Perplexity AI using only Win32 primitives. No Playwright,
-   no Selenium, no browser extension, no MCP, no WebDriver, no API calls.
-   CAPTCHA result: **100% correct** — `PIL.ImageGrab` as the only viable capture path
-   for GPU-composited browser windows.
+8. **Browser control boundary** —
+   Controlled browser proofs show that browser/Electron surfaces are not the
+   same as terminal surfaces. The reliable browser write path is UIA
+   `ValuePattern` / `InvokePattern`, not terminal-style `WM_CHAR`. SelfConnect
+   should detect protected checkpoints such as CAPTCHA and pause for human or
+   official test-flow handling; it should not be positioned as a CAPTCHA bypass
+   tool.
 
 ---
 
 ## Why This Is Novel
 
-Every existing AI-to-AI protocol (A2A, MCP, ACP, ANP, AutoGen, LangChain) requires:
+Most app-layer AI-to-AI protocols (A2A, MCP, ACP, ANP, AutoGen, LangChain) use:
 - An HTTP/WebSocket/JSON-RPC transport layer
 - An API key on at least one end
 - A broker or orchestrator
 
 SelfConnect uses `PostMessage(WM_CHAR)` → ConPTY input buffer → process stdin.  
-Transport = Win32 thread message queue. No API. No broker. No network.
+For the core terminal path, transport = Win32 thread message queue. No API,
+broker, or network is required for that actuation path. The broader ecosystem
+can still expose MCP, SSH, S3, or installer/governance adapters around the core.
 
 ---
 

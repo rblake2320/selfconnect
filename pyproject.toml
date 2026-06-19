@@ -117,6 +117,7 @@ include = [
     "docs/PIPE_ROLE_LEASE_PROOF.md",
     "docs/UIA_ECHO_FILTER_TERMCONTROL.md",
     "docs/PROVEN_VS_UNTESTED.md",
+    "docs/SELFCONNECT_PRODUCT_BOUNDARIES.md",
     "skills/selfconnect-win32/**",
 ]
 
