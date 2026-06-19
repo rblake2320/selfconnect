@@ -48,6 +48,7 @@ from typing import Any, Optional
 # Ed25519 via cryptography package (pip install cryptography)
 # ---------------------------------------------------------------------------
 try:
+    from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import (
         Ed25519PrivateKey,
         Ed25519PublicKey,
@@ -58,7 +59,6 @@ try:
         PrivateFormat,
         PublicFormat,
     )
-    from cryptography.exceptions import InvalidSignature
     _CRYPTO_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _CRYPTO_AVAILABLE = False
@@ -92,7 +92,7 @@ class AgentIdentity:
 
     def __init__(
         self,
-        private_key: "Ed25519PrivateKey",
+        private_key: Ed25519PrivateKey,
         label: str = "",
     ) -> None:
         if not _CRYPTO_AVAILABLE:
@@ -100,19 +100,19 @@ class AgentIdentity:
                 "pip install cryptography  to use AgentIdentity"
             )
         self._private_key = private_key
-        self._public_key: "Ed25519PublicKey" = private_key.public_key()
+        self._public_key: Ed25519PublicKey = private_key.public_key()
         self.label = label
         self._did: Optional[str] = None
 
     # ── construction ──────────────────────────────────────────────────────
 
     @classmethod
-    def generate(cls, label: str = "") -> "AgentIdentity":
+    def generate(cls, label: str = "") -> AgentIdentity:
         """Generate a fresh Ed25519 keypair."""
         return cls(Ed25519PrivateKey.generate(), label=label)
 
     @classmethod
-    def from_private_pem(cls, pem: bytes, label: str = "") -> "AgentIdentity":
+    def from_private_pem(cls, pem: bytes, label: str = "") -> AgentIdentity:
         """Deserialise from PEM-encoded private key bytes."""
         from cryptography.hazmat.primitives.serialization import load_pem_private_key
         key = load_pem_private_key(pem, password=None)
@@ -296,7 +296,7 @@ class DelegationToken:
         subject_did: str,
         scope: list[str],
         expires_in: float = 3600.0,
-    ) -> "DelegationToken":
+    ) -> DelegationToken:
         """
         Mint a new root DelegationToken signed by *issuer*.
 
@@ -342,7 +342,7 @@ class DelegationToken:
 
     # ── attenuation ───────────────────────────────────────────────────────
 
-    def attenuate(self, caveat: Caveat) -> "DelegationToken":
+    def attenuate(self, caveat: Caveat) -> DelegationToken:
         """
         Return a new token with *caveat* appended.
         The chain_mac is updated: new_mac = HMAC(old_mac, caveat.canonical()).
@@ -458,7 +458,7 @@ class DelegationToken:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "DelegationToken":
+    def from_dict(cls, d: dict) -> DelegationToken:
         if d.get("schema") != cls.SCHEMA:
             raise ValueError(f"Not a selfconnect delegation token (schema={d.get('schema')!r})")
         return cls(
@@ -478,7 +478,7 @@ class DelegationToken:
         return json.dumps(self.to_dict(), separators=(",", ":"))
 
     @classmethod
-    def from_json(cls, s: str) -> "DelegationToken":
+    def from_json(cls, s: str) -> DelegationToken:
         return cls.from_dict(json.loads(s))
 
     def __repr__(self) -> str:
