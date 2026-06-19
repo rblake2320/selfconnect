@@ -58,6 +58,21 @@ def test_ensure_role_is_stable_for_same_virtual_role() -> None:
     assert first["state"]["generation"] == second["state"]["generation"]
 
 
+def test_ensure_role_restores_identity_when_registry_is_lost() -> None:
+    root = _case_dir("registry_lost")
+    registry_path = root / "mesh_registry.json"
+
+    first = rolemod.ensure_role("local-ollama-1", root=root / "roles", registry_path=registry_path)
+    registry_path.unlink()
+    restored = rolemod.ensure_role("local-ollama-1", root=root / "roles", registry_path=registry_path)
+
+    assert restored["state"]["birth_id"] == first["state"]["birth_id"]
+    assert restored["state"]["generation"] == first["state"]["generation"]
+    registry = sc_mesh_registry.load_registry(registry_path)
+    [agent] = registry["agents"]
+    assert agent["birth_id"] == first["state"]["birth_id"]
+
+
 def test_write_inbox_and_outbox_are_durable_jsonl() -> None:
     root = _case_dir("mailbox")
     rolemod.ensure_role("local-ollama-1", root=root / "roles", registry_path=root / "mesh.json")
@@ -80,6 +95,8 @@ def test_write_inbox_and_outbox_are_durable_jsonl() -> None:
     assert inbound["ok"] is True
     assert outbound["ok"] is True
     assert inbound["message"]["text"] == "hello local model"
+    assert inbound["message"]["birth_id"]
+    assert inbound["message"]["generation"] == 1
     assert outbound["message"]["from"] == "local-ollama-1"
 
     inbox = rolemod.read_box("local-ollama-1", box="inbox", root=root / "roles")
@@ -89,6 +106,65 @@ def test_write_inbox_and_outbox_are_durable_jsonl() -> None:
 
     raw_line = Path(inbound["path"]).read_text(encoding="utf-8").splitlines()[0]
     assert json.loads(raw_line)["id"] == inbound["message"]["id"]
+
+
+def test_write_before_init_fails_closed() -> None:
+    root = _case_dir("write_before_init")
+
+    result = rolemod.write_inbox(
+        "local-ollama-1",
+        from_role="codex-1",
+        text="hello",
+        root=root / "roles",
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "role not initialized"
+    assert "init" in result["hint"]
+
+
+def test_message_size_limit_rejects_unbounded_payload() -> None:
+    root = _case_dir("message_size")
+    rolemod.ensure_role("local-ollama-1", root=root / "roles", registry_path=root / "mesh.json")
+
+    result = rolemod.write_inbox(
+        "local-ollama-1",
+        from_role="codex-1",
+        text="x" * (rolemod.MAX_MESSAGE_CHARS + 1),
+        root=root / "roles",
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "message too long"
+    assert result["limit"] == rolemod.MAX_MESSAGE_CHARS
+
+
+def test_corrupted_jsonl_is_reported_without_losing_valid_messages() -> None:
+    root = _case_dir("corrupt_jsonl")
+    rolemod.ensure_role("local-ollama-1", root=root / "roles", registry_path=root / "mesh.json")
+    rolemod.write_inbox(
+        "local-ollama-1",
+        from_role="codex-1",
+        text="valid one",
+        root=root / "roles",
+    )
+    inbox_path = rolemod.paths_for("local-ollama-1", root=root / "roles")["inbox"]
+    with inbox_path.open("a", encoding="utf-8") as fh:
+        fh.write("{not-json}\n")
+        fh.write("[]\n")
+    rolemod.write_inbox(
+        "local-ollama-1",
+        from_role="codex-1",
+        text="valid two",
+        root=root / "roles",
+    )
+
+    inbox = rolemod.read_box("local-ollama-1", box="inbox", root=root / "roles")
+    status = rolemod.status("local-ollama-1", root=root / "roles")
+
+    assert inbox["parse_error_count"] == 2
+    assert [item["text"] for item in inbox["messages"]] == ["valid one", "valid two"]
+    assert status["parse_error_count"] == 2
 
 
 def test_virtual_heartbeat_does_not_require_hwnd() -> None:

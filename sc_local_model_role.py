@@ -20,6 +20,7 @@ import sc_mesh_registry
 
 DEFAULT_ROLE = "local-ollama-1"
 DEFAULT_MODEL = "gemma3:latest"
+MAX_MESSAGE_CHARS = 4000
 
 
 def _now() -> float:
@@ -76,20 +77,29 @@ def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
         fh.write(json.dumps(record, sort_keys=True, ensure_ascii=True) + "\n")
 
 
-def _read_jsonl(path: Path, *, limit: int = 50) -> list[dict[str, Any]]:
+def _read_jsonl_with_errors(path: Path, *, limit: int = 50) -> tuple[list[dict[str, Any]], int]:
     if not path.exists():
-        return []
+        return [], 0
     rows: list[dict[str, Any]] = []
+    parse_errors = 0
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         try:
             data = json.loads(line)
         except Exception:
+            parse_errors += 1
             continue
         if isinstance(data, dict):
             rows.append(data)
-    return rows[-max(1, int(limit)) :]
+        else:
+            parse_errors += 1
+    return rows[-max(1, int(limit)) :], parse_errors
+
+
+def _read_jsonl(path: Path, *, limit: int = 50) -> list[dict[str, Any]]:
+    rows, _ = _read_jsonl_with_errors(path, limit=limit)
+    return rows
 
 
 def ensure_role(
@@ -109,6 +119,7 @@ def ensure_role(
     paths["dir"].mkdir(parents=True, exist_ok=True)
     for mailbox in ("inbox", "outbox"):
         paths[mailbox].touch(exist_ok=True)
+    prior_state = _read_json(paths["state"])
 
     endpoint = str(paths["dir"])
     reg = sc_mesh_registry.register_virtual_agent(
@@ -123,6 +134,9 @@ def ensure_role(
         transport="mailbox",
         endpoint=endpoint,
         model=model,
+        birth_id=str(prior_state.get("birth_id", "")),
+        generation=int(prior_state.get("generation", 1) or 1),
+        created_at=float(prior_state.get("created_at", _now()) or _now()),
         replace=replace,
         registry_path=registry_path,
     )
@@ -141,7 +155,7 @@ def ensure_role(
         "endpoint": endpoint,
         "inbox": str(paths["inbox"]),
         "outbox": str(paths["outbox"]),
-        "created_at": _read_json(paths["state"]).get("created_at", _now()),
+        "created_at": prior_state.get("created_at", _now()),
         "updated_at": _now(),
     }
     _write_json(paths["state"], state)
@@ -169,6 +183,22 @@ def write_message(
     if not text.strip():
         return {"ok": False, "error": "text is required"}
     paths = paths_for(role, root=root)
+    state = _read_json(paths["state"])
+    if not state:
+        return {
+            "ok": False,
+            "error": "role not initialized",
+            "hint": "run selfconnect-local-model init before writing messages",
+            "state_path": str(paths["state"]),
+        }
+    compact_text = " ".join(text.replace("\r", " ").replace("\n", " ").split())
+    if len(compact_text) > MAX_MESSAGE_CHARS:
+        return {
+            "ok": False,
+            "error": "message too long",
+            "limit": MAX_MESSAGE_CHARS,
+            "actual": len(compact_text),
+        }
     message_id = f"{_slug(role)}-{uuid.uuid4().hex[:12]}"
     record = {
         "id": message_id,
@@ -178,9 +208,11 @@ def write_message(
         "to": to_role,
         "kind": kind,
         "nonce": nonce,
-        "text": " ".join(text.replace("\r", " ").replace("\n", " ").split()),
+        "text": compact_text,
         "created_at": _now(),
         "ack": False,
+        "birth_id": state.get("birth_id", ""),
+        "generation": state.get("generation", 0),
     }
     _append_jsonl(paths[box], record)
     return {"ok": True, "message": record, "path": str(paths[box])}
@@ -231,12 +263,17 @@ def write_outbox(
 def status(role: str = DEFAULT_ROLE, *, root: str | Path | None = None) -> dict[str, Any]:
     paths = paths_for(role, root=root)
     state = _read_json(paths["state"])
+    inbox, inbox_errors = _read_jsonl_with_errors(paths["inbox"], limit=10_000)
+    outbox, outbox_errors = _read_jsonl_with_errors(paths["outbox"], limit=10_000)
+    missing = [name for name in ("state", "inbox", "outbox") if not paths[name].exists()]
     return {
-        "ok": bool(state),
+        "ok": bool(state) and not missing,
         "state": state,
         "paths": {name: str(path) for name, path in paths.items()},
-        "inbox_count": len(_read_jsonl(paths["inbox"], limit=10_000)),
-        "outbox_count": len(_read_jsonl(paths["outbox"], limit=10_000)),
+        "inbox_count": len(inbox),
+        "outbox_count": len(outbox),
+        "parse_error_count": inbox_errors + outbox_errors,
+        "missing": missing,
     }
 
 
@@ -250,7 +287,8 @@ def read_box(
     if box not in {"inbox", "outbox"}:
         return {"ok": False, "error": "box must be inbox or outbox"}
     paths = paths_for(role, root=root)
-    return {"ok": True, "box": box, "messages": _read_jsonl(paths[box], limit=limit)}
+    messages, parse_errors = _read_jsonl_with_errors(paths[box], limit=limit)
+    return {"ok": True, "box": box, "messages": messages, "parse_error_count": parse_errors}
 
 
 def _print_json(data: Any) -> int:
@@ -347,4 +385,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

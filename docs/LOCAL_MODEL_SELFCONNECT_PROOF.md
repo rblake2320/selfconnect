@@ -118,6 +118,20 @@ the role remains addressable through its mailbox and mesh registry row. The
 mailbox is a coordination channel, not an authority grant. Actual actions still
 flow through the validator and guarded transport.
 
+### Durable Role Failure Plan
+
+The local-model role is designed to fail clear, not silently:
+
+| Failure | Expected behavior | Recovery |
+| --- | --- | --- |
+| Registry row missing but mailbox state exists | `selfconnect-local-model init` restores the same `birth_id` and generation from `state.json` | Run `selfconnect-local-model init --role local-ollama-1 --model <model>` |
+| Mailbox write before initialization | Write is rejected with `role not initialized` | Initialize the role, then write again |
+| Oversized packet | Write is rejected with `message too long` | Put large payloads in a file/artifact and send only a short reference |
+| Corrupted JSONL mailbox line | Valid messages still read; `parse_error_count` reports corruption | Archive/repair the mailbox after reading the valid rows |
+| Visible local-model terminal closed | Mesh role remains available as `hwnd=0`, `transport=mailbox` | Continue through inbox/outbox; spawn a visible terminal only for demos |
+| Local model returns invalid tool JSON | Action validator rejects before any send | Retry with constrained prompt or smaller model-specific wrapper |
+| Target guard fails for a live send | No input is sent | Re-discover HWND/PID/class/title and resend only after guard passes |
+
 ## Visible Local Demo
 
 PASS: the same action-agent flow was rerun with visible throwaway terminals left

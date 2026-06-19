@@ -260,6 +260,9 @@ def register_virtual_agent(
     transport: str = "mailbox",
     endpoint: str = "",
     model: str = "",
+    birth_id: str = "",
+    generation: int | None = None,
+    created_at: float | None = None,
     replace: bool = False,
     registry_path: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -287,24 +290,28 @@ def register_virtual_agent(
         }
 
     same_virtual = bool(existing and int(existing.get("hwnd", 0) or 0) == 0)
-    generation = (
+    resolved_generation = (
         int(existing.get("generation", 0))
         if existing and same_virtual
         else int(existing.get("generation", 0)) + 1
         if existing
-        else 1
+        else int(generation or 1)
     )
-    birth_id = str(existing.get("birth_id")) if existing and same_virtual else _birth_id(role)
-    created_at = float(existing.get("created_at", _now())) if existing and same_virtual else _now()
+    resolved_birth_id = str(existing.get("birth_id")) if existing and same_virtual else birth_id or _birth_id(role)
+    resolved_created_at = (
+        float(existing.get("created_at", _now()))
+        if existing and same_virtual
+        else float(created_at or _now())
+    )
     title = label or role
     record = {
         "mesh": mesh,
         "role": role,
         "agent": agent_type,
         "label": title,
-        "birth_id": birth_id,
-        "generation": generation,
-        "created_at": created_at,
+        "birth_id": resolved_birth_id,
+        "generation": resolved_generation,
+        "created_at": resolved_created_at,
         "hwnd": 0,
         "pid": 0,
         "exe_name": "",
