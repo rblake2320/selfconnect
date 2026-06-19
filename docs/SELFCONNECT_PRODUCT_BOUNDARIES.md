@@ -64,6 +64,11 @@ Hash chaining gives local tamper detection, not magical tamper-proof storage.
 links, and corrupt JSON. To make the record tamper-resistant for enterprise or
 government use, anchor the latest `head_hash` to WORM/off-host storage.
 
+Every event also carries a git snapshot: repo root, branch, HEAD commit,
+upstream, ahead/behind counts, dirty flag, dirty file count, and a small status
+sample. This ties agent work to the exact code state that produced it and makes
+branch drift or uncommitted work visible in the mesh history.
+
 ## Experimental Boundary
 
 Keep these under `experiments/` or docs until they are deliberately promoted:

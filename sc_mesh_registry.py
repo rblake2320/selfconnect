@@ -35,6 +35,86 @@ HIGH_TOKEN_ESTIMATE = 120_000
 VERY_HIGH_TOKEN_ESTIMATE = 180_000
 
 
+def _run_git(args: list[str], *, cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(cwd) if cwd else None,
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+
+
+def _parse_status_header(header: str) -> dict[str, Any]:
+    value = header.removeprefix("## ").strip()
+    flags = ""
+    if " [" in value and value.endswith("]"):
+        value, flags = value.rsplit(" [", 1)
+        flags = flags[:-1]
+
+    branch = value
+    upstream = ""
+    if "..." in value:
+        branch, upstream = value.split("...", 1)
+
+    ahead = 0
+    behind = 0
+    for part in (item.strip() for item in flags.split(",") if item.strip()):
+        pieces = part.split()
+        if len(pieces) == 2 and pieces[0] == "ahead":
+            ahead = int(pieces[1])
+        elif len(pieces) == 2 and pieces[0] == "behind":
+            behind = int(pieces[1])
+
+    return {
+        "branch": branch,
+        "upstream": upstream,
+        "ahead": ahead,
+        "behind": behind,
+    }
+
+
+def git_snapshot(repo_path: str | Path | None = None) -> dict[str, Any]:
+    """Capture the source-control state for a mesh event."""
+    cwd = Path(repo_path) if repo_path else Path.cwd()
+    root_result = _run_git(["rev-parse", "--show-toplevel"], cwd=cwd)
+    if root_result.returncode != 0:
+        return {
+            "ok": False,
+            "repo_path": str(cwd),
+            "error": (root_result.stderr or root_result.stdout).strip() or "not a git repository",
+        }
+
+    root = Path(root_result.stdout.strip())
+    head_result = _run_git(["rev-parse", "HEAD"], cwd=root)
+    status_result = _run_git(["status", "--short", "--branch"], cwd=root)
+    if head_result.returncode != 0 or status_result.returncode != 0:
+        return {
+            "ok": False,
+            "repo_path": str(root),
+            "error": (head_result.stderr or status_result.stderr).strip() or "git snapshot failed",
+        }
+
+    lines = status_result.stdout.splitlines()
+    header = _parse_status_header(lines[0] if lines else "## unknown")
+    changed = [line for line in lines[1:] if line.strip()]
+    head = head_result.stdout.strip()
+    return {
+        "ok": True,
+        "repo_path": str(root),
+        "branch": header["branch"],
+        "head": head,
+        "head_short": head[:7],
+        "upstream": header["upstream"],
+        "ahead": header["ahead"],
+        "behind": header["behind"],
+        "dirty": bool(changed),
+        "dirty_count": len(changed),
+        "status_sample": changed[:10],
+    }
+
+
 def default_registry_path() -> Path:
     root = os.environ.get("SELFCONNECT_MESH_DIR")
     if root:
@@ -181,6 +261,7 @@ def append_event(
     data: dict[str, Any] | None = None,
     registry_path: str | Path | None = None,
     event_log_path: str | Path | None = None,
+    repo_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Append a durable mesh event.
 
@@ -206,6 +287,7 @@ def append_event(
         "status": status,
         "profile": profile,
         "summary": summary,
+        "repo": git_snapshot(repo_path),
         "data": data or {},
     }
     record["event_hash"] = compute_event_hash(record)
@@ -1035,6 +1117,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("watch")
     p.add_argument("--json", action="store_true")
 
+    p = sub.add_parser("repo")
+    p.add_argument("--repo", default="", help="repo path to snapshot; defaults to current directory")
+
     p = sub.add_parser("event")
     p.add_argument("--type", dest="event_type", required=True)
     p.add_argument("--mesh", default=DEFAULT_MESH)
@@ -1049,6 +1134,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--summary", default="")
     p.add_argument("--data-json", default="", help="optional JSON object to attach")
     p.add_argument("--event-log", default="")
+    p.add_argument("--repo", default="", help="repo path to snapshot; defaults to current directory")
 
     p = sub.add_parser("events")
     p.add_argument("--limit", type=int, default=50)
@@ -1127,6 +1213,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "watch":
         report = watch_report(load_registry(registry_path))
         return _print_json(report) if args.json else _print_watch(report)
+    if args.command == "repo":
+        return _print_json(git_snapshot(args.repo or None))
     if args.command == "event":
         data = {}
         if args.data_json:
@@ -1151,6 +1239,7 @@ def main(argv: list[str] | None = None) -> int:
             data=data,
             registry_path=registry_path,
             event_log_path=args.event_log or None,
+            repo_path=args.repo or None,
         ))
     if args.command == "events":
         return _print_json(load_events(

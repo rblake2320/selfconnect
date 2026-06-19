@@ -357,6 +357,31 @@ def test_mesh_registry_event_log_tracks_role_lifecycle(monkeypatch):
         temp_dir.cleanup()
 
 
+def test_mesh_registry_git_snapshot_tracks_current_repo():
+    snap = sc_mesh_registry.git_snapshot(Path.cwd())
+    assert snap["ok"] is True
+    assert snap["repo_path"]
+    assert snap["branch"]
+    assert len(snap["head"]) == 40
+    assert len(snap["head_short"]) == 7
+    assert isinstance(snap["dirty"], bool)
+    assert isinstance(snap["dirty_count"], int)
+    assert isinstance(snap["status_sample"], list)
+
+
+def test_mesh_registry_git_snapshot_reports_non_repo(monkeypatch):
+    class _FakeGitResult:
+        returncode = 128
+        stdout = ""
+        stderr = "fatal: not a git repository"
+
+    monkeypatch.setattr(sc_mesh_registry, "_run_git", lambda *args, **kwargs: _FakeGitResult())
+    snap = sc_mesh_registry.git_snapshot("C:/not-a-repo")
+    assert snap["ok"] is False
+    assert Path(snap["repo_path"]) == Path("C:/not-a-repo")
+    assert "not a git repository" in snap["error"]
+
+
 def test_mesh_registry_event_log_filters_and_reports_parse_errors():
     temp_dir = tempfile.TemporaryDirectory()
     event_path = Path(temp_dir.name) / "mesh_events.jsonl"
@@ -454,6 +479,8 @@ def test_mesh_registry_cli_writes_and_reads_manual_event():
         assert loaded["events"][0]["event_type"] == "task_assigned"
         assert loaded["events"][0]["role"] == "codex-2"
         assert loaded["events"][0]["data"] == {"priority": "high"}
+        assert loaded["events"][0]["repo"]["ok"] is True
+        assert len(loaded["events"][0]["repo"]["head"]) == 40
 
         verified = sc_mesh_registry.verify_events(event_log_path=event_path)
         assert verified["ok"] is True

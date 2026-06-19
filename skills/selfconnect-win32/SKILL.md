@@ -83,6 +83,7 @@ Use this separation for message paths:
 ```powershell
 selfconnect-mesh scan --query Codex
 selfconnect-mesh register --role codex-2 --hwnd 0x123456 --agent codex --profile explore --task "specific task" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
+selfconnect-mesh repo
 selfconnect-mesh event --type task_assigned --role codex-2 --summary "specific task"
 selfconnect-mesh events --role codex-2 --limit 20
 selfconnect-mesh verify-events
@@ -99,6 +100,9 @@ selfconnect-mesh verify-events
 - Run `selfconnect-mesh verify-events` when auditing a session. Local hash
   chaining is tamper-evident; for tamper-resistant enterprise evidence, anchor
   the returned `head_hash` to WORM/off-host storage.
+- Run `selfconnect-mesh repo` before and after meaningful build work. Mesh
+  events automatically include branch, HEAD commit, upstream, ahead/behind,
+  dirty flag, dirty count, and a small status sample.
 - If a role migrates to a new terminal, use `--replace`; the registry will issue
   a new `birth_id` and increment the role generation.
 - Set `--profile explore` for local capability testing and `--profile governed`

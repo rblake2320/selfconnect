@@ -175,6 +175,7 @@ selfconnect-mesh register --role claude-1 --hwnd 0x123456 --profile governed --t
 selfconnect-mesh update --role claude-1 --status compacting --task "auto-compact pause"
 selfconnect-mesh heartbeat --role claude-1
 selfconnect-mesh list
+selfconnect-mesh repo
 selfconnect-mesh event --type task_assigned --role claude-1 --summary "TPM attestation fix"
 selfconnect-mesh events --role claude-1 --limit 20
 selfconnect-mesh verify-events
@@ -191,6 +192,11 @@ notes, `selfconnect-mesh events` to audit by role, birth ID, or event type, and
 `selfconnect-mesh verify-events` to detect edits, inserted rows, broken links,
 or corrupted records. For stronger tamper resistance, anchor the reported
 `head_hash` to WORM/off-host storage.
+
+Every new event also records a git snapshot from the current repo: branch, HEAD
+commit, upstream, ahead/behind counts, dirty flag, dirty file count, and a small
+status sample. Use `selfconnect-mesh repo` before assigning or closing work when
+you need a quick source-control check without reading raw git output.
 
 Profiles make the product split explicit without forking the code:
 
