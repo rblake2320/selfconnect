@@ -50,6 +50,19 @@ from sc_pq import (
     upgrade_identity,
 )
 
+# ML-DSA tests require the optional dilithium-py package.
+_mldsa_available = False
+try:
+    MLDSALevel.LEVEL_3._impl()
+    _mldsa_available = True
+except RuntimeError:
+    pass
+
+_requires_mldsa = pytest.mark.skipif(
+    not _mldsa_available,
+    reason="dilithium-py not installed — skip ML-DSA tests",
+)
+
 
 class TestAgentIdentity:
     def setup_method(self):
@@ -610,6 +623,7 @@ class TestBoundaryProbe:
 # ---------------------------------------------------------------------------
 
 
+@_requires_mldsa
 class TestHybridIdentity:
     def setup_method(self):
         self.hi = HybridIdentity.generate(label="Agent-A", mldsa_level=MLDSALevel.LEVEL_3)
@@ -671,6 +685,7 @@ class TestHybridIdentity:
         assert restored.mldsa_sig == sig.mldsa_sig
 
 
+@_requires_mldsa
 class TestHybridDelegationToken:
     def setup_method(self):
         self.issuer = HybridIdentity.generate(
@@ -728,6 +743,7 @@ class TestHybridDelegationToken:
         assert "expired" in reason
 
 
+@_requires_mldsa
 class TestUpgradeIdentity:
     def test_did_preserved(self):
         old = AgentIdentity.generate(label="Old")
@@ -897,7 +913,17 @@ class TestGoalDriftMonitor:
 class TestEUAIActBundle:
     """Fix 3 — ProvenanceLedger.export_eu_ai_act_bundle."""
 
-    def test_bundle_structure(self, tmp_path):
+    def setup_method(self):
+        self._tmp = tempfile.mkdtemp(prefix="sc_eu_act_")
+
+    def teardown_method(self):
+        import shutil
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _out(self, name: str) -> str:
+        return os.path.join(self._tmp, name)
+
+    def test_bundle_structure(self):
         ledger = ProvenanceLedger()
         identity = AgentIdentity.generate(label="EU-Test")
         ledger.append(
@@ -912,7 +938,7 @@ class TestEUAIActBundle:
             payload=b"response",
             target_did=identity.did,
         )
-        out = str(tmp_path / "bundle.json")
+        out = self._out("bundle.json")
         bundle = ledger.export_eu_ai_act_bundle(
             system_name="SelfConnect Enterprise",
             system_version="1.4.0",
@@ -927,9 +953,9 @@ class TestEUAIActBundle:
         assert "bundle_hash" in bundle
         assert os.path.exists(out)
 
-    def test_empty_ledger_bundle(self, tmp_path):
+    def test_empty_ledger_bundle(self):
         ledger = ProvenanceLedger()
-        out = str(tmp_path / "empty.json")
+        out = self._out("empty.json")
         bundle = ledger.export_eu_ai_act_bundle(
             system_name="Test",
             system_version="0.0.1",
@@ -939,9 +965,9 @@ class TestEUAIActBundle:
         assert bundle["chain_integrity"]["entry_count"] == 0
         assert bundle["chain_integrity"]["ok"] is True
 
-    def test_extra_meta_included(self, tmp_path):
+    def test_extra_meta_included(self):
         ledger = ProvenanceLedger()
-        out = str(tmp_path / "meta.json")
+        out = self._out("meta.json")
         bundle = ledger.export_eu_ai_act_bundle(
             system_name="Test",
             system_version="1.0.0",
@@ -953,6 +979,7 @@ class TestEUAIActBundle:
         assert bundle["meta"]["notified_body"] == "BSI"
 
 
+@_requires_mldsa
 class TestRFC9964JWTSerialization:
     """Fix 4 — HybridSignature.to_jwt_claims / from_jwt_claims."""
 
