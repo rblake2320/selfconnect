@@ -49,6 +49,41 @@ Ollama local JSON action
 This is the stronger local proof: the model did not only generate text, it chose
 an allowed action that was executed locally after validation.
 
+## Live Codex Target Escalation
+
+PASS: the action-agent flow was escalated from a throwaway receiver to the live
+registered `codex-1` terminal. The target was verified before send:
+
+- HWND: `28443124`
+- PID: `16680`
+- exe: `WindowsTerminal.exe`
+- class: `CASCADIA_HOSTING_WINDOW_CLASS`
+- title: `codex 1`
+
+The local model selected a `selfconnect_send` JSON action, the action validator
+accepted it, SelfConnect sent one compact non-command status line to `codex-1`,
+and UIA readback found the nonce in the Codex terminal text.
+
+Artifact:
+
+```text
+experiments/win32_probe/results/local_model_to_codex1_pass_43832F35.json
+```
+
+Control path:
+
+```text
+Ollama localhost
+  -> JSON action
+  -> validated selfconnect_send
+  -> guarded Win32 send to registered codex-1 HWND
+  -> UIA readback contains nonce
+```
+
+This proves a local model can send into a live mesh participant when the target
+guard passes. It is not a command-execution proof and should stay constrained to
+short coordination/status packets until a lease-gated local-model role is wired.
+
 ## Visible Local Demo
 
 PASS: the same action-agent flow was rerun with visible throwaway terminals left
