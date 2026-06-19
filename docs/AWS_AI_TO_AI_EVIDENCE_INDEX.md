@@ -64,6 +64,13 @@ Interpretation: both Spark machines are reachable by SSH. Spark-1's hub process
 is reachable, but live hub agents were not online through the checked hub route
 at this time.
 
+See also `docs/SPARK_LINUX_SELFCONNECT_CHANNELS.md` for the later live
+Spark/Linux channel test where CODEX1 reached Spark1's desktop, received a
+shared-chat ACK, posted a durable handoff to Spark1/Spark2, and established the
+recommended channel ranking: shared chat for AI-to-AI coordination, SSH for
+direct command/control, AF_UNIX broker for same-host governed IPC, and S3 for
+evidence/archive.
+
 ## Live Spark File Locations
 
 Both Spark machines contain local evidence under `~/ai-business`.
