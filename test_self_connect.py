@@ -17,7 +17,7 @@ if sys.platform != "win32":
 from self_connect import (
     __version__, WindowTarget, WindowPool,
     list_windows, find_target, find_child_by_class,
-    get_own_terminal_pid, wait_for_window,
+    get_own_terminal_pid, get_own_hwnd, wait_for_window,
     focus_window, get_window_rect,
     move_window, resize_window,
     minimize_window, maximize_window, restore_window,
@@ -61,7 +61,7 @@ def test_version():
     check("version not empty", len(__version__) > 0)
     import self_connect
     check("__all__ defined", hasattr(self_connect, "__all__"))
-    check("__all__ has 62 exports", len(self_connect.__all__) == 62,
+    check("__all__ has 63 exports", len(self_connect.__all__) == 63,
           f"got {len(self_connect.__all__)}")
 
 
@@ -82,6 +82,12 @@ def test_window_discovery():
 
     own = get_own_terminal_pid()
     check("get_own_terminal_pid >= 0", own >= 0, f"got {own}")
+    own_hwnd = get_own_hwnd()
+    check(
+        "get_own_hwnd returns int or None",
+        own_hwnd is None or isinstance(own_hwnd, int),
+        f"got {own_hwnd}",
+    )
 
 
 def test_find_target():

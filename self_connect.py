@@ -36,7 +36,7 @@ __all__ = [  # noqa: RUF022  # grouped by version/category, not alphabetical
     "WindowTarget", "WindowPool", "capabilities",
     # Window discovery
     "list_windows", "find_target", "find_child_by_class",
-    "get_own_terminal_pid", "wait_for_window",
+    "get_own_terminal_pid", "get_own_hwnd", "wait_for_window",
     # Focus & management
     "focus_window", "move_window", "resize_window",
     "minimize_window", "maximize_window", "restore_window", "submit_claude_input",
@@ -423,10 +423,72 @@ def _get_exe_name(pid: int) -> str:
         kernel32.CloseHandle(handle)
 
 
+def _is_windows_terminal_pid(pid: int) -> bool:
+    """True if *pid* belongs to a genuine WindowsTerminal.exe process.
+
+    Validates both the process name AND the executable path to resist simple
+    process-name spoofing (CHECK-3 / MEDIUM red-team finding).
+    """
+    try:
+        import psutil as _psutil
+        p = _psutil.Process(pid)
+        name = (p.name() or "").lower()
+        if "windowsterminal" not in name:
+            return False
+        exe = (p.exe() or "").replace("\\", "/").lower()
+        # Must live under a known Windows Terminal installation path
+        return any(fragment in exe for fragment in (
+            "windowsapps/microsoft.windowsterminal",
+            "windowsapps\\microsoft.windowsterminal",
+            "windowsterminal.exe",  # fallback for portable / dev builds
+        ))
+    except Exception:
+        return False
+
+
+def get_own_hwnd() -> int | None:
+    """HWND of the terminal tab hosting this script.
+
+    Works in both traditional console (GetConsoleWindow) and Windows Terminal
+    ConPTY environments (GetForegroundWindow + CASCADIA_HOSTING_WINDOW_CLASS).
+    Returns None only when no console or terminal window can be identified.
+
+    **TOCTOU note**: in ConPTY mode the result is focus-dependent —
+    GetForegroundWindow returns the window with keyboard focus at call time.
+    Call once at daemon/agent startup and *cache* the result; do not call
+    per-message in background loops where focus may have moved.
+    """
+    # Stage 1: traditional console (works outside ConPTY)
+    hwnd = kernel32.GetConsoleWindow()
+    if hwnd:
+        return _handle_value(hwnd)
+
+    # Stage 2: ConPTY / Windows Terminal — the active CASCADIA window owned by
+    # a verified WindowsTerminal.exe is the tab currently executing code.
+    try:
+        fg = user32.GetForegroundWindow()
+        if fg:
+            fg_hwnd = _handle_value(fg)
+            fg_pid = _get_pid(fg_hwnd)
+            if _is_windows_terminal_pid(fg_pid):
+                cls_buf = ctypes.create_unicode_buffer(128)
+                user32.GetClassNameW(fg_hwnd, cls_buf, 128)
+                if "CASCADIA" in cls_buf.value.upper():
+                    return fg_hwnd
+    except Exception:
+        pass
+
+    return None
+
+
 def get_own_terminal_pid() -> int:
-    """PID of the console window hosting this script (for self-exclusion)."""
-    own_hwnd = kernel32.GetConsoleWindow()
-    return _get_pid(own_hwnd) if own_hwnd else 0
+    """PID of the console window hosting this script (for self-exclusion).
+
+    Returns 0 when the PID cannot be determined (e.g. ConPTY without focus).
+    Prefer get_own_hwnd() for reliable hwnd-based identification.
+    """
+    hwnd = get_own_hwnd()
+    return _get_pid(hwnd) if hwnd else 0
 
 
 def list_windows() -> list[WindowTarget]:
@@ -2443,9 +2505,21 @@ class Checkpoint:
     schema:     str   = "selfconnect-checkpoint-v1"
 
 
+def _checkpoint_digest(data: dict) -> str:
+    """SHA-256 of checkpoint content excluding the digest field itself."""
+    import hashlib as _hashlib
+    stable = {k: v for k, v in data.items() if k != "digest"}
+    canonical = _json.dumps(stable, sort_keys=True, separators=(",", ":"))
+    return _hashlib.sha256(canonical.encode()).hexdigest()
+
+
 def write_checkpoint(checkpoint: Checkpoint, path: str) -> str:
     """
-    Serialize a Checkpoint to a JSON file.
+    Serialize a Checkpoint to a JSON file with a content-integrity digest.
+
+    The ``digest`` field (SHA-256 of all other fields) lets ``read_checkpoint``
+    detect accidental corruption or casual tampering (CHECK-5 mitigation).
+    For secret-keyed HMAC use the TPM ECDSA path proved in session 9.
 
     Returns the resolved absolute path on success.
     Raises OSError if the directory is not writable.
@@ -2460,6 +2534,7 @@ def write_checkpoint(checkpoint: Checkpoint, path: str) -> str:
     abs_path = os.path.abspath(path)
     os.makedirs(os.path.dirname(abs_path) or ".", exist_ok=True)
     data = asdict(checkpoint)
+    data["digest"] = _checkpoint_digest(data)
     with open(abs_path, "w", encoding="utf-8") as f:
         _json.dump(data, f, indent=2)
     return abs_path
@@ -2469,7 +2544,9 @@ def read_checkpoint(path: str) -> Checkpoint:
     """
     Deserialize a Checkpoint from a JSON file.
 
-    Validates the schema field — raises ValueError if not a selfconnect checkpoint.
+    Validates the schema field and the content-integrity digest written by
+    ``write_checkpoint``.  Raises ValueError on schema mismatch or digest
+    failure so callers never silently consume a tampered checkpoint.
     Raises FileNotFoundError if path does not exist.
 
     Usage::
@@ -2481,6 +2558,14 @@ def read_checkpoint(path: str) -> Checkpoint:
         data = _json.load(f)
     if data.get("schema") != "selfconnect-checkpoint-v1":
         raise ValueError(f"Not a selfconnect checkpoint (schema={data.get('schema')!r})")
+    stored = data.get("digest")
+    if stored is not None:
+        expected = _checkpoint_digest(data)
+        if stored != expected:
+            raise ValueError(
+                f"Checkpoint digest mismatch — file may be tampered "
+                f"(stored={stored[:16]}… expected={expected[:16]}…)"
+            )
     return Checkpoint(
         role       = data["role"],
         own_hwnd   = data["own_hwnd"],
@@ -2688,10 +2773,8 @@ class MigrationCoordinator:
             f"Mesh peers at migration time:\n{peers_text}\n\n"
             f"FIRST ACTION — announce your hwnd to all peers so they update routing:\n"
             f"import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace')\n"
-            f"from self_connect import list_windows, send_string, get_own_terminal_pid\n"
-            f"import ctypes; hwnd = next(\n"
-            f"  w.hwnd for w in list_windows()\n"
-            f"  if w.pid == get_own_terminal_pid()), None)\n"
+            f"from self_connect import list_windows, send_string, get_own_hwnd\n"
+            f"hwnd = get_own_hwnd()  # works in both ConPTY and legacy console\n"
             f"# Then for each peer:\n"
             f"{peers_sc_lines}\n\n"
             f"THEN resume pending work: {_json.dumps(cp.pending)}\n\n"
