@@ -21,6 +21,9 @@ briefing_*.md
 # Temporary session screenshots
 tmp_*.png
 
+# Test temp output
+tests/_tmp/
+
 # Local Claude Code workspace state
 .claude/
 
