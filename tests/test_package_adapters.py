@@ -319,6 +319,150 @@ def test_mesh_registry_writes_compact_handoff(monkeypatch):
         temp_dir.cleanup()
 
 
+def test_mesh_registry_event_log_tracks_role_lifecycle(monkeypatch):
+    fake = _FakeSelfConnect()
+    monkeypatch.setattr(sc_cli, "_load_sc", lambda: fake)
+    monkeypatch.setattr(sc_cli, "_window_valid_visible", lambda hwnd: (True, True))
+    temp_dir = tempfile.TemporaryDirectory()
+    path = Path(temp_dir.name) / "mesh.json"
+
+    try:
+        registered = sc_mesh_registry.register_agent(
+            _FakeWindow.hwnd,
+            "B",
+            task="initial work",
+            registry_path=path,
+            expected_class=_FakeWindow.class_name,
+        )
+        assert registered["ok"] is True
+        birth_id = registered["agent"]["birth_id"]
+
+        updated = sc_mesh_registry.update_agent(
+            "B",
+            status="working",
+            task="red team task",
+            registry_path=path,
+        )
+        assert updated["ok"] is True
+        removed = sc_mesh_registry.remove_agent("B", registry_path=path)
+        assert removed["ok"] is True
+
+        events = sc_mesh_registry.load_events(registry_path=path, limit=10)
+        event_types = [item["event_type"] for item in events["events"]]
+        assert event_types == ["role_registered", "role_status_updated", "role_removed"]
+        assert {item["birth_id"] for item in events["events"]} == {birth_id}
+        assert events["events"][1]["task"] == "red team task"
+        assert events["events"][2]["summary"] == "role removed from active registry"
+    finally:
+        temp_dir.cleanup()
+
+
+def test_mesh_registry_event_log_filters_and_reports_parse_errors():
+    temp_dir = tempfile.TemporaryDirectory()
+    event_path = Path(temp_dir.name) / "mesh_events.jsonl"
+
+    try:
+        first = sc_mesh_registry.append_event(
+            "role_registered",
+            role="codex-1",
+            birth_id="codex-1-a",
+            event_log_path=event_path,
+        )
+        second = sc_mesh_registry.append_event(
+            "role_registered",
+            role="claude-1",
+            birth_id="claude-1-a",
+            event_log_path=event_path,
+        )
+        with event_path.open("a", encoding="utf-8") as fh:
+            fh.write("{not valid json}\n")
+
+        by_role = sc_mesh_registry.load_events(role="claude-1", event_log_path=event_path)
+        assert by_role["parse_error_count"] == 1
+        assert [item["event_id"] for item in by_role["events"]] == [second["event"]["event_id"]]
+
+        by_birth = sc_mesh_registry.load_events(
+            birth_id="codex-1-a",
+            event_log_path=event_path,
+        )
+        assert [item["event_id"] for item in by_birth["events"]] == [first["event"]["event_id"]]
+    finally:
+        temp_dir.cleanup()
+
+
+def test_mesh_registry_event_log_hash_chain_verifies_and_detects_tamper():
+    temp_dir = tempfile.TemporaryDirectory()
+    event_path = Path(temp_dir.name) / "mesh_events.jsonl"
+
+    try:
+        first = sc_mesh_registry.append_event(
+            "task_assigned",
+            role="codex-1",
+            summary="original task",
+            event_log_path=event_path,
+        )
+        second = sc_mesh_registry.append_event(
+            "task_complete",
+            role="codex-1",
+            summary="done",
+            event_log_path=event_path,
+        )
+
+        assert first["event"]["prev_event_hash"] == sc_mesh_registry.EVENT_GENESIS_HASH
+        assert second["event"]["prev_event_hash"] == first["event"]["event_hash"]
+        assert sc_mesh_registry.verify_events(event_log_path=event_path)["ok"] is True
+
+        lines = event_path.read_text(encoding="utf-8").splitlines()
+        tampered = lines[0].replace("original task", "changed task")
+        event_path.write_text("\n".join([tampered, *lines[1:]]) + "\n", encoding="utf-8")
+
+        verified = sc_mesh_registry.verify_events(event_log_path=event_path)
+        assert verified["ok"] is False
+        errors = {item["error"] for item in verified["errors"]}
+        assert "hash_mismatch" in errors
+        assert "chain_break" in errors
+    finally:
+        temp_dir.cleanup()
+
+
+def test_mesh_registry_cli_writes_and_reads_manual_event():
+    temp_dir = tempfile.TemporaryDirectory()
+    registry_path = Path(temp_dir.name) / "mesh.json"
+    event_path = Path(temp_dir.name) / "events.jsonl"
+
+    try:
+        wrote = sc_mesh_registry.main([
+            "--registry",
+            str(registry_path),
+            "event",
+            "--event-log",
+            str(event_path),
+            "--type",
+            "task_assigned",
+            "--role",
+            "codex-2",
+            "--birth-id",
+            "codex-2-test",
+            "--summary",
+            "assigned package audit",
+            "--data-json",
+            '{"priority":"high"}',
+        ])
+        assert wrote == 0
+
+        loaded = sc_mesh_registry.load_events(event_log_path=event_path)
+        assert loaded["events"][0]["event_type"] == "task_assigned"
+        assert loaded["events"][0]["role"] == "codex-2"
+        assert loaded["events"][0]["data"] == {"priority": "high"}
+
+        verified = sc_mesh_registry.verify_events(event_log_path=event_path)
+        assert verified["ok"] is True
+        assert verified["events_checked"] == 1
+        assert len(verified["head_hash"]) == 64
+    finally:
+        temp_dir.cleanup()
+
+
 def test_mesh_registry_watch_report_includes_task_and_risk():
     now = 10_000.0
     registry = {

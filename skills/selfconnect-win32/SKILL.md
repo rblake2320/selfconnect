@@ -83,10 +83,22 @@ Use this separation for message paths:
 ```powershell
 selfconnect-mesh scan --query Codex
 selfconnect-mesh register --role codex-2 --hwnd 0x123456 --agent codex --profile explore --task "specific task" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
+selfconnect-mesh event --type task_assigned --role codex-2 --summary "specific task"
+selfconnect-mesh events --role codex-2 --limit 20
+selfconnect-mesh verify-events
 ```
 
 - Roles must be unique. Do not create multiple `B` roles; use names like
   `codex-1`, `claude-1`, `rmc-1`, `gemini-1`, or task-specific roles.
+- Treat `mesh_registry.json` as current state and `mesh_events.jsonl` as the
+  durable hash-chained history. Registry rows can be replaced; event rows
+  explain what was spawned, assigned, completed, blocked, or migrated.
+- Write a manual mesh event whenever assigning work, receiving a meaningful
+  result, marking a role off-rails, or replacing a role after drift. Prefer
+  compact summaries over pasted transcripts.
+- Run `selfconnect-mesh verify-events` when auditing a session. Local hash
+  chaining is tamper-evident; for tamper-resistant enterprise evidence, anchor
+  the returned `head_hash` to WORM/off-host storage.
 - If a role migrates to a new terminal, use `--replace`; the registry will issue
   a new `birth_id` and increment the role generation.
 - Set `--profile explore` for local capability testing and `--profile governed`

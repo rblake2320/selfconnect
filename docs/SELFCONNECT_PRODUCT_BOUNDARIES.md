@@ -33,7 +33,8 @@ Core should stay small and boring:
 - `self_connect.py`: Win32 primitives, capture, send, read helpers.
 - `_win32_abi.py`: central Win32 ABI definitions.
 - `sc_cli.py`: package-safe command line access.
-- `sc_mesh_registry.py`: roles, birth IDs, generations, handoffs, health.
+- `sc_mesh_registry.py`: roles, birth IDs, generations, handoffs, health,
+  and append-only `mesh_events.jsonl` history.
 - `sc_echo_filter.py`: local echo versus external output classification.
 - `sc_local_model_role.py`: durable local-model mailbox identity.
 - `sc_mcp.py`: optional adapter surface; input remains explicitly gated.
@@ -45,6 +46,23 @@ Core should not absorb every experiment. A capability graduates only when it has
 3. a failure plan;
 4. a clear profile placement;
 5. no dependency that slows normal mode unless explicitly enabled.
+
+## Mesh History Boundary
+
+`mesh_registry.json` answers "who is active right now." It is allowed to change
+as roles migrate, compact, or get replaced.
+
+`mesh_events.jsonl` answers "what happened over time." It is append-only and
+hash-chained. It records role registration, updates, heartbeats, compact
+handoffs, removals, and manual task notes. Agents should write a manual event
+when they spawn a peer, assign work, receive a meaningful result, or mark a role
+off-rails. This fixes the many-terminals problem without making normal
+SelfConnect slower.
+
+Hash chaining gives local tamper detection, not magical tamper-proof storage.
+`selfconnect-mesh verify-events` detects changed events, inserted rows, broken
+links, and corrupt JSON. To make the record tamper-resistant for enterprise or
+government use, anchor the latest `head_hash` to WORM/off-host storage.
 
 ## Experimental Boundary
 
@@ -106,4 +124,3 @@ Treat a change as bloat unless it answers at least one of these:
 
 If a feature does not pass that test, park it in `experiments/`, document the
 finding, and leave the default runtime alone.
-

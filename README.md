@@ -175,10 +175,22 @@ selfconnect-mesh register --role claude-1 --hwnd 0x123456 --profile governed --t
 selfconnect-mesh update --role claude-1 --status compacting --task "auto-compact pause"
 selfconnect-mesh heartbeat --role claude-1
 selfconnect-mesh list
+selfconnect-mesh event --type task_assigned --role claude-1 --summary "TPM attestation fix"
+selfconnect-mesh events --role claude-1 --limit 20
+selfconnect-mesh verify-events
 ```
 
 Roles should be unique. If a role migrates to a new HWND, use `--replace` so the
 registry shows that the old route was intentionally superseded.
+
+The registry is only current state. The durable history is
+`mesh_events.jsonl`, an append-only hash-chained event log written beside the
+registry by default. Register, update, heartbeat, handoff, and remove actions
+write events automatically. Use `selfconnect-mesh event` for manual spawn/task
+notes, `selfconnect-mesh events` to audit by role, birth ID, or event type, and
+`selfconnect-mesh verify-events` to detect edits, inserted rows, broken links,
+or corrupted records. For stronger tamper resistance, anchor the reported
+`head_hash` to WORM/off-host storage.
 
 Profiles make the product split explicit without forking the code:
 

@@ -8,6 +8,7 @@ their role/window/task.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -22,6 +23,8 @@ from typing import Any
 import sc_cli
 
 REGISTRY_VERSION = 1
+EVENT_LOG_VERSION = 1
+EVENT_GENESIS_HASH = "0" * 64
 DEFAULT_MESH = "default"
 DEFAULT_PROFILE = "explore"
 VALID_PROFILES = {"explore", "governed"}
@@ -46,6 +49,14 @@ def default_handoff_dir() -> Path:
         return Path(root)
     local = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
     return Path(local) / "SelfConnect" / "handoffs"
+
+
+def default_event_log_path(registry_path: str | Path | None = None) -> Path:
+    override = os.environ.get("SELFCONNECT_MESH_EVENT_LOG")
+    if override:
+        return Path(override)
+    base = Path(registry_path) if registry_path else default_registry_path()
+    return base.with_name("mesh_events.jsonl")
 
 
 def _now() -> float:
@@ -121,6 +132,208 @@ def save_registry(registry: dict[str, Any], path: str | Path | None = None) -> P
     tmp.write_text(json.dumps(registry, indent=2, sort_keys=True), encoding="utf-8")
     tmp.replace(registry_path)
     return registry_path
+
+
+def _canonical_event_bytes(record: dict[str, Any]) -> bytes:
+    payload = dict(record)
+    payload.pop("event_hash", None)
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+
+
+def compute_event_hash(record: dict[str, Any]) -> str:
+    return hashlib.sha256(_canonical_event_bytes(record)).hexdigest()
+
+
+def _last_event_hash(path: Path) -> str:
+    if not path.exists():
+        return EVENT_GENESIS_HASH
+    last_hash = EVENT_GENESIS_HASH
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(item, dict):
+            last_hash = str(item.get("event_hash") or compute_event_hash(item))
+    return last_hash
+
+
+def append_event(
+    event_type: str,
+    *,
+    role: str = "",
+    mesh: str = DEFAULT_MESH,
+    birth_id: str = "",
+    generation: int | None = None,
+    agent: str = "",
+    hwnd: int | None = None,
+    task: str = "",
+    status: str = "",
+    profile: str = "",
+    summary: str = "",
+    data: dict[str, Any] | None = None,
+    registry_path: str | Path | None = None,
+    event_log_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Append a durable mesh event.
+
+    The registry is current state; this JSONL file is the history that survives
+    role replacement, terminal closure, and migration.
+    """
+    path = Path(event_log_path) if event_log_path else default_event_log_path(registry_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    prev_event_hash = _last_event_hash(path)
+    record = {
+        "version": EVENT_LOG_VERSION,
+        "event_id": uuid.uuid4().hex,
+        "event_type": event_type,
+        "created_at": _now(),
+        "prev_event_hash": prev_event_hash,
+        "mesh": mesh,
+        "role": role,
+        "birth_id": birth_id,
+        "generation": generation,
+        "agent": agent,
+        "hwnd": hwnd,
+        "task": task,
+        "status": status,
+        "profile": profile,
+        "summary": summary,
+        "data": data or {},
+    }
+    record["event_hash"] = compute_event_hash(record)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, sort_keys=True, ensure_ascii=True) + "\n")
+    return {"ok": True, "path": str(path), "event": record}
+
+
+def load_events(
+    *,
+    limit: int = 50,
+    role: str = "",
+    birth_id: str = "",
+    event_type: str = "",
+    registry_path: str | Path | None = None,
+    event_log_path: str | Path | None = None,
+) -> dict[str, Any]:
+    path = Path(event_log_path) if event_log_path else default_event_log_path(registry_path)
+    if not path.exists():
+        return {"ok": True, "path": str(path), "events": [], "parse_error_count": 0}
+    events: list[dict[str, Any]] = []
+    parse_error_count = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except Exception:
+            parse_error_count += 1
+            continue
+        if not isinstance(item, dict):
+            parse_error_count += 1
+            continue
+        if role and item.get("role") != role:
+            continue
+        if birth_id and item.get("birth_id") != birth_id:
+            continue
+        if event_type and item.get("event_type") != event_type:
+            continue
+        events.append(item)
+    return {
+        "ok": True,
+        "path": str(path),
+        "events": events[-max(1, int(limit)) :],
+        "parse_error_count": parse_error_count,
+    }
+
+
+def verify_events(
+    *,
+    registry_path: str | Path | None = None,
+    event_log_path: str | Path | None = None,
+) -> dict[str, Any]:
+    path = Path(event_log_path) if event_log_path else default_event_log_path(registry_path)
+    if not path.exists():
+        return {
+            "ok": True,
+            "path": str(path),
+            "events_checked": 0,
+            "head_hash": EVENT_GENESIS_HASH,
+            "errors": [],
+        }
+
+    errors: list[dict[str, Any]] = []
+    expected_prev_hash = EVENT_GENESIS_HASH
+    head_hash = EVENT_GENESIS_HASH
+    events_checked = 0
+
+    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except Exception as exc:
+            errors.append({"line": line_no, "error": "parse_error", "detail": str(exc)})
+            continue
+        if not isinstance(item, dict):
+            errors.append({"line": line_no, "error": "not_object"})
+            continue
+
+        events_checked += 1
+        stored_prev_hash = item.get("prev_event_hash")
+        stored_hash = item.get("event_hash")
+        computed_hash = compute_event_hash(item)
+
+        if stored_prev_hash is None or stored_hash is None:
+            errors.append({"line": line_no, "error": "missing_hash_chain"})
+        elif stored_prev_hash != expected_prev_hash:
+            errors.append({
+                "line": line_no,
+                "error": "chain_break",
+                "expected_prev_event_hash": expected_prev_hash,
+                "actual_prev_event_hash": stored_prev_hash,
+            })
+        if stored_hash is None:
+            errors.append({"line": line_no, "error": "missing_event_hash"})
+        elif stored_hash != computed_hash:
+            errors.append({
+                "line": line_no,
+                "error": "hash_mismatch",
+                "expected_event_hash": computed_hash,
+                "actual_event_hash": stored_hash,
+            })
+
+        head_hash = computed_hash
+        expected_prev_hash = head_hash
+
+    return {
+        "ok": not errors,
+        "path": str(path),
+        "events_checked": events_checked,
+        "head_hash": head_hash,
+        "errors": errors,
+    }
+
+
+def _agent_event_payload(agent: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "role": str(agent.get("role", "")),
+        "mesh": str(agent.get("mesh", DEFAULT_MESH)),
+        "birth_id": str(agent.get("birth_id", "")),
+        "generation": int(agent.get("generation", 0) or 0),
+        "agent": str(agent.get("agent", "")),
+        "hwnd": int(agent.get("hwnd", 0) or 0),
+        "task": str(agent.get("task", "")),
+        "status": str(agent.get("status", "")),
+        "profile": str(agent.get("profile", "")),
+    }
 
 
 def infer_agent_type(title: str, exe_name: str = "") -> str:
@@ -244,6 +457,13 @@ def register_agent(
         registry["agents"].append(record)
 
     saved = save_registry(registry, registry_path)
+    append_event(
+        "role_registered" if not existing else "role_updated",
+        **_agent_event_payload(record),
+        summary="window role registered" if not existing else "window role refreshed",
+        data={"replace": replace, "window_fingerprint": record["window_fingerprint"]},
+        registry_path=saved,
+    )
     return {"ok": True, "path": str(saved), "agent": record}
 
 
@@ -340,6 +560,13 @@ def register_virtual_agent(
         registry["agents"].append(record)
 
     saved = save_registry(registry, registry_path)
+    append_event(
+        "virtual_role_registered" if not existing else "virtual_role_updated",
+        **_agent_event_payload(record),
+        summary="virtual role registered" if not existing else "virtual role refreshed",
+        data={"transport": transport, "endpoint": endpoint, "model": model, "replace": replace},
+        registry_path=saved,
+    )
     return {"ok": True, "path": str(saved), "agent": record}
 
 
@@ -379,6 +606,18 @@ def update_agent(
         existing["missed_acks"] = max(0, int(missed_acks))
     existing["last_seen"] = _now()
     saved = save_registry(registry, registry_path)
+    append_event(
+        "role_status_updated",
+        **_agent_event_payload(existing),
+        summary="role updated",
+        data={
+            "task_changed": task is not None,
+            "status_changed": status is not None,
+            "profile_changed": profile is not None,
+            "notes_changed": notes is not None,
+        },
+        registry_path=saved,
+    )
     return {"ok": True, "path": str(saved), "agent": existing}
 
 
@@ -392,6 +631,13 @@ def heartbeat(role: str, *, mesh: str = DEFAULT_MESH, registry_path: str | Path 
         existing["guard_ok"] = None
         existing["guard_reasons"] = []
         saved = save_registry(registry, registry_path)
+        append_event(
+            "role_heartbeat",
+            **_agent_event_payload(existing),
+            summary="virtual role heartbeat",
+            data={"guard_ok": None},
+            registry_path=saved,
+        )
         return {"ok": True, "path": str(saved), "agent": existing, "guard": None}
     guard = sc_cli.verify_target(
         int(existing["hwnd"]),
@@ -404,17 +650,32 @@ def heartbeat(role: str, *, mesh: str = DEFAULT_MESH, registry_path: str | Path 
     existing["guard_ok"] = guard["ok"]
     existing["guard_reasons"] = guard["reasons"]
     saved = save_registry(registry, registry_path)
+    append_event(
+        "role_heartbeat",
+        **_agent_event_payload(existing),
+        summary="window role heartbeat",
+        data={"guard_ok": guard["ok"], "guard_reasons": guard["reasons"]},
+        registry_path=saved,
+    )
     return {"ok": guard["ok"], "path": str(saved), "agent": existing, "guard": guard}
 
 
 def remove_agent(role: str, *, mesh: str = DEFAULT_MESH, registry_path: str | Path | None = None) -> dict[str, Any]:
     registry = load_registry(registry_path)
+    existing = _find_agent(registry, mesh, role)
     before = len(registry.get("agents", []))
     registry["agents"] = [
         agent for agent in registry.get("agents", [])
         if not (agent.get("mesh") == mesh and agent.get("role") == role)
     ]
     saved = save_registry(registry, registry_path)
+    if existing:
+        append_event(
+            "role_removed",
+            **_agent_event_payload(existing),
+            summary="role removed from active registry",
+            registry_path=saved,
+        )
     return {"ok": len(registry["agents"]) != before, "path": str(saved), "removed": before - len(registry["agents"])}
 
 
@@ -630,6 +891,13 @@ def write_compact_handoff(
     if status:
         existing["status"] = status
     saved = save_registry(registry, registry_path)
+    append_event(
+        "role_handoff",
+        **_agent_event_payload(existing),
+        summary=summary or "compact handoff written",
+        data={"handoff_path": str(path), "next_action": next_action, "tests": tests},
+        registry_path=saved,
+    )
     return {"ok": True, "path": str(path), "registry_path": str(saved), "agent": existing, "health": health, "repo": snapshot}
 
 
@@ -767,6 +1035,31 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("watch")
     p.add_argument("--json", action="store_true")
 
+    p = sub.add_parser("event")
+    p.add_argument("--type", dest="event_type", required=True)
+    p.add_argument("--mesh", default=DEFAULT_MESH)
+    p.add_argument("--role", default="")
+    p.add_argument("--birth-id", default="")
+    p.add_argument("--generation", type=int, default=None)
+    p.add_argument("--agent", default="")
+    p.add_argument("--hwnd", type=int, default=None)
+    p.add_argument("--task", default="")
+    p.add_argument("--status", default="")
+    p.add_argument("--profile", default="")
+    p.add_argument("--summary", default="")
+    p.add_argument("--data-json", default="", help="optional JSON object to attach")
+    p.add_argument("--event-log", default="")
+
+    p = sub.add_parser("events")
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--role", default="")
+    p.add_argument("--birth-id", default="")
+    p.add_argument("--type", dest="event_type", default="")
+    p.add_argument("--event-log", default="")
+
+    p = sub.add_parser("verify-events")
+    p.add_argument("--event-log", default="")
+
     p = sub.add_parser("handoff")
     p.add_argument("--role", required=True)
     p.add_argument("--mesh", default=DEFAULT_MESH)
@@ -834,6 +1127,45 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "watch":
         report = watch_report(load_registry(registry_path))
         return _print_json(report) if args.json else _print_watch(report)
+    if args.command == "event":
+        data = {}
+        if args.data_json:
+            try:
+                data = json.loads(args.data_json)
+            except Exception as exc:
+                return _print_json({"ok": False, "error": f"invalid --data-json: {exc}"})
+            if not isinstance(data, dict):
+                return _print_json({"ok": False, "error": "--data-json must decode to a JSON object"})
+        return _print_json(append_event(
+            args.event_type,
+            mesh=args.mesh,
+            role=args.role,
+            birth_id=args.birth_id,
+            generation=args.generation,
+            agent=args.agent,
+            hwnd=args.hwnd,
+            task=args.task,
+            status=args.status,
+            profile=args.profile,
+            summary=args.summary,
+            data=data,
+            registry_path=registry_path,
+            event_log_path=args.event_log or None,
+        ))
+    if args.command == "events":
+        return _print_json(load_events(
+            limit=args.limit,
+            role=args.role,
+            birth_id=args.birth_id,
+            event_type=args.event_type,
+            registry_path=registry_path,
+            event_log_path=args.event_log or None,
+        ))
+    if args.command == "verify-events":
+        return _print_json(verify_events(
+            registry_path=registry_path,
+            event_log_path=args.event_log or None,
+        ))
     if args.command == "handoff":
         return _print_json(write_compact_handoff(
             args.role,
