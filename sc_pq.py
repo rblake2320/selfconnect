@@ -47,7 +47,7 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 # Classical Ed25519 (from sc_identity)
 # ---------------------------------------------------------------------------
-from sc_identity import AgentIdentity, DelegationToken, Caveat
+from sc_identity import AgentIdentity, Caveat, DelegationToken
 
 # ---------------------------------------------------------------------------
 # ML-DSA via dilithium-py
@@ -114,7 +114,7 @@ class HybridSignature:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "HybridSignature":
+    def from_dict(cls, d: dict) -> HybridSignature:
         return cls(
             ed25519_sig=base64.b64decode(d["ed25519_sig"]),
             mldsa_sig=base64.b64decode(d["mldsa_sig"]),
@@ -170,7 +170,7 @@ class HybridSignature:
         }
 
     @classmethod
-    def from_jwt_claims(cls, claims: dict) -> "HybridSignature":
+    def from_jwt_claims(cls, claims: dict) -> HybridSignature:
         """
         Reconstruct a HybridSignature from JWT claims produced by
         ``to_jwt_claims``.
@@ -250,7 +250,7 @@ class HybridIdentity:
         cls,
         label: str = "",
         mldsa_level: MLDSALevel = MLDSALevel.LEVEL_3,
-    ) -> "HybridIdentity":
+    ) -> HybridIdentity:
         """Generate a fresh Ed25519 + ML-DSA hybrid keypair."""
         classical = AgentIdentity.generate(label=label)
         impl = mldsa_level._impl()
@@ -258,7 +258,7 @@ class HybridIdentity:
         return cls(classical, pk, sk, mldsa_level)
 
     @classmethod
-    def from_bundle(cls, bundle: dict) -> "HybridIdentity":
+    def from_bundle(cls, bundle: dict) -> HybridIdentity:
         """Deserialise from an export_bundle() dict."""
         classical = AgentIdentity.from_private_pem(
             bundle["ed25519_private_pem"].encode(),
@@ -452,7 +452,7 @@ class HybridDelegationToken(DelegationToken):
         subject_did: str,
         scope: list[str],
         expires_in: float = 3600.0,
-    ) -> "HybridDelegationToken":
+    ) -> HybridDelegationToken:
         """Mint a new HybridDelegationToken signed by a HybridIdentity."""
         # Mint the classical token first (inherits all classical logic)
         classical = DelegationToken.mint(
@@ -535,7 +535,7 @@ class HybridDelegationToken(DelegationToken):
         return d
 
     @classmethod
-    def from_dict(cls, d: dict) -> "HybridDelegationToken":
+    def from_dict(cls, d: dict) -> HybridDelegationToken:
         if d.get("schema") != cls.SCHEMA:
             raise ValueError(f"Not a hybrid delegation token (schema={d.get('schema')!r})")
         hybrid_sig = None

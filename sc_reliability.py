@@ -50,10 +50,10 @@ import threading
 import time
 import traceback
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Optional
-
+from typing import Any, ClassVar, Optional
 
 # ---------------------------------------------------------------------------
 # TrialOutcome
@@ -180,7 +180,7 @@ class ReliabilityReport:
             json.dump(self.to_dict(), f, indent=2)
 
     @classmethod
-    def load(cls, path: str) -> "ReliabilityReport":
+    def load(cls, path: str) -> ReliabilityReport:
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
         trials = [
@@ -602,7 +602,7 @@ class GoalDriftMonitor:
     """
 
     # Default severity thresholds (absolute delta from baseline)
-    DEFAULT_THRESHOLDS: dict[str, dict[str, float]] = {
+    DEFAULT_THRESHOLDS: ClassVar[dict[str, dict[str, float]]] = {
         "pass_at_1": {
             DriftSeverity.INFO.value:     0.02,
             DriftSeverity.WARNING.value:  0.05,
