@@ -40,8 +40,8 @@ import ctypes
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
