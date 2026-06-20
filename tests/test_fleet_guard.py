@@ -134,3 +134,30 @@ def test_guard_cli_reads_state_file(capsys):
         assert output["verdict"] == "capture"
     finally:
         temp_dir.cleanup()
+
+
+def test_guard_cli_reports_missing_state_file(capsys):
+    missing = Path(tempfile.gettempdir()) / "selfconnect_missing_fleet_state.json"
+    if missing.exists():
+        missing.unlink()
+
+    assert fleet.main(["guard", "--state-json", str(missing)]) == 2
+    output = json.loads(capsys.readouterr().out)
+    assert output["ok"] is False
+    assert output["verdict"] == "input_error"
+    assert output["error"] == "state_json_missing"
+
+
+def test_guard_cli_reports_invalid_state_json(capsys):
+    temp_dir = tempfile.TemporaryDirectory()
+    state_path = Path(temp_dir.name) / "bad.json"
+
+    try:
+        state_path.write_text("{bad", encoding="utf-8")
+        assert fleet.main(["guard", "--state-json", str(state_path)]) == 2
+        output = json.loads(capsys.readouterr().out)
+        assert output["ok"] is False
+        assert output["verdict"] == "input_error"
+        assert output["error"] == "state_json_invalid"
+    finally:
+        temp_dir.cleanup()

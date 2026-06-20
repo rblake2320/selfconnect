@@ -397,6 +397,19 @@ def _print_json(data: dict[str, Any]) -> int:
     return 0
 
 
+def _print_json_error(kind: str, message: str, **extra: Any) -> int:
+    payload = {
+        "ok": False,
+        "verdict": "input_error",
+        "action": "no_op",
+        "error": kind,
+        "message": message,
+    }
+    payload.update(extra)
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 2
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="selfconnect-fleet", description="Evaluate SelfConnect fleet benchmark gates")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -451,7 +464,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "resources":
         return _print_json(resource_snapshot())
     if args.command == "guard":
-        state = _load_json_file(args.state_json)
+        try:
+            state = _load_json_file(args.state_json)
+        except FileNotFoundError:
+            return _print_json_error(
+                "state_json_missing",
+                "fleet guard state file does not exist",
+                path=args.state_json,
+            )
+        except json.JSONDecodeError as exc:
+            return _print_json_error(
+                "state_json_invalid",
+                "fleet guard state file is not valid JSON",
+                path=args.state_json,
+                line=exc.lineno,
+                column=exc.colno,
+            )
         return _print_json(evaluate_fleet(
             list(state.get("agents", [])),
             resources=state.get("resources") or resource_snapshot(),
