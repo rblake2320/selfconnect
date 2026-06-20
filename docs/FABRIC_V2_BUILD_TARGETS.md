@@ -118,6 +118,41 @@ Fabric V2 should add:
 Win32 remains the discovery, identity, bootstrap, and semantic execution layer.
 The high-rate mesh data plane moves to the Fabric V2 adapter.
 
+## Patent And Competitor Boundary
+
+Read these before turning Fabric V2 into claims or marketing:
+
+- `docs/PATENT_DESIGN_AROUND_DEFENSE.md`
+- `docs/LANCELOT_UAB_COMPETITIVE_DEFENSE.md`
+- `docs/ARCHITECTURE_CONSENSUS_2026-06-20.md`
+
+Fabric V2 should strengthen the SelfConnect lane without drifting into claims
+others already publicly occupy. Do not claim:
+
+- first generic desktop automation;
+- first AI-to-AI desktop communication;
+- first UIA app control;
+- first adaptive cascade/channel selection;
+- CAPTCHA bypass or anti-bot evasion.
+
+Do claim and prove the harder-to-design-around SelfConnect chain:
+
+- authority from OS or hardware-backed local identity;
+- fail-closed live target-fact binding before actuation;
+- surface-specific native channel routing;
+- echo-filtered readback and delivery evidence;
+- role freshness through birth ID, generation, lease, and target facts;
+- optional MCP/API adapters that are not required for the local control path;
+- execution hierarchy that uses deterministic replay before model reasoning;
+- sign-once/MAC-many governed session traffic;
+- benchmarked scale with bounded mailboxes, replay rejection, and evidence
+  persistence.
+
+The competitor response to assume: they will replace individual nouns. They may
+replace named pipes with another IPC, `HWND` with an accessibility runtime ID,
+HMAC with AEAD, UIA with DOM or AXUIElement, or local mailboxes with a broker.
+The defense is to claim the invariant chain and disclose multiple species.
+
 ## Branching And Version Control
 
 Use smart version control:

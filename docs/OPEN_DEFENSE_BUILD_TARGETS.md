@@ -18,6 +18,8 @@ Authoritative planning docs:
 - `docs/ARCHITECTURE_AUDIT_2026-06-20.md`
 - `docs/ARCHITECTURE_CONSENSUS_2026-06-20.md`
 - `docs/FABRIC_V2_BUILD_TARGETS.md`
+- `docs/PATENT_DESIGN_AROUND_DEFENSE.md`
+- `docs/LANCELOT_UAB_COMPETITIVE_DEFENSE.md`
 
 Consensus sequence:
 
