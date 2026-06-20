@@ -2,11 +2,35 @@
 
 # Open Defense Build Targets
 
-Last updated: 2026-06-17
+Last updated: 2026-06-20
 
 This document identifies the open work that most strengthens SelfConnect's
 defensive patent and competitive position. It is an engineering planning note,
 not legal advice and not a public disclosure package.
+
+## Architecture Pivot - June 20, 2026
+
+The current build target is no longer "one more demo." The next proof is scale
+and throughput discipline.
+
+Authoritative planning docs:
+
+- `docs/ARCHITECTURE_AUDIT_2026-06-20.md`
+- `docs/ARCHITECTURE_CONSENSUS_2026-06-20.md`
+- `docs/FABRIC_V2_BUILD_TARGETS.md`
+
+Consensus sequence:
+
+```text
+File now on what is already proven.
+Benchmark now against the current transport.
+Then build Fabric V2 and prove the delta.
+```
+
+Treat `20-agent` as a stress profile, not a literal product requirement. The
+actual requirement is stable N-agent operation beyond the current live mesh size
+without wrong-window writes, route confusion, replay acceptance, unbounded queue
+growth, or evidence loss.
 
 ## Current Open Mesh Lanes
 
