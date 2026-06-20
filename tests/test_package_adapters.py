@@ -679,11 +679,13 @@ def test_pyproject_exports_package_adapter_entry_points():
     assert 'selfconnect = "sc_cli:main"' in text
     assert 'selfconnect-mcp = "sc_mcp:main"' in text
     assert 'selfconnect-mesh = "sc_mesh_registry:main"' in text
+    assert 'selfconnect-fleet = "sc_fleet_guard:main"' in text
     assert '"sc_cli.py"' in text
     assert '"sc_mcp.py"' in text
     assert '"sc_mesh_registry.py"' in text
     assert '"sc_mesh_lease.py"' in text
     assert '"sc_echo_filter.py"' in text
+    assert '"sc_fleet_guard.py"' in text
     assert '"experiments/win32_probe/CAPABILITY_BACKLOG.md"' in text
     assert '"experiments/win32_probe/SERVICE_SID_DAEMON.md"' in text
     assert '"experiments/win32_probe/channel_router_composition_probe.py"' in text
@@ -703,6 +705,10 @@ def test_pyproject_exports_package_adapter_entry_points():
     assert '"docs/CLAIM_EVIDENCE_MATRIX.md"' in text
     assert '"docs/LANCELOT_UAB_COMPETITIVE_DEFENSE.md"' in text
     assert '"docs/AWS_AI_TO_AI_EVIDENCE_INDEX.md"' in text
+    assert '"docs/ARCHITECTURE_AUDIT_2026-06-20.md"' in text
+    assert '"docs/ARCHITECTURE_CONSENSUS_2026-06-20.md"' in text
+    assert '"docs/FABRIC_V2_BUILD_TARGETS.md"' in text
+    assert '"docs/FLEET_AUTO_HALT_PROTOCOL.md"' in text
     assert '"docs/PATENT_DESIGN_AROUND_DEFENSE.md"' in text
     assert '"docs/OPEN_DEFENSE_BUILD_TARGETS.md"' in text
     assert '"docs/PATENT_PRIOR_ART_SNAPSHOT.md"' in text

@@ -87,6 +87,7 @@ selfconnect-mesh repo
 selfconnect-mesh event --type task_assigned --role codex-2 --summary "specific task"
 selfconnect-mesh events --role codex-2 --limit 20
 selfconnect-mesh verify-events
+selfconnect-fleet resources
 ```
 
 - Roles must be unique. Do not create multiple `B` roles; use names like
@@ -103,6 +104,9 @@ selfconnect-mesh verify-events
 - Run `selfconnect-mesh repo` before and after meaningful build work. Mesh
   events automatically include branch, HEAD commit, upstream, ahead/behind,
   dirty flag, dirty count, and a small status sample.
+- For staged fleet benchmarks, use `selfconnect-fleet guard` as the non-
+  destructive auto-halt evaluator. A halt means stop assigning new work and
+  capture evidence by default, not kill terminals.
 - If a role migrates to a new terminal, use `--replace`; the registry will issue
   a new `birth_id` and increment the role generation.
 - Set `--profile explore` for local capability testing and `--profile governed`

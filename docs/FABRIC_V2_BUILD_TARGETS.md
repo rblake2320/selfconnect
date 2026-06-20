@@ -54,6 +54,7 @@ Expected artifacts:
 - `experiments/fabric_v2/n_agent_benchmark.py`
 - `experiments/fabric_v2/results/current_transport_<timestamp>_redacted.json`
 - `docs/FABRIC_V2_BENCHMARK_RESULTS.md`
+- `docs/FLEET_AUTO_HALT_PROTOCOL.md`
 - tests for metrics parsing and pass/fail gate evaluation.
 
 ## Benchmark Metrics
