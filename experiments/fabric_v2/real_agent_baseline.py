@@ -32,6 +32,7 @@ import sc_cli
 
 DEFAULT_RESULTS = ROOT / "experiments" / "fabric_v2" / "results"
 TERMINAL_CLASS = "CASCADIA_HOSTING_WINDOW_CLASS"
+RUN_TITLE_PREFIX = "SC_REAL5_"
 
 
 @dataclass
@@ -145,6 +146,34 @@ def _gemini_settings_path() -> Path:
     return Path.home() / ".gemini" / "settings.json"
 
 
+def _set_gemini_auth_type(auth_type: str) -> None:
+    if auth_type not in GEMINI_AUTH_CHOICES or auth_type == "current":
+        raise ValueError(f"cannot set Gemini auth type: {auth_type}")
+
+    path = _gemini_settings_path()
+    data: dict[str, Any] = {}
+    if path.exists():
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8-sig"))
+            if isinstance(parsed, dict):
+                data = parsed
+        except json.JSONDecodeError:
+            data = {}
+
+    security = data.get("security")
+    if not isinstance(security, dict):
+        security = {}
+    auth = security.get("auth")
+    if not isinstance(auth, dict):
+        auth = {}
+    auth["selectedType"] = auth_type
+    security["auth"] = auth
+    data["security"] = security
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
 @contextmanager
 def _temporary_gemini_auth_type(auth_type: str) -> Iterator[None]:
     """Temporarily select a Gemini CLI auth mode and restore the file exactly.
@@ -165,27 +194,7 @@ def _temporary_gemini_auth_type(auth_type: str) -> Iterator[None]:
     path = _gemini_settings_path()
     original = path.read_bytes() if path.exists() else None
     try:
-        data: dict[str, Any] = {}
-        if original:
-            try:
-                parsed = json.loads(original.decode("utf-8-sig"))
-                if isinstance(parsed, dict):
-                    data = parsed
-            except json.JSONDecodeError:
-                data = {}
-
-        security = data.get("security")
-        if not isinstance(security, dict):
-            security = {}
-        auth = security.get("auth")
-        if not isinstance(auth, dict):
-            auth = {}
-        auth["selectedType"] = auth_type
-        security["auth"] = auth
-        data["security"] = security
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        _set_gemini_auth_type(auth_type)
         yield
     finally:
         if original is None:
@@ -207,6 +216,118 @@ def _baseline_file_name(provider_plan: list[str], count: int) -> str | None:
 
 def _has_exact_line(text: str, expected: str) -> bool:
     return any(line.strip() == expected for line in text.splitlines())
+
+
+def _state_path(results_dir: Path, run_id: str) -> Path:
+    return results_dir / f"real_agent_state_{run_id}.json"
+
+
+def _stale_run_windows() -> list[dict[str, Any]]:
+    return [
+        row
+        for row in sc_cli.list_window_records(query=RUN_TITLE_PREFIX, limit=300)
+        if RUN_TITLE_PREFIX in str(row.get("title", ""))
+    ]
+
+
+def _cleanup_run_command(run_id: str) -> str:
+    escaped = run_id.replace("'", "''")
+    return (
+        "$run = '" + escaped + "'\n"
+        "$pattern = \"selfconnect_real_agent_baseline_$run\"\n"
+        "$procs = @(Get-CimInstance Win32_Process | Where-Object { "
+        "$_.Name -eq 'powershell.exe' -and $_.CommandLine -like \"*$pattern*\" })\n"
+        "$ids = @($procs | ForEach-Object { $_.ProcessId })\n"
+        "$ids | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }\n"
+        "Start-Sleep -Seconds 2\n"
+        "$remaining = @(Get-CimInstance Win32_Process | Where-Object { "
+        "$_.Name -eq 'powershell.exe' -and $_.CommandLine -like \"*$pattern*\" })\n"
+        "[pscustomobject]@{ stopped = $ids.Count; remaining = $remaining.Count } | ConvertTo-Json -Compress\n"
+    )
+
+
+def cleanup_run(run_id: str, *, restore_gemini_auth: str = "current") -> dict[str, Any]:
+    if not run_id.startswith(RUN_TITLE_PREFIX):
+        raise ValueError(f"cleanup run id must start with {RUN_TITLE_PREFIX}")
+    completed = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            _cleanup_run_command(run_id),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    payload: dict[str, Any] = {
+        "run_id": run_id,
+        "returncode": completed.returncode,
+        "stdout": completed.stdout.strip(),
+        "stderr": completed.stderr.strip(),
+    }
+    try:
+        parsed = json.loads(completed.stdout)
+        if isinstance(parsed, dict):
+            payload.update(parsed)
+    except json.JSONDecodeError:
+        pass
+    if restore_gemini_auth != "current":
+        _set_gemini_auth_type(restore_gemini_auth)
+        payload["gemini_auth_restored_to"] = restore_gemini_auth
+    return payload
+
+
+def _write_run_state(
+    *,
+    results_dir: Path,
+    run_id: str,
+    phase: str,
+    started: float,
+    agents: list[AgentRun],
+    processes: list[subprocess.Popen[bytes]],
+    pending: set[str],
+    provider_plan: list[str],
+    gemini_auth_type: str,
+) -> None:
+    results_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "schema": "selfconnect.real_agent_state.v1",
+        "run_id": run_id,
+        "phase": phase,
+        "agent_count": len(agents),
+        "provider_counts": _provider_counts(provider_plan),
+        "gemini_auth_type": gemini_auth_type,
+        "duration_ms": (time.perf_counter() - started) * 1000.0,
+        "process_pids": [proc.pid for proc in processes],
+        "pending_roles": sorted(pending),
+        "pass_count": sum(1 for agent in agents if agent.status == "pass"),
+        "fail_count": sum(1 for agent in agents if agent.status == "fail"),
+        "agents": [
+            {
+                "provider": agent.provider,
+                "role": agent.role,
+                "expected_hash": _sha256(agent.expected),
+                "hwnd": agent.hwnd,
+                "pid": agent.pid,
+                "title": agent.title,
+                "launch_ms": agent.launch_ms,
+                "ack_ms": agent.ack_ms,
+                "status": agent.status,
+                "error": agent.error,
+                "diagnosis": agent.diagnosis,
+            }
+            for agent in agents
+        ],
+    }
+    path = _state_path(results_dir, run_id)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    tmp.replace(path)
 
 
 def _ps_quote(value: str) -> str:
@@ -542,8 +663,26 @@ def run_baseline(
     results_dir: Path,
     keep_open: bool,
     gemini_auth_type: str = "current",
+    allow_stale_windows: bool = False,
 ) -> dict[str, Any]:
     results_dir.mkdir(parents=True, exist_ok=True)
+    stale_windows = _stale_run_windows()
+    if stale_windows and not allow_stale_windows:
+        return {
+            "schema": "selfconnect.real_agent_baseline.v3",
+            "run_id": "",
+            "verdict": "FAIL",
+            "error": "stale SC_REAL5_ windows exist; clean them before starting a new run",
+            "stale_window_count": len(stale_windows),
+            "stale_windows": [
+                {
+                    "hwnd": int(row.get("hwnd", 0)),
+                    "pid": int(row.get("pid", 0)),
+                    "title": str(row.get("title", "")),
+                }
+                for row in stale_windows
+            ],
+        }
     run_id = time.strftime("SC_REAL5_%Y%m%d_%H%M%S")
     workdir = Path(tempfile.gettempdir()) / f"selfconnect_real_agent_baseline_{run_id}"
     workdir.mkdir(parents=True, exist_ok=True)
@@ -589,6 +728,18 @@ def run_baseline(
 
             deadline = time.perf_counter() + timeout_s
             pending = {agent.role for agent in agents}
+            last_progress = 0.0
+            _write_run_state(
+                results_dir=results_dir,
+                run_id=run_id,
+                phase="spawned",
+                started=started,
+                agents=agents,
+                processes=processes,
+                pending=pending,
+                provider_plan=provider_plan,
+                gemini_auth_type=active_gemini_auth_type,
+            )
             while pending and time.perf_counter() < deadline:
                 for agent in agents:
                     if agent.role not in pending:
@@ -610,6 +761,35 @@ def run_baseline(
                         agent.ack_ms = (time.perf_counter() - started) * 1000.0
                         agent.status = "pass"
                         pending.remove(agent.role)
+                now = time.perf_counter()
+                if now - last_progress >= 10.0 or not pending:
+                    last_progress = now
+                    print(
+                        json.dumps(
+                            {
+                                "run_id": run_id,
+                                "phase": "polling",
+                                "pass_count": sum(
+                                    1 for agent in agents if agent.status == "pass"
+                                ),
+                                "pending_count": len(pending),
+                                "duration_ms": (now - started) * 1000.0,
+                                "state_path": str(_state_path(results_dir, run_id)),
+                            }
+                        ),
+                        flush=True,
+                    )
+                    _write_run_state(
+                        results_dir=results_dir,
+                        run_id=run_id,
+                        phase="polling" if pending else "acks-complete",
+                        started=started,
+                        agents=agents,
+                        processes=processes,
+                        pending=pending,
+                        provider_plan=provider_plan,
+                        gemini_auth_type=active_gemini_auth_type,
+                    )
                 time.sleep(1.0)
 
             for agent in agents:
@@ -621,6 +801,17 @@ def run_baseline(
                         else:
                             agent.error = "expected ACK not observed via UIA before timeout"
                     _diagnose_failed_agent(agent)
+            _write_run_state(
+                results_dir=results_dir,
+                run_id=run_id,
+                phase="classifying",
+                started=started,
+                agents=agents,
+                processes=processes,
+                pending=pending,
+                provider_plan=provider_plan,
+                gemini_auth_type=active_gemini_auth_type,
+            )
 
             passed = all(agent.status == "pass" for agent in agents)
             ack_times = [agent.ack_ms for agent in agents if agent.ack_ms is not None]
@@ -717,6 +908,17 @@ def run_baseline(
                 baseline.write_text(json.dumps(result, indent=2), encoding="utf-8")
                 result["baseline_path"] = str(baseline)
             result["result_path"] = str(out_path)
+            _write_run_state(
+                results_dir=results_dir,
+                run_id=run_id,
+                phase="complete",
+                started=started,
+                agents=agents,
+                processes=processes,
+                pending=set(),
+                provider_plan=provider_plan,
+                gemini_auth_type=active_gemini_auth_type,
+            )
             return result
         finally:
             # Keep visible windows open by default for inspection. If --close-windows
@@ -747,6 +949,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS)
     parser.add_argument("--close-windows", action="store_true")
     parser.add_argument(
+        "--allow-stale-windows",
+        action="store_true",
+        help="allow starting a run even if old SC_REAL5_ windows are visible",
+    )
+    parser.add_argument(
+        "--cleanup-run",
+        default=None,
+        help="terminate visible child shells for a specific SC_REAL5_ run id and exit",
+    )
+    parser.add_argument(
+        "--cleanup-restore-gemini-auth",
+        choices=GEMINI_AUTH_CHOICES,
+        default="oauth-personal",
+        help="Gemini auth selector to set after --cleanup-run; use current to leave unchanged",
+    )
+    parser.add_argument(
         "--gemini-auth-type",
         choices=GEMINI_AUTH_CHOICES,
         default="current",
@@ -757,6 +975,14 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+
+    if args.cleanup_run:
+        result = cleanup_run(
+            args.cleanup_run,
+            restore_gemini_auth=args.cleanup_restore_gemini_auth,
+        )
+        print(json.dumps(result, indent=2))
+        return 0 if int(result.get("remaining", 0)) == 0 else 1
 
     if args.preflight_only:
         result = run_provider_preflight(
@@ -776,6 +1002,7 @@ def main(argv: list[str] | None = None) -> int:
         results_dir=args.results_dir,
         keep_open=not args.close_windows,
         gemini_auth_type=args.gemini_auth_type,
+        allow_stale_windows=args.allow_stale_windows,
     )
     print(json.dumps(result, indent=2))
     return 0 if result["verdict"] == "PASS" else 1

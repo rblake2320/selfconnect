@@ -6,6 +6,7 @@ import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from experiments.fabric_v2 import real_agent_baseline as baseline
@@ -167,6 +168,57 @@ def test_temporary_gemini_auth_type_removes_created_settings(monkeypatch: pytest
             assert data["security"]["auth"]["selectedType"] == "gemini-api-key"
 
         assert not settings.exists()
+
+
+def test_cleanup_run_command_targets_run_workspace() -> None:
+    command = baseline._cleanup_run_command("SC_REAL5_20260621_070344")
+
+    assert "selfconnect_real_agent_baseline_$run" in command
+    assert "Stop-Process" in command
+    assert "powershell.exe" in command
+    assert "SC_REAL5_20260621_070344" in command
+
+
+def test_cleanup_run_rejects_non_real5_id() -> None:
+    with pytest.raises(ValueError, match="must start"):
+        baseline.cleanup_run("not-a-run")
+
+
+def test_write_run_state_records_progress_without_raw_nonce() -> None:
+    with local_tmpdir() as tmpdir:
+        agent = baseline.AgentRun(
+            provider="gemini",
+            role="realgemini-1",
+            nonce="SECRET_NONCE",
+            expected="ACK_REAL_VENDOR provider=gemini role=realgemini-1 nonce=SECRET_NONCE",
+            script=tmpdir / "a.ps1",
+            log=tmpdir / "a.log",
+            status="pass",
+            ack_ms=123.0,
+        )
+
+        baseline._write_run_state(
+            results_dir=tmpdir,
+            run_id="SC_REAL5_TEST",
+            phase="polling",
+            started=0.0,
+            agents=[agent],
+            processes=[SimpleNamespace(pid=1234)],  # type: ignore[list-item]
+            pending=set(),
+            provider_plan=["gemini"],
+            gemini_auth_type="gemini-api-key",
+        )
+
+        text = (tmpdir / "real_agent_state_SC_REAL5_TEST.json").read_text(
+            encoding="utf-8"
+        )
+        state = json.loads(text)
+
+    assert state["phase"] == "polling"
+    assert state["pass_count"] == 1
+    assert state["process_pids"] == [1234]
+    assert state["agents"][0]["expected_hash"]
+    assert "SECRET_NONCE" not in text
 
 
 def test_diagnose_failed_agent_wrong_ack_format() -> None:
