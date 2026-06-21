@@ -52,6 +52,39 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
 
 
+def _latency_stats(values: list[float]) -> dict[str, float | int | None]:
+    if not values:
+        return {
+            "count": 0,
+            "min": None,
+            "max": None,
+            "mean": None,
+            "p50": None,
+            "p95": None,
+            "p99": None,
+        }
+    ordered = sorted(values)
+
+    def percentile(pct: float) -> float:
+        if len(ordered) == 1:
+            return ordered[0]
+        position = (len(ordered) - 1) * pct
+        lower = int(position)
+        upper = min(lower + 1, len(ordered) - 1)
+        weight = position - lower
+        return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+    return {
+        "count": len(ordered),
+        "min": ordered[0],
+        "max": ordered[-1],
+        "mean": sum(ordered) / len(ordered),
+        "p50": percentile(0.50),
+        "p95": percentile(0.95),
+        "p99": percentile(0.99),
+    }
+
+
 def _ps_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -198,8 +231,10 @@ def run_baseline(
 
         passed = all(agent.status == "pass" for agent in agents)
         ack_times = [agent.ack_ms for agent in agents if agent.ack_ms is not None]
+        launch_times = [agent.launch_ms for agent in agents if agent.launch_ms is not None]
+        failed = [agent for agent in agents if agent.status != "pass"]
         result = {
-            "schema": "selfconnect.real_agent_baseline.v1",
+            "schema": "selfconnect.real_agent_baseline.v2",
             "run_id": run_id,
             "verdict": "PASS" if passed else "FAIL",
             "agent_count": count,
@@ -210,9 +245,36 @@ def run_baseline(
             "baseline_file": "baseline_5agent_real.json" if passed and count == 5 else None,
             "started_at": started,
             "duration_ms": (time.perf_counter() - started) * 1000.0,
-            "ack_latency_ms": {
-                "max": max(ack_times) if ack_times else None,
-                "min": min(ack_times) if ack_times else None,
+            "ack_latency_ms": _latency_stats(ack_times),
+            "launch_latency_ms": _latency_stats(launch_times),
+            "governance_transport_latency_ms": {
+                "measured": False,
+                "reason": (
+                    "real CLI baseline measures real agent launch/ACK/readback; "
+                    "transport/governance p50/p95/p99 are measured by the logical "
+                    "Fabric V0 harness"
+                ),
+            },
+            "model_call_accounting": {
+                "real_model_calls_total": count,
+                "real_model_calls_per_ack_task": 1.0,
+                "known_deterministic_task": False,
+                "model_calls_per_known_task": None,
+                "note": (
+                    "This real-agent ACK baseline intentionally invokes one Codex "
+                    "model turn per visible agent. It does not claim the zero-model-"
+                    "call deterministic replay property."
+                ),
+            },
+            "failure_counters": {
+                "missed_acks": len(failed),
+                "visible_window_missing": sum(1 for agent in failed if agent.hwnd is None),
+                "uia_readback_failures": sum(
+                    1 for agent in failed if agent.error.startswith("readback failed:")
+                ),
+                "wrong_window_guard_failures": 0,
+                "drift_or_narration_events": 0,
+                "approval_stalls": 0,
             },
             "agents": [
                 {
