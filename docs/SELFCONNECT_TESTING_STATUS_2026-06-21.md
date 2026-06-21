@@ -13,6 +13,10 @@ process environment and the Gemini CLI auth selector is temporarily set to
 `gemini-api-key` for the run. The runner restores the user's original Gemini CLI
 settings afterward and does not write secret values to tracked files.
 
+Gemini scale testing is currently blocked at the 10-agent rung by Gemini API
+quota exhaustion, not by SelfConnect transport. The 5-Gemini rung passed and
+wrote its baseline.
+
 ## Verified Gates
 
 | Gate | Evidence | Result |
@@ -46,6 +50,10 @@ no longer accepted.
 | Mixed provider preflight | Codex + Claude + Gemini | `SC_PROVIDER_PREFLIGHT_20260621_062823` | 3/3 ready |
 | Gemini 1 | 1 Gemini | `SC_REAL5_20260621_062543` | 1/1 ACK |
 | Mixed 3 | 1 Codex + 1 Claude + 1 Gemini | `SC_REAL5_20260621_062940` | 3/3 ACK |
+| Gemini 5 | 5 Gemini | `SC_REAL5_20260621_064240` | 5/5 ACK, baseline written |
+| Gemini 10 interrupted | 10 Gemini | `SC_REAL5_20260621_064405` | interrupted, stale windows recovered, not counted |
+| Gemini 10 interrupted | 10 Gemini | `SC_REAL5_20260621_070344` | interrupted, stale windows recovered, not counted |
+| Gemini 10 quota check | 10 Gemini | `SC_REAL5_20260621_073044` | BLOCKED, provider quota exceeded |
 | Codex 5 | 5 Codex | `SC_REAL5_20260621_011131` | 5/5 ACK |
 | Codex 20 | 20 Codex | `SC_REAL5_20260621_011140` | 20/20 ACK |
 | Mixed 5 | 3 Codex + 2 Claude | `SC_REAL5_20260621_011156` | 5/5 ACK |
@@ -62,6 +70,10 @@ no longer accepted.
 - Window discovery must distinguish `role-1` from `role-10`.
 - Provider output must preserve exact provider, role, nonce, spacing, and field
   names.
+- Long real-agent ladders must be monitored through state files instead of run
+  as blind foreground waits.
+- Gemini provider scale tests must classify provider quota separately from
+  SelfConnect transport/readback failures.
 
 ## Gemini Auth History And Persistent Readiness Boundary
 
@@ -122,16 +134,32 @@ Gemini API-key mode hardening and proof:
   ready
 - `SC_REAL5_20260621_062940`: PASS, 1 Codex + 1 Claude + 1 Gemini, exact ACKs
   through visible windows and UIA readback
+- `SC_REAL5_20260621_064240`: PASS, 5 visible Gemini windows, 5/5 exact ACKs,
+  baseline `baseline_5agent_real_gemini5.json`
+- `SC_REAL5_20260621_073044`: BLOCKED at 10 visible Gemini windows by provider
+  quota. Logs reported Gemini API quota exhaustion for
+  `generate_content_free_tier_requests`, limit `20`, model
+  `gemini-3.5-flash`. This is not counted as a SelfConnect transport failure.
+
+Runner hardening after the 10-agent attempts:
+
+- `c884ce2`: added run state files and `--cleanup-run <RUN_ID>` targeted stale
+  run cleanup
+- `b15a478`: stopped using UIA polling as the only completion signal; result
+  artifacts now distinguish exact provider-log ACKs from exact UIA ACKs
+- current working change: explicit `provider_quota_exceeded` detection and
+  counters
 
 Persistent workstation readiness is still separate from ephemeral test
 readiness. If no persistent User/Machine environment variable or ADC exists,
 readiness tools should continue to report that Gemini needs configuration until
 the key or ADC is intentionally installed outside this repository.
 
-For persistent Gemini coverage, rerun:
+After Gemini quota is raised or reset, rerun:
 
 ```powershell
 python experiments\fabric_v2\real_agent_baseline.py --preflight-only --agents 3 --providers codex:1,claude:1,gemini:1 --timeout 180 --gemini-auth-type gemini-api-key
+python experiments\fabric_v2\real_agent_baseline.py --agents 10 --providers gemini:10 --timeout 1200 --close-windows --gemini-auth-type gemini-api-key
 python experiments\fabric_v2\real_agent_baseline.py --agents 15 --providers codex:5,claude:5,gemini:5 --timeout 900 --close-windows --gemini-auth-type gemini-api-key
 python experiments\fabric_v2\real_agent_baseline.py --agents 20 --providers codex:7,claude:7,gemini:6 --timeout 1200 --close-windows --gemini-auth-type gemini-api-key
 ```

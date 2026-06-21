@@ -547,6 +547,10 @@ def _diagnose_failed_agent(agent: AgentRun) -> None:
         log_text = agent.log.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return
+    if "Quota exceeded" in log_text or "RESOURCE_EXHAUSTED" in log_text:
+        agent.diagnosis = "provider_quota_exceeded"
+        agent.error = "provider quota exceeded before exact ACK could be produced"
+        return
     if "Manual authorization is required" in log_text or "FatalAuthenticationError" in log_text:
         agent.diagnosis = "provider_auth_required"
         agent.error = "provider authentication required; exact ACK could not be produced"
@@ -571,6 +575,8 @@ def _classify_provider_output(
         return "timeout", "provider command timed out before exact ACK"
     if _has_exact_line(output, expected):
         return "ready", ""
+    if "Quota exceeded" in output or "RESOURCE_EXHAUSTED" in output:
+        return "provider_quota_exceeded", "provider quota exceeded before exact ACK"
     if "Manual authorization is required" in output or "FatalAuthenticationError" in output:
         return "provider_auth_required", "provider authentication required before non-interactive ACK"
     if nonce in output:
@@ -913,6 +919,9 @@ def run_baseline(
                     ),
                     "provider_auth_required": sum(
                         1 for agent in failed if agent.diagnosis == "provider_auth_required"
+                    ),
+                    "provider_quota_exceeded": sum(
+                        1 for agent in failed if agent.diagnosis == "provider_quota_exceeded"
                     ),
                     "provider_failures": {
                         provider: sum(

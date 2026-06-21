@@ -11,7 +11,12 @@ available on this workstation: 10 Codex + 10 Claude.
 
 PASS through the first Gemini real-agent rung after supplying an ephemeral API
 key and temporarily selecting Gemini CLI `gemini-api-key` auth mode for the run:
-1 Gemini visible agent and 1 Codex + 1 Claude + 1 Gemini visible mixed run.
+1 Gemini visible agent, 5 Gemini visible agents, and 1 Codex + 1 Claude + 1
+Gemini visible mixed run.
+
+Gemini 10/15/20 scale is currently blocked by Gemini API quota exhaustion. The
+latest 10-Gemini attempt reached provider quota before a clean exact-ACK result
+could be produced.
 
 This ladder used real visible Windows Terminal windows running real `codex exec`
 and/or `claude -p` agent processes. Each rung required UIA readback from each
@@ -60,7 +65,8 @@ Authenticated provider coverage:
 - Claude: PASS in one-shot probe and visible ladder.
 - Gemini: PASS with a process-scoped API key and temporary `gemini-api-key`
   auth selector. Earlier `oauth-personal`/env-only attempts are retained as
-  negative evidence because they prove the CLI auth selector matters.
+  negative evidence because they prove the CLI auth selector matters. Gemini
+  10+ scale is blocked by provider quota on the supplied API key.
 
 | Rung | Run ID | Providers | Verdict | ACKs | ACK p50 ms | ACK p95 ms | ACK p99 ms | ACK max ms | Missed ACKs | Wrong ACK | Provider auth |
 | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -71,6 +77,8 @@ Authenticated provider coverage:
 | preflight | `SC_PROVIDER_PREFLIGHT_20260621_062823` | Codex + Claude + Gemini | PASS | 3/3 ready | n/a | n/a | n/a | n/a | n/a | `0` | `0` |
 | 1 Gemini | `SC_REAL5_20260621_062543` | 1 Gemini | PASS | 1/1 | `130518.399` | `130518.399` | `130518.399` | `130518.399` | `0` | `0` | `0` |
 | 3 mixed | `SC_REAL5_20260621_062940` | 1 Codex + 1 Claude + 1 Gemini | PASS | 3/3 | `18860.765` | `59614.215` | `63236.744` | `64142.376` | `0` | `0` | `0` |
+| 5 Gemini | `SC_REAL5_20260621_064240` | 5 Gemini | PASS | 5/5 | `35140.579` | `64397.926` | `68991.524` | `70139.923` | `0` | `0` | `0` |
+| 10 Gemini | `SC_REAL5_20260621_073044` | 10 Gemini | BLOCKED | 0/10 clean | n/a | n/a | n/a | n/a | n/a | `0` | `0`; quota exceeded |
 | 5 mixed | `SC_REAL5_20260621_011156` | 3 Codex + 2 Claude | PASS | 5/5 | `6958.033` | `21621.477` | `21625.034` | `21625.924` | `0` | `0` | `0` |
 | 10 mixed | `SC_REAL5_20260621_011220` | 5 Codex + 5 Claude | PASS | 10/10 | `25623.109` | `30763.294` | `30771.810` | `30773.938` | `0` | `0` | `0` |
 | 15 mixed | `SC_REAL5_20260621_011254` | 8 Codex + 7 Claude | PASS | 15/15 | `11751.627` | `41091.218` | `41676.188` | `41822.430` | `0` | `0` | `0` |
@@ -114,6 +122,9 @@ Raw JSON artifacts are local and ignored by Git:
 - `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_003308.json`
 - `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_062543.json`
 - `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_062940.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_064240.json`
+- `experiments/fabric_v2/results/baseline_5agent_real_gemini5.json`
+- `experiments/fabric_v2/results/real_agent_state_SC_REAL5_20260621_073044.json`
 - `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_003518.json`
 - `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_003549.json`
 - `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_003633.json`
@@ -127,10 +138,10 @@ The mesh event chain also records the 5-real pass and the refreshed v2 baseline.
 
 This proves real-agent ACK/readback scale through 20 visible Codex CLI agents,
 through 20 visible mixed Codex+Claude CLI agents, and through the first
-Gemini-included rungs on this workstation. It does not yet claim 15/20-agent
-Gemini equivalence until those larger Gemini-included rungs are run. It does
-not claim zero-model-call deterministic replay. This benchmark intentionally
-invokes one real provider model call per real ACK task.
+Gemini-included rungs on this workstation. It does not yet claim 10/15/20-agent
+Gemini equivalence because the supplied Gemini API key hit provider quota at
+the 10-agent rung. It does not claim zero-model-call deterministic replay. This
+benchmark intentionally invokes one real provider model call per real ACK task.
 
 The logical Fabric harness remains the source for sub-millisecond
 transport/governance latency and zero-model-call known-task results. This real

@@ -292,6 +292,30 @@ def test_diagnose_failed_agent_auth_required() -> None:
     assert "authentication required" in agent.error
 
 
+def test_diagnose_failed_agent_quota_exceeded() -> None:
+    with local_tmpdir() as tmpdir:
+        log = tmpdir / "agent.log"
+        log.write_text(
+            "RESOURCE_EXHAUSTED: Quota exceeded for metric: requests\n",
+            encoding="utf-8",
+        )
+        agent = baseline.AgentRun(
+            provider="gemini",
+            role="realgemini-1",
+            nonce="NONCE",
+            expected="ACK_REAL_VENDOR provider=gemini role=realgemini-1 nonce=NONCE",
+            script=tmpdir / "agent.ps1",
+            log=log,
+            status="fail",
+            error="expected ACK not observed",
+        )
+
+        baseline._diagnose_failed_agent(agent)
+
+    assert agent.diagnosis == "provider_quota_exceeded"
+    assert "quota exceeded" in agent.error
+
+
 def test_provider_output_ready() -> None:
     status, error = baseline._classify_provider_output(
         output="ACK_PREFLIGHT provider=codex nonce=N",
@@ -316,6 +340,19 @@ def test_provider_output_auth_required() -> None:
 
     assert status == "provider_auth_required"
     assert "authentication required" in error
+
+
+def test_provider_output_quota_exceeded() -> None:
+    status, error = baseline._classify_provider_output(
+        output="RESOURCE_EXHAUSTED: Quota exceeded for metric: requests",
+        expected="ACK_PREFLIGHT provider=gemini nonce=N",
+        nonce="N",
+        returncode=1,
+        timed_out=False,
+    )
+
+    assert status == "provider_quota_exceeded"
+    assert "quota exceeded" in error
 
 
 def test_provider_output_wrong_ack_format() -> None:
