@@ -9,10 +9,12 @@ role + generation + hwnd tuple owned by the same OS identity.
 from __future__ import annotations
 
 import hashlib
+import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass
 from enum import Enum
+from typing import ClassVar
 
 
 class LeaseDecision(str, Enum):
@@ -186,20 +188,82 @@ GOVERNED_PROFILE = "governed"
 UNKNOWN_SID = "<unknown-sid>"
 
 
+def _get_process_owner_sid_win32() -> str:
+    """Resolve the current process owner SID via Win32 token APIs.
+
+    Chain: OpenProcessToken → GetTokenInformation(TokenUser) →
+    ConvertSidToStringSidW. Returns UNKNOWN_SID on any Win32 failure so the
+    governed gate fails closed rather than granting access.
+    """
+    import ctypes
+    import ctypes.wintypes as wt
+
+    _TOKEN_QUERY = 0x0008
+    _TOKEN_USER = 1
+
+    class _SID_AND_ATTRIBUTES(ctypes.Structure):
+        _fields_: ClassVar[list[tuple[str, object]]] = [("Sid", ctypes.c_void_p), ("Attributes", wt.DWORD)]
+
+    class _TOKEN_USER_STRUCT(ctypes.Structure):
+        _fields_: ClassVar[list[tuple[str, object]]] = [("User", _SID_AND_ATTRIBUTES)]
+
+    k32 = ctypes.windll.kernel32
+    a32 = ctypes.windll.advapi32
+
+    k32.GetCurrentProcess.restype = ctypes.c_void_p
+    a32.OpenProcessToken.argtypes = [ctypes.c_void_p, wt.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+    a32.OpenProcessToken.restype = wt.BOOL
+    a32.GetTokenInformation.argtypes = [
+        ctypes.c_void_p, wt.DWORD, ctypes.c_void_p, wt.DWORD, ctypes.POINTER(wt.DWORD)
+    ]
+    a32.GetTokenInformation.restype = wt.BOOL
+    a32.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wt.LPWSTR)]
+    a32.ConvertSidToStringSidW.restype = wt.BOOL
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    k32.CloseHandle.restype = wt.BOOL
+    k32.LocalFree.argtypes = [ctypes.c_void_p]
+
+    token = ctypes.c_void_p()
+    if not a32.OpenProcessToken(k32.GetCurrentProcess(), _TOKEN_QUERY, ctypes.byref(token)):
+        return UNKNOWN_SID
+    try:
+        needed = wt.DWORD(0)
+        a32.GetTokenInformation(token, _TOKEN_USER, None, 0, ctypes.byref(needed))
+        if needed.value <= 0:
+            return UNKNOWN_SID
+        buf = ctypes.create_string_buffer(needed.value)
+        if not a32.GetTokenInformation(token, _TOKEN_USER, buf, needed, ctypes.byref(needed)):
+            return UNKNOWN_SID
+        user = ctypes.cast(buf, ctypes.POINTER(_TOKEN_USER_STRUCT)).contents
+        sid_str = wt.LPWSTR()
+        if not a32.ConvertSidToStringSidW(user.User.Sid, ctypes.byref(sid_str)):
+            return UNKNOWN_SID
+        try:
+            return sid_str.value or UNKNOWN_SID
+        finally:
+            k32.LocalFree(sid_str)
+    finally:
+        k32.CloseHandle(token)
+
+
 def current_owner_sid(injected: str | None = None) -> str:
     """Resolve the current OS owner SID for governed lease checks.
 
-    Returns ``injected`` verbatim when provided. Otherwise this is a best-effort
-    placeholder: real runtime OS SID integration
-    (``OpenProcessToken`` -> ``GetTokenInformation(TokenUser)`` ->
-    ``ConvertSidToStringSid``) is the documented NEXT STEP. Until that lands,
-    callers should inject ``owner_sid`` explicitly; if nothing is injected this
-    returns the sentinel ``"<unknown-sid>"`` so governed mode FAILS CLOSED
-    instead of silently allowing an unauthenticated action.
+    Returns ``injected`` verbatim when provided (for testing or explicit
+    control-plane callers). On Windows with no injection, calls
+    ``OpenProcessToken`` → ``GetTokenInformation(TokenUser)`` →
+    ``ConvertSidToStringSidW`` to obtain the live OS-derived SID. On
+    non-Windows or on any Win32 failure, returns ``UNKNOWN_SID`` so governed
+    mode FAILS CLOSED instead of silently granting access.
     """
     if injected is not None:
         return injected
-    return UNKNOWN_SID
+    if sys.platform != "win32":
+        return UNKNOWN_SID
+    try:
+        return _get_process_owner_sid_win32()
+    except Exception:
+        return UNKNOWN_SID
 
 
 def evaluate_lease_gate(
