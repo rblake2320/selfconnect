@@ -80,6 +80,7 @@ artifacts = [
     "experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json",
     "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json",
 ]
 include = [
@@ -119,6 +120,7 @@ include = [
     "experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json",
     "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json",
     "docs/BROWSER_LOCAL_PROOF.md",
     "docs/CHANNEL_ROUTER_COMPOSITION_PROOF.md",
@@ -149,6 +151,7 @@ artifacts = [
     "experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json",
     "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json",
 ]
 

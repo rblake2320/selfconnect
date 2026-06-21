@@ -65,11 +65,16 @@ Current state:
 
 Still open:
 
-- direct overlapped named-pipe read/write associated with IOCP;
 - per-user session router;
 - long-lived named-pipe endpoint with bounded per-agent mailboxes;
 - crash/restart recovery in the host;
 - service-mode integration.
+
+Now proven:
+
+- direct overlapped named-pipe read/write associated with IOCP;
+- client and server both use overlapped read/write in the focused proof;
+- replay rejection still holds on the overlapped path.
 
 Tracker:
 
@@ -79,7 +84,8 @@ Why it matters:
 
 - The frame layer proves the governed session semantics.
 - The IOCP-dispatched host proves the completion-path control plane.
-- Direct overlapped named-pipe IO is the next high-rate data-plane step.
+- The direct overlapped pipe proof establishes the high-rate data-plane
+  primitive. The remaining work is keeping it alive as a router/service.
 
 Expected next artifacts:
 

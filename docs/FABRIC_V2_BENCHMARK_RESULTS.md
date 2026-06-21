@@ -160,6 +160,7 @@ Validation:
 | `python -m py_compile sc_fabric_v2.py sc_fabric_benchmark.py tests\test_fabric_v2.py tests\test_fabric_v0_benchmark.py` | PASS |
 | `python -m sc_fabric_v2 selftest` | PASS, real Windows named-pipe ACK |
 | `python -m sc_fabric_host selftest` | PASS, IOCP-dispatched host ACK |
+| `python -m sc_fabric_host overlapped-selftest` | PASS, direct overlapped pipe read/write through IOCP |
 | `selfconnect-bench run --transport fabric_v2_frame_mailbox --agents 5` | PASS |
 
 Fabric V2 5-agent baseline:
@@ -195,3 +196,17 @@ Fabric V2 host selftest:
 | Total selftest elapsed | `2.568 ms` |
 | Replay rejection | PASS |
 | Boundary | IOCP dispatch is in the ACK path; direct overlapped named-pipe read/write remains next hardening step |
+
+Fabric V2 direct overlapped pipe selftest:
+
+| Artifact | Value |
+| --- | --- |
+| Redacted artifact | `experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json` |
+| Host transport | Windows named pipe with `FILE_FLAG_OVERLAPPED` |
+| Completion dispatch | Win32 IOCP `GetQueuedCompletionStatus` for read/write completions |
+| Server read/write | Overlapped read and overlapped write |
+| Client read/write | Overlapped read and overlapped write |
+| First ACK payload | `ACK:overlapped-a:1` |
+| First roundtrip | `0.781 ms` |
+| Replay rejection | PASS |
+| Boundary | Long-lived per-user session router and crash/restart proof remain open |

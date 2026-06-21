@@ -37,7 +37,8 @@ not been live-tested or committed as a probe, it is marked as pending.
 | Fabric V0 logical scale harness | Proven as benchmark/evidence harness | `sc_fabric_benchmark.py`, `docs/FABRIC_V2_BENCHMARK_RESULTS.md`; 5/10/15/20 logical agents passed with flat sub-ms transport/governance p99 and `0.0` model calls per known task |
 | Fabric adversarial gates | Proven as benchmark guard suite | `selfconnect-bench adversarial`; wrong nonce/sender/hash/window, replay, stale lease, narration drift, ACK loss, queue depth, event-log failure, tamper, resource halt, and 1000-message logical load all covered |
 | Fabric V2 sign-once/MAC-many frame layer | Proven as first V2 implementation slice | `sc_fabric_v2.py`, `tests/test_fabric_v2.py`, `experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json`, `experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json`; HMAC frame sealing, receiver binding, payload hash, replay rejection, deadline rejection, bounded mailbox backpressure, and real Windows named-pipe ACK selftest |
-| Fabric V2 IOCP-dispatched host ACK path | Proven as host-service proof slice | `sc_fabric_host.py`, `tests/test_fabric_host.py`, `experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json`; long-lived local named-pipe host, IOCP completion queue in ACK path, bounded mailbox, replay rejection. Boundary: direct overlapped named-pipe read/write remains open |
+| Fabric V2 IOCP-dispatched host ACK path | Proven as host-service proof slice | `sc_fabric_host.py`, `tests/test_fabric_host.py`, `experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json`; long-lived local named-pipe host, IOCP completion queue in ACK path, bounded mailbox, replay rejection |
+| Fabric V2 direct overlapped pipe IO | Proven as focused data-plane proof | `sc_fabric_host.overlapped_named_pipe_exchange`, `tests/test_fabric_host.py`, `experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json`; client and server both use `FILE_FLAG_OVERLAPPED`, IOCP read/write completions, HMAC frames, bounded mailbox, and replay rejection. Boundary: long-lived per-user router/crash recovery remains open |
 
 ## Positioning Boundary
 
@@ -56,7 +57,7 @@ The current non-claims are:
 - production TPM attestation;
 - production named-pipe control-plane replacement for terminal-visible routing;
 - full service-mode governed daemon.
-- production Fabric V2 direct overlapped named-pipe IOCP data plane.
+- production Fabric V2 per-user router/crash recovery service.
 
 ## Next Highest-Value Evidence
 
@@ -65,7 +66,7 @@ The current non-claims are:
    as an opt-in gate. Remaining: resolve the current OS owner SID at runtime
    (`OpenProcessToken` -> `GetTokenInformation(TokenUser)` ->
    `ConvertSidToStringSid`) so governed mode no longer requires an injected SID.
-2. Finish production Fabric V2 direct overlapped named-pipe IOCP data plane / per-user router.
+2. Finish production Fabric V2 per-user router and crash/restart proof.
 3. Finish TPM platform attestation with correct `NCryptBufferDesc`.
 4. Add browser multi-tab/stale-tab proof.
 5. Add governed audit event for protected checkpoint pause.

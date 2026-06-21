@@ -23,9 +23,15 @@ from typing import Any
 import sc_fabric_v2
 
 try:  # pragma: no cover - import shape is platform dependent
+    import pywintypes
     import win32file
+    import win32pipe
+    import winerror
 except Exception:  # pragma: no cover
+    pywintypes = None
     win32file = None
+    win32pipe = None
+    winerror = None
 
 
 SCHEMA_VERSION = 1
@@ -70,6 +76,74 @@ class IocpCompletionQueue:
 
     def close(self) -> None:
         self.handle.Close()
+
+
+def _require_overlapped_win32() -> None:
+    if (
+        sys.platform != "win32"
+        or pywintypes is None
+        or win32file is None
+        or win32pipe is None
+        or winerror is None
+    ):
+        raise IocpUnavailableError("Windows overlapped named-pipe APIs are unavailable")
+
+
+def _wait_completion(port: Any, *, expected_key: int, timeout_ms: int) -> int:
+    try:
+        _rc, byte_count, completion_key, _overlapped = win32file.GetQueuedCompletionStatus(
+            port,
+            int(timeout_ms),
+        )
+    except pywintypes.error as exc:
+        raise TimeoutError(f"IOCP completion wait failed: {exc}") from exc
+    if int(completion_key) != int(expected_key):
+        raise FabricHostError(f"unexpected IOCP completion key: {completion_key}")
+    return int(byte_count)
+
+
+def _overlapped_read_exact(handle: Any, port: Any, *, size: int, key: int, timeout_ms: int) -> bytes:
+    buffer = win32file.AllocateReadBuffer(int(size))
+    overlapped = pywintypes.OVERLAPPED()
+    try:
+        win32file.ReadFile(handle, buffer, overlapped)
+    except pywintypes.error as exc:
+        if exc.winerror != winerror.ERROR_IO_PENDING:
+            raise
+    byte_count = _wait_completion(port, expected_key=key, timeout_ms=timeout_ms)
+    data = bytes(buffer)[:byte_count]
+    if len(data) != int(size):
+        raise FabricHostError(f"short overlapped read: expected {size}, got {len(data)}")
+    return data
+
+
+def _overlapped_write_all(handle: Any, port: Any, *, payload: bytes, key: int, timeout_ms: int) -> int:
+    overlapped = pywintypes.OVERLAPPED()
+    try:
+        win32file.WriteFile(handle, payload, overlapped)
+    except pywintypes.error as exc:
+        if exc.winerror != winerror.ERROR_IO_PENDING:
+            raise
+    byte_count = _wait_completion(port, expected_key=key, timeout_ms=timeout_ms)
+    if byte_count != len(payload):
+        raise FabricHostError(f"short overlapped write: expected {len(payload)}, wrote {byte_count}")
+    return byte_count
+
+
+def _frame_packet(frame: bytes) -> bytes:
+    return len(frame).to_bytes(4, "little") + frame
+
+
+def _read_packet_overlapped(handle: Any, port: Any, *, key: int, timeout_ms: int) -> bytes:
+    header = _overlapped_read_exact(handle, port, size=4, key=key, timeout_ms=timeout_ms)
+    size = int.from_bytes(header, "little")
+    if size <= 0 or size > sc_fabric_v2.DEFAULT_MAX_FRAME_BYTES:
+        raise FabricHostError(f"invalid Fabric frame size: {size}")
+    return _overlapped_read_exact(handle, port, size=size, key=key, timeout_ms=timeout_ms)
+
+
+def _write_packet_overlapped(handle: Any, port: Any, *, frame: bytes, key: int, timeout_ms: int) -> int:
+    return _overlapped_write_all(handle, port, payload=_frame_packet(frame), key=key, timeout_ms=timeout_ms)
 
 
 class FabricHostService:
@@ -272,6 +346,218 @@ def host_roundtrip(
     }
 
 
+def overlapped_named_pipe_exchange(
+    *,
+    session: sc_fabric_v2.FabricSession,
+    request_frame: bytes,
+    address: str | None = None,
+    timeout_s: float = 5.0,
+) -> dict[str, Any]:
+    """Run one direct overlapped named-pipe read/write exchange.
+
+    Both the server read path and server write path use a pipe handle created
+    with FILE_FLAG_OVERLAPPED and associated with an IO completion port.
+    """
+
+    _require_overlapped_win32()
+    pipe_address = sc_fabric_v2.pipe_address(address or f"SelfConnectFabricOverlapped_{uuid.uuid4().hex}")
+    timeout_ms = int(timeout_s * 1000)
+    server_key = 7001
+    server_port = win32file.CreateIoCompletionPort(win32file.INVALID_HANDLE_VALUE, None, 0, 0)
+    pipe = win32pipe.CreateNamedPipe(
+        pipe_address,
+        win32pipe.PIPE_ACCESS_DUPLEX | win32file.FILE_FLAG_OVERLAPPED,
+        win32pipe.PIPE_TYPE_BYTE | win32pipe.PIPE_READMODE_BYTE | win32pipe.PIPE_WAIT,
+        1,
+        sc_fabric_v2.DEFAULT_MAX_FRAME_BYTES,
+        sc_fabric_v2.DEFAULT_MAX_FRAME_BYTES,
+        0,
+        None,
+    )
+    win32file.CreateIoCompletionPort(pipe, server_port, server_key, 0)
+
+    ready = threading.Event()
+    server_done = threading.Event()
+    server_result: dict[str, Any] = {}
+    client_result: dict[str, Any] = {}
+
+    def server() -> None:
+        try:
+            ready.set()
+            try:
+                win32pipe.ConnectNamedPipe(pipe, None)
+            except pywintypes.error as exc:
+                if exc.winerror != winerror.ERROR_PIPE_CONNECTED:
+                    raise
+            raw_request = _read_packet_overlapped(
+                pipe,
+                server_port,
+                key=server_key,
+                timeout_ms=timeout_ms,
+            )
+            read_completed_at = time.perf_counter()
+            try:
+                verified = session.open(raw_request)
+                mailbox = sc_fabric_v2.BoundedMailbox(verified.receiver, max_depth=10)
+                mailbox.put(verified.payload, timeout_ms=1)
+                response = session.seal(
+                    sender=verified.receiver,
+                    receiver=verified.sender,
+                    payload=f"ACK:{verified.sender}:{verified.sequence}",
+                    message_type="ack",
+                )
+                server_result.update({
+                    "ok": True,
+                    "verified_sender": verified.sender,
+                    "verified_receiver": verified.receiver,
+                    "verified_sequence": verified.sequence,
+                    "payload_hash": verified.payload_hash,
+                    "mailbox_depth": mailbox.depth(),
+                })
+            except Exception as exc:
+                response = json.dumps({
+                    "ok": False,
+                    "error": exc.__class__.__name__,
+                    "message": str(exc),
+                }, sort_keys=True).encode("utf-8")
+                server_result.update({
+                    "ok": False,
+                    "error": exc.__class__.__name__,
+                    "message": str(exc),
+                })
+            _write_packet_overlapped(
+                pipe,
+                server_port,
+                frame=response,
+                key=server_key,
+                timeout_ms=timeout_ms,
+            )
+            win32file.FlushFileBuffers(pipe)
+            server_result["overlapped_read_write"] = True
+            server_result["read_completed_ms"] = round((read_completed_at - start) * 1000, 3)
+        except Exception as exc:  # pragma: no cover - surfaced through result
+            server_result.update({"ok": False, "error": exc.__class__.__name__, "message": str(exc)})
+        finally:
+            try:
+                win32pipe.DisconnectNamedPipe(pipe)
+            except Exception:
+                pass
+            server_done.set()
+
+    start = time.perf_counter()
+    thread = threading.Thread(target=server, name="sc-fabric-overlapped-pipe", daemon=True)
+    thread.start()
+    if not ready.wait(timeout_s):
+        raise TimeoutError("overlapped pipe server did not become ready")
+
+    client_key = 8001
+    client_port = win32file.CreateIoCompletionPort(win32file.INVALID_HANDLE_VALUE, None, 0, 0)
+    client = win32file.CreateFile(
+        pipe_address,
+        win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+        0,
+        None,
+        win32file.OPEN_EXISTING,
+        win32file.FILE_FLAG_OVERLAPPED,
+        None,
+    )
+    win32file.CreateIoCompletionPort(client, client_port, client_key, 0)
+    try:
+        _overlapped_write_all(
+            client,
+            client_port,
+            payload=_frame_packet(request_frame),
+            key=client_key,
+            timeout_ms=timeout_ms,
+        )
+        response = _read_packet_overlapped(
+            client,
+            client_port,
+            key=client_key,
+            timeout_ms=timeout_ms,
+        )
+        try:
+            ack = session.open(response, expected_receiver=json.loads(request_frame.decode("utf-8"))["sender"])
+            client_result.update({
+                "ok": True,
+                "ack_payload": ack.payload.decode("utf-8", errors="replace"),
+                "ack_sequence": ack.sequence,
+            })
+        except Exception:
+            try:
+                client_result.update(json.loads(response.decode("utf-8")))
+            except Exception as exc:
+                client_result.update({
+                    "ok": False,
+                    "error": exc.__class__.__name__,
+                    "message": str(exc),
+                })
+    finally:
+        client.Close()
+        client_port.Close()
+    if not server_done.wait(timeout_s):
+        raise TimeoutError("overlapped pipe server did not finish")
+    pipe.Close()
+    server_port.Close()
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    return {
+        "ok": bool(server_result.get("ok")) and bool(client_result.get("ok")),
+        "transport": "windows_named_pipe_overlapped",
+        "completion_dispatch": "win32_iocp_overlapped_read_write",
+        "overlapped_pipe_io": True,
+        "server_overlapped_read": True,
+        "server_overlapped_write": True,
+        "client_overlapped_io": True,
+        "address_hash": hashlib.sha256(pipe_address.encode("utf-8")).hexdigest(),
+        "server": server_result,
+        "client": client_result,
+        "elapsed_ms": round(elapsed_ms, 3),
+        "raw_text_included": False,
+    }
+
+
+def overlapped_selftest(*, output_dir: str | Path = "experiments/fabric_v2/results") -> dict[str, Any]:
+    session = sc_fabric_v2.FabricSession.ephemeral(session_id=f"sfv2-overlapped-{uuid.uuid4().hex[:8]}")
+    first_frame = session.seal(
+        sender="overlapped-a",
+        receiver="overlapped-b",
+        payload="SC_FABRIC_OVERLAPPED_SELFTEST",
+    )
+    first = overlapped_named_pipe_exchange(session=session, request_frame=first_frame)
+    replay_frame = session.seal(
+        sender="overlapped-a",
+        receiver="overlapped-b",
+        payload="SC_FABRIC_OVERLAPPED_REPLAY",
+        sequence=99,
+    )
+    replay_first = overlapped_named_pipe_exchange(session=session, request_frame=replay_frame)
+    replay_second = overlapped_named_pipe_exchange(session=session, request_frame=replay_frame)
+    replay_rejected = replay_second.get("client", {}).get("error") == "ReplayRejectedError"
+    artifact = {
+        "schema_version": SCHEMA_VERSION,
+        "suite": "fabric_v2_overlapped_pipe_selftest",
+        "ok": bool(first.get("ok")) and bool(replay_first.get("ok")) and replay_rejected,
+        "host_transport": "windows_named_pipe_overlapped",
+        "completion_dispatch": "win32_iocp_overlapped_read_write",
+        "overlapped_pipe_io": True,
+        "server_overlapped_read": True,
+        "server_overlapped_write": True,
+        "client_overlapped_io": True,
+        "first_roundtrip": first,
+        "replay_first_ok": bool(replay_first.get("ok")),
+        "replay_rejected": replay_rejected,
+        "replay_rejection_error": replay_second.get("client", {}).get("error", ""),
+        "raw_text_included": False,
+        "created_at": time.time(),
+    }
+    root = Path(output_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"fabric_v2_overlapped_pipe_selftest_{time.strftime('%Y%m%d_%H%M%S')}_redacted.json"
+    artifact["artifact_path"] = str(path)
+    path.write_text(json.dumps(artifact, indent=2, sort_keys=True), encoding="utf-8")
+    return artifact
+
+
 def selftest(*, output_dir: str | Path = "experiments/fabric_v2/results") -> dict[str, Any]:
     session = sc_fabric_v2.FabricSession.ephemeral(session_id=f"sfv2-host-{uuid.uuid4().hex[:8]}")
     host = FabricHostService(
@@ -346,6 +632,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("selftest")
     p.add_argument("--output-dir", default="experiments/fabric_v2/results")
+    p = sub.add_parser("overlapped-selftest")
+    p.add_argument("--output-dir", default="experiments/fabric_v2/results")
     return parser
 
 
@@ -353,6 +641,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.command == "selftest":
         return _print_json(selftest(output_dir=args.output_dir))
+    if args.command == "overlapped-selftest":
+        return _print_json(overlapped_selftest(output_dir=args.output_dir))
     return 2
 
 
