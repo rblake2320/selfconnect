@@ -17,11 +17,14 @@ Gemini scale testing is currently blocked at the 10-agent rung by Gemini API
 quota exhaustion, not by SelfConnect transport. The 5-Gemini rung passed and
 wrote its baseline.
 
+Fabric V2 now has a benchmarkable frame/mailbox slice with a real Windows
+named-pipe selftest. This does not yet claim the production IOCP host service.
+
 ## Verified Gates
 
 | Gate | Evidence | Result |
 | --- | --- | --- |
-| Full Python suite | `python -m pytest -q` | `434 passed, 28 skipped` |
+| Full Python suite | `python -m pytest -q` | `470 passed, 9 skipped` |
 | Ruff/compile for real ladder runner | `ruff check` + `py_compile` | PASS |
 | Source doctor | `python -m sc_cli doctor --json` | `0.10.4`, Win32/UIA/TPM platform probes true |
 | Wheel build | `python -m build` | `selfconnect-0.10.4` sdist + wheel built |
@@ -32,6 +35,10 @@ wrote its baseline.
 | Mesh event chain | `selfconnect-mesh verify-events` | PASS, 32 events, head `66a303516a8bf39576ffe679ed6747e8b8802ab99a240cdc2e8f8d88cbb36bd1` |
 | Stale real-run windows | `sc_cli.list_window_records(query='SC_REAL5_')` | `0` |
 | Resource floor | `selfconnect-fleet resources` | RAM/VRAM above floor |
+| Fabric V2 frame/mailbox focused tests | `pytest tests/test_fabric_v2.py tests/test_fabric_v0_benchmark.py -q` | `19 passed` |
+| Fabric V2 lint/compile | `ruff check` + `py_compile` on Fabric touched files | PASS |
+| Fabric V2 named-pipe selftest | `python -m sc_fabric_v2 selftest` | PASS, real Windows named-pipe ACK |
+| Fabric V2 5-agent logical baseline | `selfconnect-bench run --transport fabric_v2_frame_mailbox --agents 5` | PASS, p99 `0.152 ms`, model calls `0.0` |
 
 ## Real-Agent Exact-Line Results
 
@@ -147,8 +154,19 @@ Runner hardening after the 10-agent attempts:
   run cleanup
 - `b15a478`: stopped using UIA polling as the only completion signal; result
   artifacts now distinguish exact provider-log ACKs from exact UIA ACKs
-- current working change: explicit `provider_quota_exceeded` detection and
-  counters
+- `f58c831`: explicit `provider_quota_exceeded` detection and counters
+
+Fabric V2 implementation status:
+
+- `sc_fabric_v2.py`: session-derived HMAC frames, receiver binding, payload
+  hashes, replay rejection, deadline rejection, bounded mailboxes
+- `selfconnect-fabric selftest`: real Windows named-pipe request/ACK
+- `selfconnect-bench --transport fabric_v2_frame_mailbox`: V2 benchmark path
+- Latest artifacts:
+  - `experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json`
+  - `experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json`
+  - `experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json`
+- Boundary: production IOCP host service remains open.
 
 Persistent workstation readiness is still separate from ephemeral test
 readiness. If no persistent User/Machine environment variable or ADC exists,

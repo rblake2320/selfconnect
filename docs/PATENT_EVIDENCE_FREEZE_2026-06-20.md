@@ -39,6 +39,9 @@ Representative Windows species already proven or documented:
 - control-plane identity: named-pipe SID lease;
 - readback integrity: nonce/hash echo filter;
 - target safety: HWND/PID/exe/class/title guard.
+- Fabric V2 frame species: session-derived HMAC frames, receiver binding,
+  sequence replay rejection, deadline rejection, bounded mailboxes, and a real
+  Windows named-pipe ACK selftest.
 
 ## Durable Virtual Role
 
@@ -104,6 +107,9 @@ and delivery is verified by echo-filtered readback.
 - `docs/FLEET_AUTO_HALT_PROTOCOL.md`
 - `docs/FABRIC_V0_BENCHMARK_SPEC.md`
 - `docs/FABRIC_V2_STRESS_PROTOCOL.md`
+- `docs/FABRIC_V2_BENCHMARK_RESULTS.md`
+- `experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json`
+- `experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json`
 
 ## Boundary
 
@@ -117,3 +123,11 @@ Do not claim:
 - CAPTCHA bypass or anti-bot evasion.
 
 Do claim and prove the composition and its representative species.
+
+Fabric V2 boundary:
+
+- Claim the governed session composition and representative frame/mailbox
+  species only as tied to the SelfConnect identity/evidence chain.
+- Do not claim generic named pipes, generic HMAC, generic queues, or generic
+  IOCP.
+- Production IOCP host service is not yet reduced to practice in this packet.

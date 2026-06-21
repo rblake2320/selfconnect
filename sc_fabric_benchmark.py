@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import sc_echo_filter
+import sc_fabric_v2
 import sc_fleet_guard
 import sc_mesh_registry
 
@@ -24,6 +25,8 @@ SCHEMA_VERSION = 1
 DEFAULT_OUTPUT_DIR = Path("experiments") / "fabric_v2" / "results"
 DEFAULT_MESSAGES_PER_AGENT = 3
 DEFAULT_TRANSPORT = "current_transport"
+TRANSPORT_FABRIC_V2 = "fabric_v2_frame_mailbox"
+VALID_TRANSPORTS = {DEFAULT_TRANSPORT, TRANSPORT_FABRIC_V2}
 DEFAULT_PROFILES = ("normal", "enterprise", "government")
 
 FREEZE_DOCS = (
@@ -131,6 +134,12 @@ def _baseline_summary(artifact: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _default_baseline_path(output_root: Path, transport: str) -> Path:
+    if transport == DEFAULT_TRANSPORT:
+        return output_root / "baseline_5agent.json"
+    return output_root / f"baseline_5agent_{transport}.json"
+
+
 def patent_freeze_status(repo_root: str | Path = ".") -> dict[str, Any]:
     root = Path(repo_root)
     missing = []
@@ -197,12 +206,88 @@ def _make_agents(agent_count: int, profile: str) -> list[dict[str, Any]]:
     ]
 
 
+def _fabric_v2_context(profile: str, agents: list[dict[str, Any]]) -> dict[str, Any]:
+    session = sc_fabric_v2.FabricSession.from_secret(
+        f"{profile}:{time.time_ns()}:{len(agents)}",
+        session_id=f"sfv2-{profile}-{_now_id()}",
+    )
+    return {
+        "session": session,
+        "mailboxes": {
+            str(agent["birth_id"]): sc_fabric_v2.BoundedMailbox(
+                str(agent["birth_id"]),
+                max_depth=max(10, len(agents) * DEFAULT_MESSAGES_PER_AGENT),
+            )
+            for agent in agents
+        },
+        "first_frame": None,
+        "first_receiver": "",
+        "mac_failures": 0,
+        "mailbox_backpressure_events": 0,
+    }
+
+
+def _deliver_current_transport(
+    *,
+    nonce: str,
+    sent_text: str,
+    observed_text: str,
+    timestamp_send: float,
+) -> tuple[str, sc_echo_filter.FilterRecord]:
+    record = sc_echo_filter.build_record(
+        delta=observed_text,
+        nonce=nonce,
+        sent_text=sent_text,
+        readback_method="logical_TextPattern_delta",
+        timestamp_send=timestamp_send,
+        timestamp_recv=timestamp_send,
+    )
+    return sent_text, record
+
+
+def _deliver_fabric_v2(
+    *,
+    context: dict[str, Any],
+    sender: dict[str, Any],
+    receiver: dict[str, Any],
+    nonce: str,
+    sent_text: str,
+    observed_text: str,
+    timestamp_send: float,
+) -> tuple[str, sc_echo_filter.FilterRecord]:
+    session: sc_fabric_v2.FabricSession = context["session"]
+    mailboxes: dict[str, sc_fabric_v2.BoundedMailbox] = context["mailboxes"]
+    frame = session.seal(
+        sender=str(sender["birth_id"]),
+        receiver=str(receiver["birth_id"]),
+        payload=sent_text,
+        deadline_ms=5_000,
+    )
+    if context["first_frame"] is None:
+        context["first_frame"] = frame
+        context["first_receiver"] = str(receiver["birth_id"])
+    mailbox = mailboxes[str(receiver["birth_id"])]
+    mailbox.put(frame, timeout_ms=1)
+    verified = session.open(mailbox.get(timeout_ms=1), expected_receiver=str(receiver["birth_id"]))
+    delivered_text = verified.payload.decode("utf-8", errors="replace")
+    record = sc_echo_filter.build_record(
+        delta=observed_text,
+        nonce=nonce,
+        sent_text=delivered_text,
+        readback_method="fabric_v2_mailbox_logical_delta",
+        timestamp_send=timestamp_send,
+        timestamp_recv=timestamp_send,
+    )
+    return delivered_text, record
+
+
 def _run_profile(
     *,
     profile: str,
     agents: list[dict[str, Any]],
     messages_per_agent: int,
     event_log_path: Path,
+    transport: str = DEFAULT_TRANSPORT,
     repo_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     config = PROFILE_CONFIGS[profile]
@@ -220,6 +305,7 @@ def _run_profile(
     stale_lease_accepted = 0
     seen_sequences: set[tuple[str, int]] = set()
     message_hashes: list[str] = []
+    fabric_context = _fabric_v2_context(profile, agents) if transport == TRANSPORT_FABRIC_V2 else None
 
     for agent in agents:
         sc_fleet_guard.fleet_register(
@@ -241,14 +327,23 @@ def _run_profile(
         observed_text = f"{nonce}\nACK:{receiver['name']}:SEQ:{seq}"
         t0 = time.perf_counter()
         read_send_ts = time.time()
-        record = sc_echo_filter.build_record(
-            delta=observed_text,
-            nonce=nonce,
-            sent_text=sent_text,
-            readback_method="logical_TextPattern_delta",
-            timestamp_send=read_send_ts,
-            timestamp_recv=read_send_ts,
-        )
+        if transport == TRANSPORT_FABRIC_V2:
+            delivered_text, record = _deliver_fabric_v2(
+                context=fabric_context or {},
+                sender=sender,
+                receiver=receiver,
+                nonce=nonce,
+                sent_text=sent_text,
+                observed_text=observed_text,
+                timestamp_send=read_send_ts,
+            )
+        else:
+            delivered_text, record = _deliver_current_transport(
+                nonce=nonce,
+                sent_text=sent_text,
+                observed_text=observed_text,
+                timestamp_send=read_send_ts,
+            )
         key = (sender["birth_id"], seq)
         if key in seen_sequences:
             replay_accepted += 1
@@ -284,6 +379,8 @@ def _run_profile(
                 "sent_hash": record.sent_hash,
                 "observed_hash": record.observed_hash,
                 "classification": record.classification.value,
+                "transport": transport,
+                "delivered_text_hash": _sha(delivered_text),
                 "raw_text_included": False,
                 "model_calls": 0,
             },
@@ -310,11 +407,21 @@ def _run_profile(
         message_hashes.append(message_hash)
 
     if total_messages:
-        replay_key = (agents[0]["birth_id"], 0)
-        if replay_key in seen_sequences:
-            replay_rejected += 1
+        if transport == TRANSPORT_FABRIC_V2 and fabric_context and fabric_context["first_frame"]:
+            try:
+                fabric_context["session"].open(
+                    fabric_context["first_frame"],
+                    expected_receiver=fabric_context["first_receiver"],
+                )
+                replay_accepted += 1
+            except sc_fabric_v2.ReplayRejectedError:
+                replay_rejected += 1
         else:
-            replay_accepted += 1
+            replay_key = (agents[0]["birth_id"], 0)
+            if replay_key in seen_sequences:
+                replay_rejected += 1
+            else:
+                replay_accepted += 1
         if config["lease_gate"]:
             stale_lease_rejected += 1
 
@@ -337,6 +444,7 @@ def _run_profile(
     return {
         "profile": profile,
         "config": config,
+        "transport": transport,
         "agent_count": len(agents),
         "logical_message_count": total_messages,
         "live_window_count": 0,
@@ -350,6 +458,12 @@ def _run_profile(
         "echo_false_negatives": echo_false_negative,
         "replay_attempts": {"accepted": replay_accepted, "rejected": replay_rejected},
         "stale_lease_attempts": {"accepted": stale_lease_accepted, "rejected": stale_lease_rejected},
+        "fabric_v2": {
+            "enabled": transport == TRANSPORT_FABRIC_V2,
+            "session_id_hash": _sha(fabric_context["session"].session_id) if fabric_context else "",
+            "mac_failures": int(fabric_context["mac_failures"]) if fabric_context else 0,
+            "mailbox_backpressure_events": int(fabric_context["mailbox_backpressure_events"]) if fabric_context else 0,
+        },
         "message_hash_sample": message_hashes[:3],
         "agents": agents,
     }
@@ -361,6 +475,7 @@ def run_benchmark(
     messages_per_agent: int = DEFAULT_MESSAGES_PER_AGENT,
     stage: str = "dry-run",
     profiles: str | list[str] | tuple[str, ...] = "all",
+    transport: str = DEFAULT_TRANSPORT,
     output_dir: str | Path = DEFAULT_OUTPUT_DIR,
     baseline_json: str | Path | None = None,
     write_baseline: bool | None = None,
@@ -372,6 +487,9 @@ def run_benchmark(
     if agent_count < 1:
         raise ValueError("agent_count must be >= 1")
     profile_names = _profile_list(profiles)
+    transport_value = transport.strip().lower()
+    if transport_value not in VALID_TRANSPORTS:
+        raise ValueError(f"transport must be one of: {', '.join(sorted(VALID_TRANSPORTS))}")
     stage_value = stage.strip().lower()
     if stage_value not in {"dry-run", "production"}:
         raise ValueError("stage must be dry-run or production")
@@ -387,7 +505,7 @@ def run_benchmark(
 
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
-    run_id = run_id or f"{DEFAULT_TRANSPORT}_{_now_id()}"
+    run_id = run_id or f"{transport_value}_{_now_id()}"
     event_log_path = output_root / f"{run_id}_events.jsonl"
     baseline = load_baseline(baseline_json)
     repo_snapshot = sc_mesh_registry.git_snapshot()
@@ -401,6 +519,7 @@ def run_benchmark(
             agents=agents,
             messages_per_agent=messages_per_agent,
             event_log_path=event_log_path,
+            transport=transport_value,
             repo_snapshot=repo_snapshot,
         )
         profile_results.append(result)
@@ -443,7 +562,7 @@ def run_benchmark(
         "run_id": run_id,
         "created_at": time.time(),
         "stage": stage_value,
-        "transport": DEFAULT_TRANSPORT,
+        "transport": transport_value,
         "agent_count": agent_count,
         "logical_agent_count": agent_count,
         "live_agent_count": 0,
@@ -478,7 +597,7 @@ def run_benchmark(
     if write_baseline is None:
         write_baseline = stage_value == "production" and agent_count == 5
     if write_baseline:
-        baseline_path = Path(baseline_json) if baseline_json else output_root / "baseline_5agent.json"
+        baseline_path = Path(baseline_json) if baseline_json else _default_baseline_path(output_root, transport_value)
         baseline_payload = _baseline_summary(artifact)
         baseline_payload["artifact_path"] = str(artifact_path)
         write_json(baseline_path, baseline_payload)
@@ -738,6 +857,7 @@ def run_load_suite(
     agent_count: int = 5,
     messages: tuple[int, ...] = (100, 1000),
     profiles: str = "normal",
+    transport: str = DEFAULT_TRANSPORT,
 ) -> dict[str, Any]:
     run_id = run_id or f"logical_load_{_now_id()}"
     runs = []
@@ -747,6 +867,7 @@ def run_load_suite(
             messages_per_agent=message_count,
             stage="production",
             profiles=profiles,
+            transport=transport,
             output_dir=output_dir,
             allow_unfrozen=False,
             write_baseline=False,
@@ -773,6 +894,7 @@ def run_load_suite(
         "run_id": run_id,
         "ok": all(run["ok"] for run in runs),
         "agent_count": agent_count,
+        "transport": transport,
         "profiles": _profile_list(profiles),
         "runs": runs,
         "repo": sc_mesh_registry.git_snapshot(),
@@ -837,6 +959,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--messages-per-agent", type=int, default=DEFAULT_MESSAGES_PER_AGENT)
     p.add_argument("--stage", choices=["dry-run", "production"], default="dry-run")
     p.add_argument("--profiles", default="all", help="all or comma list: normal,enterprise,government")
+    p.add_argument("--transport", choices=sorted(VALID_TRANSPORTS), default=DEFAULT_TRANSPORT)
     p.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     p.add_argument("--baseline-json", default="")
     p.add_argument("--write-baseline", action="store_true")
@@ -863,6 +986,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--agents", type=int, default=5)
     p.add_argument("--messages", default="100,1000")
     p.add_argument("--profiles", default="normal")
+    p.add_argument("--transport", choices=sorted(VALID_TRANSPORTS), default=DEFAULT_TRANSPORT)
 
     p = sub.add_parser("adversarial")
     p.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
@@ -888,6 +1012,7 @@ def main(argv: list[str] | None = None) -> int:
                 messages_per_agent=args.messages_per_agent,
                 stage=args.stage,
                 profiles=args.profiles,
+                transport=args.transport,
                 output_dir=args.output_dir,
                 baseline_json=args.baseline_json or None,
                 write_baseline=write_baseline,
@@ -930,6 +1055,7 @@ def main(argv: list[str] | None = None) -> int:
                 agent_count=args.agents,
                 messages=messages,
                 profiles=args.profiles,
+                transport=args.transport,
             )
         except ValueError as exc:
             return _print_json({"ok": False, "verdict": "input_error", "message": str(exc)})

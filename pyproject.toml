@@ -76,6 +76,11 @@ Homepage = "https://github.com/rblake2320/selfconnect"
 Repository = "https://github.com/rblake2320/selfconnect"
 
 [tool.hatch.build.targets.wheel]
+artifacts = [
+    "experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json",
+    "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json",
+]
 include = [
     "_win32_abi.py",
     "self_connect.py",
@@ -85,6 +90,7 @@ include = [
     "sc_mesh_lease.py",
     "sc_fleet_guard.py",
     "sc_fabric_benchmark.py",
+    "sc_fabric_v2.py",
     "sc_local_model_role.py",
     "sc_echo_filter.py",
     "sc_identity.py",
@@ -108,6 +114,9 @@ include = [
     "experiments/win32_probe/results/channel_router_composition_PASS_redacted.json",
     "experiments/win32_probe/results/pipe_role_lease_PASS_redacted.json",
     "experiments/win32_probe/results/uia_echo_filter_PASS_redacted.json",
+    "experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json",
+    "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json",
     "docs/BROWSER_LOCAL_PROOF.md",
     "docs/CHANNEL_ROUTER_COMPOSITION_PROOF.md",
     "docs/CLAIM_EVIDENCE_MATRIX.md",
@@ -132,12 +141,20 @@ include = [
     "skills/selfconnect-win32/**",
 ]
 
+[tool.hatch.build.targets.sdist]
+artifacts = [
+    "experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json",
+    "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json",
+]
+
 [project.scripts]
 selfconnect = "sc_cli:main"
 selfconnect-mcp = "sc_mcp:main"
 selfconnect-mesh = "sc_mesh_registry:main"
 selfconnect-fleet = "sc_fleet_guard:main"
 selfconnect-bench = "sc_fabric_benchmark:main"
+selfconnect-fabric = "sc_fabric_v2:main"
 selfconnect-local-model = "sc_local_model_role:main"
 
 [tool.pytest.ini_options]

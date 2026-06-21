@@ -52,6 +52,37 @@ visual title alone.
 
 ## Highest-Value Defense To Build Next
 
+### 0. Fabric V2 Host Service / IOCP Router
+
+Current state:
+
+- Frame/mailbox layer: DONE in `sc_fabric_v2.py`.
+- Sign-once/MAC-many frames: DONE.
+- Replay/deadline rejection: DONE.
+- Bounded mailbox backpressure: DONE.
+- Real Windows named-pipe ACK selftest: DONE.
+- Benchmark path `--transport fabric_v2_frame_mailbox`: DONE.
+
+Still open:
+
+- production IOCP host service;
+- per-user session router;
+- long-lived named-pipe endpoint with bounded per-agent mailboxes;
+- crash/restart recovery in the host;
+- service-mode integration.
+
+Why it matters:
+
+- The frame layer proves the governed session semantics.
+- The IOCP host proves the high-rate operational data plane.
+
+Expected next artifacts:
+
+- `sc_fabric_host.py` or enterprise host-service equivalent;
+- IOCP/named-pipe host test suite;
+- `docs/FABRIC_V2_HOST_SERVICE_PROOF.md`;
+- V2 benchmark rerun against the host service.
+
 ### 1. Channel-Router Composition Proof
 
 This is the top open proof because it joins the strongest claim families into

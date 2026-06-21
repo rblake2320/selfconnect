@@ -131,6 +131,35 @@ Fabric V2 should add:
 Win32 remains the discovery, identity, bootstrap, and semantic execution layer.
 The high-rate mesh data plane moves to the Fabric V2 adapter.
 
+## Fabric V2 Slice Status - 2026-06-21
+
+Implemented and benchmarked:
+
+- `sc_fabric_v2.py` frame layer;
+- `selfconnect-fabric selftest`;
+- sign-once/MAC-many HMAC frames;
+- receiver binding;
+- payload hashes;
+- deadline rejection;
+- sequence replay rejection;
+- bounded mailbox backpressure;
+- real Windows named-pipe request/ACK selftest;
+- `selfconnect-bench --transport fabric_v2_frame_mailbox`.
+
+Latest proof artifacts:
+
+- `experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json`
+- `experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json`
+- `experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json`
+
+Boundary:
+
+- Production IOCP host service is still open.
+- Long-lived per-user session router is still open.
+- This slice proves the frame/mailbox/security semantics and a real Windows
+  named-pipe transport species, then measures it through the same benchmark
+  schema as the current transport.
+
 ## Patent And Competitor Boundary
 
 Read these before turning Fabric V2 into claims or marketing:

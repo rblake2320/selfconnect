@@ -1,0 +1,302 @@
+{
+  "action": "continue",
+  "agent_count": 5,
+  "aggregate": {
+    "audit_lag_ms": {
+      "avg": 0.44,
+      "count": 3,
+      "max": 0.509,
+      "min": 0.338,
+      "p50": 0.474,
+      "p95": 0.506,
+      "p99": 0.508
+    },
+    "end_to_end_task_ms": {
+      "avg": 1.061,
+      "count": 3,
+      "max": 1.301,
+      "min": 0.756,
+      "p50": 1.126,
+      "p95": 1.283,
+      "p99": 1.297
+    },
+    "model_calls": 0,
+    "model_calls_per_known_task": 0.0,
+    "readback_latency_ms": {
+      "avg": 0.116,
+      "count": 3,
+      "max": 0.152,
+      "min": 0.059,
+      "p50": 0.138,
+      "p95": 0.151,
+      "p99": 0.152
+    },
+    "transport_governance_ms": {
+      "avg": 0.116,
+      "count": 3,
+      "max": 0.152,
+      "min": 0.059,
+      "p50": 0.138,
+      "p95": 0.151,
+      "p99": 0.152
+    }
+  },
+  "artifact_path": "experiments\\fabric_v2\\results\\fabric_v2_5agent_baseline_redacted.json",
+  "baseline": {
+    "loaded": false,
+    "path": "",
+    "required_for_scale_comparison": false,
+    "written": true,
+    "written_path": "experiments\\fabric_v2\\results\\baseline_5agent_fabric_v2_frame_mailbox.json"
+  },
+  "created_at": 1782045591.9196656,
+  "event_log_path": "experiments\\fabric_v2\\results\\fabric_v2_5agent_baseline_events.jsonl",
+  "fleet_guard": {
+    "action": "continue",
+    "agent_reports": [
+      {
+        "capture": false,
+        "name": "normal-agent-1",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "normal-agent-2",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "normal-agent-3",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "normal-agent-4",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "normal-agent-5",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      }
+    ],
+    "blocked_count": 0,
+    "capture_triggers": [],
+    "created_at": 1782045591.9196656,
+    "halt_reasons": [],
+    "hard_reasons": [],
+    "ok": true,
+    "resources": {
+      "gpu": {
+        "power_watts": 63.28,
+        "temperature_c": 35.0,
+        "utilization_percent": 6.0,
+        "vram_free_mb": 28833.0,
+        "vram_total_mb": 32607.0,
+        "vram_used_mb": 3774.0
+      },
+      "ram_free_mb": 70334.625,
+      "ram_total_mb": 128628.969
+    },
+    "thresholds": {
+      "ack_block_threshold": 2,
+      "approval_block_seconds": 90,
+      "blocked_agent_hard_stop": 3,
+      "local_narration_hard_stop": 2,
+      "p99_latency_multiplier": 5.0,
+      "queue_depth_limit": null,
+      "ram_free_mb_floor": 25600,
+      "vram_free_mb_floor": 6144
+    },
+    "verdict": "pass"
+  },
+  "freeze": {
+    "missing_docs": [],
+    "missing_markers": [],
+    "ok": true,
+    "required_docs": [
+      "docs/PATENT_EVIDENCE_FREEZE_2026-06-20.md",
+      "docs/CLAIM_EVIDENCE_MATRIX.md",
+      "docs/PATENT_DESIGN_AROUND_DEFENSE.md",
+      "docs/PATENT_PRIOR_ART_SNAPSHOT.md"
+    ],
+    "required_markers": [
+      "composition claim",
+      "durable virtual",
+      "execution hierarchy",
+      "mcp/http competitor contrast"
+    ]
+  },
+  "live_agent_count": 0,
+  "logical_agent_count": 5,
+  "logical_message_count": 15,
+  "messages_per_agent": 3,
+  "ok": true,
+  "profile_names": [
+    "normal"
+  ],
+  "profiles": [
+    {
+      "agent_count": 5,
+      "agents": [
+        {
+          "birth_id": "normal-agent-1-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "normal-agent-1",
+          "p99_latency_ms": 0.152,
+          "queue_depth": 0,
+          "role": "normal-agent-1",
+          "status": "active"
+        },
+        {
+          "birth_id": "normal-agent-2-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "normal-agent-2",
+          "p99_latency_ms": 0.152,
+          "queue_depth": 0,
+          "role": "normal-agent-2",
+          "status": "active"
+        },
+        {
+          "birth_id": "normal-agent-3-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "normal-agent-3",
+          "p99_latency_ms": 0.152,
+          "queue_depth": 0,
+          "role": "normal-agent-3",
+          "status": "active"
+        },
+        {
+          "birth_id": "normal-agent-4-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "normal-agent-4",
+          "p99_latency_ms": 0.152,
+          "queue_depth": 0,
+          "role": "normal-agent-4",
+          "status": "active"
+        },
+        {
+          "birth_id": "normal-agent-5-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "normal-agent-5",
+          "p99_latency_ms": 0.152,
+          "queue_depth": 0,
+          "role": "normal-agent-5",
+          "status": "active"
+        }
+      ],
+      "audit_lag_ms": {
+        "avg": 0.358,
+        "count": 15,
+        "max": 0.518,
+        "min": 0.296,
+        "p50": 0.338,
+        "p95": 0.474,
+        "p99": 0.509
+      },
+      "config": {
+        "audit_required": true,
+        "echo_filter": true,
+        "label": "Normal",
+        "lease_gate": false,
+        "model_calls_per_known_task_target": 0,
+        "target_guard": true,
+        "tpm_required": false,
+        "worm_required": false
+      },
+      "echo_false_negatives": 0,
+      "echo_false_positives": 0,
+      "end_to_end_task_ms": {
+        "avg": 0.793,
+        "count": 15,
+        "max": 1.344,
+        "min": 0.64,
+        "p50": 0.756,
+        "p95": 1.126,
+        "p99": 1.301
+      },
+      "fabric_v2": {
+        "enabled": true,
+        "mac_failures": 0,
+        "mailbox_backpressure_events": 0,
+        "session_id_hash": "227f56838e7c8066ef65ef6137f0d743369a31c38e08bd5390ba044de413e1ac"
+      },
+      "live_window_count": 0,
+      "logical_message_count": 15,
+      "message_hash_sample": [
+        "ef29acfb879d4168cfff031e9d829d1870928623406c8c5ecb9eef3429255477",
+        "dd4232ba97b2b21f137a166023082b11ca1f939a4d4ef041b6f1ff0ad8f7b445",
+        "d934f6a6b25377f8fd7172fb9284a55d7243e455ea9f516a275df663a869c44a"
+      ],
+      "model_calls": 0,
+      "model_calls_per_known_task": 0.0,
+      "profile": "normal",
+      "readback_latency_ms": {
+        "avg": 0.071,
+        "count": 15,
+        "max": 0.155,
+        "min": 0.051,
+        "p50": 0.059,
+        "p95": 0.138,
+        "p99": 0.152
+      },
+      "replay_attempts": {
+        "accepted": 0,
+        "rejected": 1
+      },
+      "stale_lease_attempts": {
+        "accepted": 0,
+        "rejected": 0
+      },
+      "transport": "fabric_v2_frame_mailbox",
+      "transport_governance_ms": {
+        "avg": 0.071,
+        "count": 15,
+        "max": 0.155,
+        "min": 0.051,
+        "p50": 0.059,
+        "p95": 0.138,
+        "p99": 0.152
+      }
+    }
+  ],
+  "raw_text_included": false,
+  "repo": {
+    "ahead": 0,
+    "behind": 0,
+    "branch": "test/win32-hardening-v1",
+    "dirty": true,
+    "dirty_count": 4,
+    "head": "f58c831f5e9ff277aa8333ddc7155b058d640664",
+    "head_short": "f58c831",
+    "ok": true,
+    "repo_path": "C:\\Users\\techai\\PKA testing\\selfconnect",
+    "status_sample": [
+      " M pyproject.toml",
+      " M sc_fabric_benchmark.py",
+      "?? sc_fabric_v2.py",
+      "?? tests/test_fabric_v2.py"
+    ],
+    "upstream": "origin/test/win32-hardening-v1"
+  },
+  "run_id": "fabric_v2_5agent_baseline",
+  "schema_version": 1,
+  "stage": "production",
+  "transport": "fabric_v2_frame_mailbox",
+  "verdict": "pass"
+}

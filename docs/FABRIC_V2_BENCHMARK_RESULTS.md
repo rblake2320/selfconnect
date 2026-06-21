@@ -1,6 +1,6 @@
 # Fabric Benchmark Results
 
-Last updated: 2026-06-20
+Last updated: 2026-06-21
 
 Private engineering evidence summary - not approved for public disclosure.
 
@@ -121,3 +121,63 @@ experiments/fabric_v2/results/baseline_5agent_real.json
 
 Do not compare real-agent p99 latency against the logical
 `baseline_5agent.json`; the two measure different bottlenecks.
+
+## Fabric V2 Frame/Mailbox Slice
+
+Fabric V2 has its first benchmarkable implementation slice:
+
+- `sc_fabric_v2.py`
+- `selfconnect-fabric selftest`
+- `selfconnect-bench run --transport fabric_v2_frame_mailbox`
+
+Implemented in this slice:
+
+- session key derivation from a session secret;
+- sign-once/MAC-many frame sealing with HMAC-SHA256;
+- payload hashes;
+- receiver binding;
+- sequence-number replay rejection;
+- deadline expiration rejection;
+- bounded mailbox backpressure;
+- real Windows named-pipe request/ACK selftest through `AF_PIPE`;
+- benchmark integration as a separate transport profile.
+
+Boundary:
+
+- This is not yet the production IOCP host service.
+- It is a measured Fabric V2 frame/mailbox and named-pipe proof that lets the
+  benchmark compare current transport vs Fabric V2 without changing the metric
+  schema.
+- IOCP service mode, per-user router, and long-lived mailbox host remain the
+  next Fabric V2 build target.
+
+Validation:
+
+| Check | Result |
+| --- | --- |
+| `python -m pytest tests/test_fabric_v2.py tests/test_fabric_v0_benchmark.py -q` | `19 passed` |
+| `python -m ruff check sc_fabric_v2.py sc_fabric_benchmark.py tests/test_fabric_v2.py tests/test_fabric_v0_benchmark.py` | PASS |
+| `python -m py_compile sc_fabric_v2.py sc_fabric_benchmark.py tests\test_fabric_v2.py tests\test_fabric_v0_benchmark.py` | PASS |
+| `python -m sc_fabric_v2 selftest` | PASS, real Windows named-pipe ACK |
+| `selfconnect-bench run --transport fabric_v2_frame_mailbox --agents 5` | PASS |
+
+Fabric V2 5-agent baseline:
+
+| Artifact | Value |
+| --- | --- |
+| Redacted artifact | `experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json` |
+| Baseline | `experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json` |
+| Transport/governance p99 | `0.152 ms` |
+| Audit/event p99 | `0.508 ms` |
+| End-to-end p99 | `1.297 ms` |
+| Model calls per known task | `0.0` |
+
+Fabric V2 named-pipe selftest:
+
+| Artifact | Value |
+| --- | --- |
+| Redacted artifact | `experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json` |
+| Transport | Windows named pipe (`AF_PIPE`) |
+| ACK payload | `ACK:selftest-a:1` |
+| Elapsed | `0.797 ms` |
+| Replay rejection | PASS |
