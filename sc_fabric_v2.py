@@ -23,6 +23,15 @@ from multiprocessing.connection import Client, Listener
 from pathlib import Path
 from typing import Any
 
+try:
+    import ntsecuritycon as con
+    import win32api
+    import win32security
+
+    _WIN32_SECURITY = True
+except ImportError:
+    _WIN32_SECURITY = False
+
 SCHEMA_VERSION = 1
 DEFAULT_MAX_FRAME_BYTES = 256 * 1024
 DEFAULT_DEADLINE_MS = 30_000
@@ -276,6 +285,67 @@ class BoundedMailbox:
 
     def depth(self) -> int:
         return self._queue.qsize()
+
+
+def create_pipe_security_attributes() -> Any:
+    """Return a SECURITY_ATTRIBUTES struct that restricts the named pipe to the
+    current user's SID and the SYSTEM account.
+
+    This is optional hardening. If ``win32security`` is not installed, or if
+    any step fails, the function returns ``None``. Callers that receive ``None``
+    should log a warning and proceed with the system-default DACL — the pipe
+    remains fully functional, it just accepts connections from any local user.
+
+    On non-Windows platforms this always returns ``None``.
+    """
+    if not _WIN32_SECURITY or sys.platform != "win32":
+        return None
+    try:
+        sd = win32security.SECURITY_DESCRIPTOR()
+        dacl = win32security.ACL()
+        token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), 0x0008)  # TOKEN_QUERY
+        user_sid = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+        system_sid = win32security.CreateWellKnownSid(win32security.WinLocalSystemSid, None)
+        dacl.AddAccessAllowedAce(win32security.ACL_REVISION, con.FILE_ALL_ACCESS, user_sid)
+        dacl.AddAccessAllowedAce(win32security.ACL_REVISION, con.FILE_ALL_ACCESS, system_sid)
+        sd.SetSecurityDescriptorDacl(True, dacl, False)
+        sa = win32security.SECURITY_ATTRIBUTES()
+        sa.SECURITY_DESCRIPTOR = sd
+        return sa
+    except Exception:
+        return None
+
+
+def pipe_security_summary() -> dict[str, Any]:
+    """Return a safe, non-secret summary of the pipe security configuration.
+
+    Keys:
+    - ``dacl_hardened``: ``True`` when ``create_pipe_security_attributes()``
+      produced a real SECURITY_ATTRIBUTES object (i.e. DACL is restricted to
+      the current user + SYSTEM).
+    - ``win32_security_available``: ``True`` when ``pywin32`` is importable.
+    - ``owner_sid_hash``: SHA-256 hex digest of the current-user SID string,
+      or an empty string when the SID cannot be retrieved.  The raw SID is
+      never included.
+    """
+    sa = create_pipe_security_attributes()
+    dacl_hardened = sa is not None
+
+    owner_sid_hash = ""
+    if _WIN32_SECURITY and sys.platform == "win32":
+        try:
+            token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), 0x0008)
+            user_sid = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+            sid_str = win32security.ConvertSidToStringSid(user_sid)
+            owner_sid_hash = hashlib.sha256(sid_str.encode("utf-8")).hexdigest()
+        except Exception:
+            owner_sid_hash = ""
+
+    return {
+        "dacl_hardened": dacl_hardened,
+        "win32_security_available": _WIN32_SECURITY,
+        "owner_sid_hash": owner_sid_hash,
+    }
 
 
 def pipe_address(name: str | None = None) -> str:

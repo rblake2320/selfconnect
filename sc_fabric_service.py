@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import sc_fabric_v2
+import sc_fabric_windows_svc as _winsvc
 from sc_fabric_host import FabricHostService, host_roundtrip
 from sc_fabric_router import FabricSessionRouter
 
@@ -406,6 +407,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_selftest = sub.add_parser("selftest", help="Run the built-in selftest")
     p_selftest.add_argument("--output-dir", default="experiments/fabric_v2/results")
 
+    sub.add_parser("install-service", help="Install as a Windows SCM service (requires admin)")
+    sub.add_parser("remove-service", help="Stop and remove the Windows SCM service (requires admin)")
+    sub.add_parser("query-service", help="Query current Windows SCM service state")
+    sub.add_parser("start-service", help="Start the Windows SCM service")
+    sub.add_parser("stop-service", help="Stop the Windows SCM service")
+
     return parser
 
 
@@ -483,6 +490,31 @@ def main(argv: list[str] | None = None) -> int:
         artifact = selftest(output_dir=args.output_dir)
         print(json.dumps(artifact, indent=2, sort_keys=True))
         return 0 if artifact.get("ok") else 2
+
+    if args.command == "install-service":
+        result = _winsvc.install_service()
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result.get("ok") else 2
+
+    if args.command == "remove-service":
+        result = _winsvc.remove_service()
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result.get("ok") else 2
+
+    if args.command == "query-service":
+        result = _winsvc.query_service()
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result.get("ok") else 2
+
+    if args.command == "start-service":
+        result = _winsvc.start_service()
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result.get("ok") else 2
+
+    if args.command == "stop-service":
+        result = _winsvc.stop_service()
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result.get("ok") else 2
 
     return 2
 

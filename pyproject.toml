@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "selfconnect"
-version = "0.10.4"
+version = "0.10.5"
 description = "OS-native Win32 bridge for AI agent orchestration — PostMessage, PrintWindow, UIA, cross-machine mesh, Telegram approvals, ClaudeGo dashboard."
 readme = "README.md"
 license = { file = "LICENSE" }

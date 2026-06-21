@@ -170,6 +170,27 @@ def test_import_replay_state_tuple_hash_matches():
     assert e["tuple_hash"] == expected
 
 
+def test_pipe_security_summary_returns_dict():
+    from sc_fabric_v2 import pipe_security_summary
+
+    result = pipe_security_summary()
+    assert isinstance(result, dict)
+    assert "dacl_hardened" in result
+    assert "win32_security_available" in result
+    assert isinstance(result["dacl_hardened"], bool)
+
+
+def test_create_pipe_security_attributes_returns_none_or_object():
+    from sc_fabric_v2 import create_pipe_security_attributes
+
+    sa = create_pipe_security_attributes()
+    if sys.platform == "win32":
+        # May be None if win32security not installed, or a real SA object
+        assert sa is None or hasattr(sa, "SECURITY_DESCRIPTOR")
+    else:
+        assert sa is None
+
+
 def test_fabric_v2_five_agent_baseline_uses_transport_specific_name():
     temp_dir = tempfile.TemporaryDirectory()
 
