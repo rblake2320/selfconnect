@@ -4,12 +4,15 @@ Date: 2026-06-21
 
 ## Verdict
 
-PASS through 20 real visible CLI agents.
+PASS through 20 real visible Codex CLI agents.
+
+PASS through 20 real mixed visible CLI agents using authenticated providers
+available on this workstation: 10 Codex + 10 Claude.
 
 This ladder used real visible Windows Terminal windows running real `codex exec`
-agent processes. Each rung required UIA readback from each visible window to
-contain that agent's expected ACK. This is not the logical harness and not a
-simulation.
+and/or `claude -p` agent processes. Each rung required UIA readback from each
+visible window to contain that agent's expected ACK. This is not the logical
+harness and not a simulation.
 
 ## Rungs
 
@@ -40,23 +43,64 @@ After the 20-real rung:
 
 The run stayed above the hard-stop floors.
 
+## Cross-Vendor Rungs
+
+Authenticated provider coverage:
+
+- Codex: PASS in one-shot probe and visible ladder.
+- Claude: PASS in one-shot probe and visible ladder.
+- Gemini: blocked before model execution because Gemini CLI non-interactive
+  auth is not configured on this workstation. The CLI returned
+  `Manual authorization is required... provide a GEMINI_API_KEY, or ensure
+  Application Default Credentials are configured.`
+
+| Rung | Run ID | Providers | Verdict | ACKs | ACK p50 ms | ACK p95 ms | ACK p99 ms | ACK max ms | Missed ACKs | Wrong ACK | Provider auth |
+| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 smoke | `SC_REAL5_20260621_003240` | 1 Codex + 1 Claude | PASS | 2/2 | `13153.273` | `20824.184` | `21506.042` | `21676.507` | `0` | `0` | `0` |
+| 1 smoke | `SC_REAL5_20260621_003308` | 1 Gemini | FAIL | 0/1 | n/a | n/a | n/a | n/a | `1` | `0` | `1` |
+| 5 mixed | `SC_REAL5_20260621_003518` | 3 Codex + 2 Claude | PASS | 5/5 | `18172.997` | `21503.808` | `21686.640` | `21732.349` | `0` | `0` | `0` |
+| 10 mixed | `SC_REAL5_20260621_003549` | 5 Codex + 5 Claude | PASS | 10/10 | `20065.985` | `33397.959` | `34668.060` | `34985.586` | `0` | `0` | `0` |
+| 15 mixed | `SC_REAL5_20260621_004724` | 8 Codex + 7 Claude | PASS | 15/15 | `4763.204` | `40615.021` | `41191.536` | `41335.665` | `0` | `0` | `0` |
+| 20 mixed | `SC_REAL5_20260621_010359` | 10 Codex + 10 Claude | PASS | 20/20 | `30801.068` | `57087.581` | `57107.396` | `57112.350` | `0` | `0` | `0` |
+
+Two failed attempts were intentionally kept as learning evidence:
+
+- `SC_REAL5_20260621_003633`: 15 mixed, 14/15 ACKs. Claude changed the
+  requested role name in its output. The runner now classifies this as
+  `wrong_ack_format` when the nonce appears but the exact expected ACK does not.
+- `SC_REAL5_20260621_004812`: 20 mixed, 19/20 ACKs. The runner matched
+  `realclaude-1` against `realclaude-10` because the title finder used substring
+  matching. The finder now requires a role boundary and has regression coverage.
+
+The 15 and 20 mixed rungs were rerun after those fixes and passed.
+
 ## Evidence Files
 
 Raw JSON artifacts are local and ignored by Git:
 
 - `experiments/fabric_v2/results/baseline_5agent_real.json`
+- `experiments/fabric_v2/results/baseline_5agent_real_claude2_codex3.json`
 - `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_002246.json`
 - `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_002307.json`
 - `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_002328.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_003240.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_003308.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_003518.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_003549.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_003633.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_004724.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_004812.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_010359.json`
 
 The mesh event chain also records the 5-real pass and the refreshed v2 baseline.
 
 ## Boundary
 
-This proves real-agent ACK/readback scale through 20 visible Codex CLI agents on
-this workstation. It does not claim cross-vendor equivalence for Claude/Gemini
-or zero-model-call deterministic replay. This benchmark intentionally invokes
-one real Codex model call per real ACK task.
+This proves real-agent ACK/readback scale through 20 visible Codex CLI agents and
+through 20 visible mixed Codex+Claude CLI agents on this workstation. It does
+not claim Gemini equivalence until Gemini non-interactive auth is configured and
+rerun. It does not claim zero-model-call deterministic replay. This benchmark
+intentionally invokes one real provider model call per real ACK task.
 
 The logical Fabric harness remains the source for sub-millisecond
 transport/governance latency and zero-model-call known-task results. This real

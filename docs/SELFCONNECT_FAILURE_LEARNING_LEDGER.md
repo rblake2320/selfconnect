@@ -52,12 +52,50 @@ GitHub, without storing raw private transcripts or noisy local artifacts.
 - Fix: schema `selfconnect.real_agent_baseline.v2` now records p50/p95/p99,
   launch distributions, failure counters, and model-call accounting.
 
+### 2026-06-21: Gemini CLI Blocked Before Non-Interactive ACK
+
+- Context: cross-vendor probe attempted a visible Gemini CLI ACK with
+  `gemini -p` and YOLO approvals.
+- Result: no ACK. The raw CLI log reported
+  `Manual authorization is required... provide a GEMINI_API_KEY, or ensure
+  Application Default Credentials are configured.`
+- Decision: mark Gemini as provider-auth-blocked on this workstation, not as a
+  SelfConnect transport failure.
+- Fix: runner sets Gemini fail-fast environment and classifies this as
+  `provider_auth_required` instead of a generic timeout.
+- Evidence:
+  - local artifact `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_003308.json`
+
+### 2026-06-21: Claude Can Drift From Exact ACK Format Under Load
+
+- Context: first 15 mixed Codex+Claude run returned 14/15 exact ACKs.
+- Result: the failed Claude output included the correct nonce but changed the
+  role to `realclaude-orchestrator` and added extra fields.
+- Decision: this is real-agent drift/wrong-ACK format, not a missing window.
+- Fix: prompt strengthened to require the exact line and the runner now
+  classifies `nonce present, exact ACK absent` as `wrong_ack_format`.
+- Evidence:
+  - local artifact `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_003633.json`
+  - passing rerun `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_004724.json`
+
+### 2026-06-21: Role-Name Prefix Collisions Can Corrupt Discovery
+
+- Context: first 20 mixed Codex+Claude run returned 19/20 exact ACKs.
+- Result: `realclaude-1` matched the `realclaude-10` window because the title
+  finder used substring matching.
+- Decision: window discovery must use role boundaries, not substring matching.
+- Fix: `_title_matches()` now requires exact title or whitespace-delimited
+  suffix, and regression tests cover `realclaude-1` vs `realclaude-10`.
+- Evidence:
+  - local artifact `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_004812.json`
+  - passing rerun `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_010359.json`
+
 ## Current Learning
 
 - The correct real ladder control path is visible terminal + real CLI process +
   UIA readback, not stale terminal reuse and not assuming an injected prompt has
   been interpreted as authority.
 - The 20-real ladder now passes with 0 missed ACKs, 0 drift events, and 0
-  approval stalls.
-- Cross-vendor behavior still needs its own ladder; the current real ladder is
-  Codex CLI only.
+  approval stalls for Codex-only and for authenticated mixed Codex+Claude.
+- Gemini remains blocked until non-interactive auth is configured with
+  `GEMINI_API_KEY` or Google Application Default Credentials.

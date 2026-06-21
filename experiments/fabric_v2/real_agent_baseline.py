@@ -34,6 +34,7 @@ TERMINAL_CLASS = "CASCADIA_HOSTING_WINDOW_CLASS"
 
 @dataclass
 class AgentRun:
+    provider: str
     role: str
     nonce: str
     expected: str
@@ -46,6 +47,38 @@ class AgentRun:
     ack_ms: float | None = None
     status: str = "pending"
     error: str = ""
+    diagnosis: str = ""
+
+
+@dataclass(frozen=True)
+class ProviderCommand:
+    name: str
+    display: str
+    command: str
+    fail_fast_env: dict[str, str] | None = None
+
+
+PROVIDERS = {
+    "codex": ProviderCommand(
+        name="codex",
+        display="codex exec",
+        command=(
+            "& codex exec --dangerously-bypass-approvals-and-sandbox "
+            "--skip-git-repo-check $prompt"
+        ),
+    ),
+    "claude": ProviderCommand(
+        name="claude",
+        display="claude -p",
+        command="& claude -p --permission-mode bypassPermissions --output-format text $prompt",
+    ),
+    "gemini": ProviderCommand(
+        name="gemini",
+        display="gemini -p",
+        command="& gemini -p $prompt --approval-mode yolo --skip-trust --output-format text",
+        fail_fast_env={"CI": "true", "NO_COLOR": "1"},
+    ),
+}
 
 
 def _sha256(text: str) -> str:
@@ -85,8 +118,70 @@ def _latency_stats(values: list[float]) -> dict[str, float | int | None]:
     }
 
 
+def _provider_counts(provider_plan: list[str]) -> dict[str, int]:
+    return {provider: provider_plan.count(provider) for provider in sorted(set(provider_plan))}
+
+
+def _provider_key(provider_plan: list[str]) -> str:
+    return "_".join(
+        f"{provider}{count}" for provider, count in _provider_counts(provider_plan).items()
+    )
+
+
+def _baseline_file_name(provider_plan: list[str], count: int) -> str | None:
+    if count != 5:
+        return None
+    if set(provider_plan) == {"codex"}:
+        return "baseline_5agent_real.json"
+    return f"baseline_5agent_real_{_provider_key(provider_plan)}.json"
+
+
 def _ps_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _provider_plan(spec: str | None, count: int) -> list[str]:
+    if count < 1:
+        raise ValueError("--agents must be at least 1")
+    if not spec:
+        return ["codex"] * count
+
+    parts = [part.strip().lower() for part in spec.split(",") if part.strip()]
+    if not parts:
+        raise ValueError("--providers cannot be empty")
+
+    expanded: list[str] = []
+    round_robin: list[str] = []
+    explicit_counts = False
+    for part in parts:
+        if ":" in part:
+            explicit_counts = True
+            name, raw_count = part.split(":", 1)
+            name = name.strip().lower()
+            if name not in PROVIDERS:
+                raise ValueError(f"unknown provider: {name}")
+            try:
+                provider_count = int(raw_count)
+            except ValueError as exc:
+                raise ValueError(f"invalid provider count for {name}: {raw_count}") from exc
+            if provider_count < 0:
+                raise ValueError(f"provider count must be non-negative for {name}")
+            expanded.extend([name] * provider_count)
+        else:
+            if part not in PROVIDERS:
+                raise ValueError(f"unknown provider: {part}")
+            round_robin.append(part)
+
+    if explicit_counts and round_robin:
+        raise ValueError("do not mix counted and round-robin provider specs")
+    if explicit_counts:
+        if len(expanded) != count:
+            raise ValueError(
+                f"provider counts sum to {len(expanded)} but --agents is {count}"
+            )
+        return expanded
+
+    return [round_robin[index % len(round_robin)] for index in range(count)]
 
 
 def _window_rows() -> list[dict[str, Any]]:
@@ -97,18 +192,35 @@ def _window_rows() -> list[dict[str, Any]]:
     ]
 
 
+def _title_matches(title: str, run_id: str, role: str) -> bool:
+    target = f"{run_id} {role}"
+    return title == target or title.startswith(target + " ")
+
+
 def _write_agent_script(
     *,
     workdir: Path,
     run_id: str,
+    provider: str,
     role: str,
     nonce: str,
     expected: str,
     log: Path,
     keep_open: bool,
 ) -> Path:
-    prompt = f"Reply with exactly one line and no markdown: {expected}"
+    provider_command = PROVIDERS[provider]
+    prompt = (
+        "Reply with exactly this one line and nothing else. "
+        "Do not change the provider, role, nonce, spacing, or field names. "
+        f"Line: {expected}"
+    )
     script = workdir / f"{role}.ps1"
+    env_lines = ""
+    if provider_command.fail_fast_env:
+        env_lines = "\n".join(
+            f"$env:{key} = { _ps_quote(value) }"
+            for key, value in provider_command.fail_fast_env.items()
+        )
     stay_open = (
         "Write-Host 'WINDOW_STAYS_OPEN_FOR_UIA_INSPECTION';"
         " while ($true) { Start-Sleep -Seconds 3600 }"
@@ -119,11 +231,12 @@ def _write_agent_script(
 $ErrorActionPreference = 'Continue'
 $Host.UI.RawUI.WindowTitle = { _ps_quote(run_id + ' ' + role) }
 Set-Location -LiteralPath { _ps_quote(str(ROOT)) }
-Write-Host 'SELFCONNECT_REAL_AGENT_START role={role} nonce={nonce}'
+{env_lines}
+Write-Host 'SELFCONNECT_REAL_AGENT_START provider={provider} role={role} nonce={nonce}'
 $prompt = { _ps_quote(prompt) }
-& codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check $prompt 2>&1 |
+{provider_command.command} 2>&1 |
     Tee-Object -FilePath { _ps_quote(str(log)) }
-Write-Host 'SELFCONNECT_REAL_AGENT_DONE role={role}'
+Write-Host 'SELFCONNECT_REAL_AGENT_DONE provider={provider} role={role}'
 $Host.UI.RawUI.WindowTitle = { _ps_quote(run_id + ' ' + role + ' DONE') }
 {stay_open}
 """
@@ -147,9 +260,8 @@ def _spawn_visible(script: Path) -> subprocess.Popen[bytes]:
 
 
 def _find_window(run_id: str, role: str) -> dict[str, Any] | None:
-    title_fragment = f"{run_id} {role}"
     for row in _window_rows():
-        if title_fragment in str(row.get("title", "")):
+        if _title_matches(str(row.get("title", "")), run_id, role):
             return row
     # Some TUIs rewrite the title. Fall back to UIA content.
     for row in _window_rows():
@@ -157,14 +269,32 @@ def _find_window(run_id: str, role: str) -> dict[str, Any] | None:
             text = str(sc_cli.read_window(int(row["hwnd"])).get("text", ""))
         except Exception:
             continue
-        if f"SELFCONNECT_REAL_AGENT_START role={role}" in text:
+        if "SELFCONNECT_REAL_AGENT_START" in text and f"role={role}" in text:
             return row
     return None
+
+
+def _diagnose_failed_agent(agent: AgentRun) -> None:
+    try:
+        log_text = agent.log.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    if "Manual authorization is required" in log_text or "FatalAuthenticationError" in log_text:
+        agent.diagnosis = "provider_auth_required"
+        agent.error = "provider authentication required; exact ACK could not be produced"
+        return
+    if agent.nonce in log_text and agent.expected not in log_text:
+        agent.diagnosis = "wrong_ack_format"
+        agent.error = "nonce observed in provider output, but exact expected ACK was not produced"
+        return
+    if agent.nonce not in log_text:
+        agent.diagnosis = "no_nonce_observed"
 
 
 def run_baseline(
     *,
     count: int,
+    providers: str | None,
     timeout_s: float,
     results_dir: Path,
     keep_open: bool,
@@ -175,21 +305,34 @@ def run_baseline(
     workdir.mkdir(parents=True, exist_ok=True)
 
     agents: list[AgentRun] = []
-    for index in range(1, count + 1):
-        role = f"realcodex-{index}"
+    provider_plan = _provider_plan(providers, count)
+    provider_ordinals: dict[str, int] = {}
+    for index, provider in enumerate(provider_plan, start=1):
+        provider_ordinals[provider] = provider_ordinals.get(provider, 0) + 1
+        role = f"real{provider}-{provider_ordinals[provider]}"
         nonce = f"{run_id}_{index:02d}"
-        expected = f"ACK_REAL5 role={role} nonce={nonce}"
+        expected = f"ACK_REAL_VENDOR provider={provider} role={role} nonce={nonce}"
         log = workdir / f"{role}.log"
         script = _write_agent_script(
             workdir=workdir,
             run_id=run_id,
+            provider=provider,
             role=role,
             nonce=nonce,
             expected=expected,
             log=log,
             keep_open=keep_open,
         )
-        agents.append(AgentRun(role=role, nonce=nonce, expected=expected, script=script, log=log))
+        agents.append(
+            AgentRun(
+                provider=provider,
+                role=role,
+                nonce=nonce,
+                expected=expected,
+                script=script,
+                log=log,
+            )
+        )
 
     started = time.perf_counter()
     processes = [_spawn_visible(agent.script) for agent in agents]
@@ -228,21 +371,28 @@ def run_baseline(
                         agent.error = "visible terminal window not found"
                     else:
                         agent.error = "expected ACK not observed via UIA before timeout"
+                _diagnose_failed_agent(agent)
 
         passed = all(agent.status == "pass" for agent in agents)
         ack_times = [agent.ack_ms for agent in agents if agent.ack_ms is not None]
         launch_times = [agent.launch_ms for agent in agents if agent.launch_ms is not None]
         failed = [agent for agent in agents if agent.status != "pass"]
+        baseline_file = _baseline_file_name(provider_plan, count) if passed else None
         result = {
-            "schema": "selfconnect.real_agent_baseline.v2",
+            "schema": "selfconnect.real_agent_baseline.v3",
             "run_id": run_id,
             "verdict": "PASS" if passed else "FAIL",
             "agent_count": count,
-            "real_agent_cli": "codex exec",
+            "provider_counts": _provider_counts(provider_plan),
+            "real_agent_cli": (
+                "mixed"
+                if len(set(provider_plan)) > 1
+                else PROVIDERS[provider_plan[0]].display
+            ),
             "visible_windows": True,
             "uia_readback_required": True,
             "logical_simulation": False,
-            "baseline_file": "baseline_5agent_real.json" if passed and count == 5 else None,
+            "baseline_file": baseline_file,
             "started_at": started,
             "duration_ms": (time.perf_counter() - started) * 1000.0,
             "ack_latency_ms": _latency_stats(ack_times),
@@ -261,8 +411,8 @@ def run_baseline(
                 "known_deterministic_task": False,
                 "model_calls_per_known_task": None,
                 "note": (
-                    "This real-agent ACK baseline intentionally invokes one Codex "
-                    "model turn per visible agent. It does not claim the zero-model-"
+                    "This real-agent ACK baseline intentionally invokes one real "
+                    "provider model turn per visible agent. It does not claim the zero-model-"
                     "call deterministic replay property."
                 ),
             },
@@ -275,9 +425,24 @@ def run_baseline(
                 "wrong_window_guard_failures": 0,
                 "drift_or_narration_events": 0,
                 "approval_stalls": 0,
+                "wrong_ack_format": sum(
+                    1 for agent in failed if agent.diagnosis == "wrong_ack_format"
+                ),
+                "provider_auth_required": sum(
+                    1 for agent in failed if agent.diagnosis == "provider_auth_required"
+                ),
+                "provider_failures": {
+                    provider: sum(
+                        1
+                        for agent in failed
+                        if agent.provider == provider
+                    )
+                    for provider in sorted(set(provider_plan))
+                },
             },
             "agents": [
                 {
+                    "provider": agent.provider,
                     "role": agent.role,
                     "nonce_hash": _sha256(agent.nonce),
                     "expected_hash": _sha256(agent.expected),
@@ -288,6 +453,7 @@ def run_baseline(
                     "ack_ms": agent.ack_ms,
                     "status": agent.status,
                     "error": agent.error,
+                    "diagnosis": agent.diagnosis,
                     "log": str(agent.log),
                 }
                 for agent in agents
@@ -296,8 +462,8 @@ def run_baseline(
 
         out_path = results_dir / f"real_agent_baseline_{run_id}.json"
         out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
-        if passed and count == 5:
-            baseline = results_dir / "baseline_5agent_real.json"
+        if baseline_file:
+            baseline = results_dir / baseline_file
             baseline.write_text(json.dumps(result, indent=2), encoding="utf-8")
             result["baseline_path"] = str(baseline)
         result["result_path"] = str(out_path)
@@ -314,6 +480,14 @@ def run_baseline(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--agents", type=int, default=5)
+    parser.add_argument(
+        "--providers",
+        default=None,
+        help=(
+            "Provider plan. Use counted form such as codex:3,claude:2 or "
+            "round-robin form such as codex,claude. Default: codex only."
+        ),
+    )
     parser.add_argument("--timeout", type=float, default=240.0)
     parser.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS)
     parser.add_argument("--close-windows", action="store_true")
@@ -321,6 +495,7 @@ def main(argv: list[str] | None = None) -> int:
 
     result = run_baseline(
         count=args.agents,
+        providers=args.providers,
         timeout_s=args.timeout,
         results_dir=args.results_dir,
         keep_open=not args.close_windows,
