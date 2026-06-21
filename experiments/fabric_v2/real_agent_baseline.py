@@ -48,6 +48,8 @@ class AgentRun:
     title: str = ""
     launch_ms: float | None = None
     ack_ms: float | None = None
+    log_exact_ack: bool = False
+    uia_exact_ack: bool = False
     status: str = "pending"
     error: str = ""
     diagnosis: str = ""
@@ -218,6 +220,26 @@ def _has_exact_line(text: str, expected: str) -> bool:
     return any(line.strip() == expected for line in text.splitlines())
 
 
+def _log_has_exact_ack(agent: AgentRun) -> bool:
+    try:
+        return _has_exact_line(
+            agent.log.read_text(encoding="utf-8", errors="replace"),
+            agent.expected,
+        )
+    except OSError:
+        return False
+
+
+def _readback_has_exact_ack(agent: AgentRun) -> tuple[bool, str]:
+    if agent.hwnd is None:
+        return False, ""
+    try:
+        readback = str(sc_cli.read_window(agent.hwnd).get("text", ""))
+    except Exception as exc:
+        return False, f"readback failed: {exc}"
+    return _has_exact_line(readback, agent.expected), ""
+
+
 def _state_path(results_dir: Path, run_id: str) -> Path:
     return results_dir / f"real_agent_state_{run_id}.json"
 
@@ -305,8 +327,10 @@ def _write_run_state(
         "duration_ms": (time.perf_counter() - started) * 1000.0,
         "process_pids": [proc.pid for proc in processes],
         "pending_roles": sorted(pending),
-        "pass_count": sum(1 for agent in agents if agent.status == "pass"),
-        "fail_count": sum(1 for agent in agents if agent.status == "fail"),
+            "pass_count": sum(1 for agent in agents if agent.status == "pass"),
+            "fail_count": sum(1 for agent in agents if agent.status == "fail"),
+            "log_ack_count": sum(1 for agent in agents if agent.log_exact_ack),
+            "uia_ack_count": sum(1 for agent in agents if agent.uia_exact_ack),
         "agents": [
             {
                 "provider": agent.provider,
@@ -317,6 +341,8 @@ def _write_run_state(
                 "title": agent.title,
                 "launch_ms": agent.launch_ms,
                 "ack_ms": agent.ack_ms,
+                "log_exact_ack": agent.log_exact_ack,
+                "uia_exact_ack": agent.uia_exact_ack,
                 "status": agent.status,
                 "error": agent.error,
                 "diagnosis": agent.diagnosis,
@@ -750,14 +776,15 @@ def run_baseline(
                         agent.pid = int(row["pid"])
                         agent.title = str(row.get("title", ""))
                         agent.launch_ms = (time.perf_counter() - started) * 1000.0
-                    if agent.hwnd is None:
-                        continue
-                    try:
-                        readback = str(sc_cli.read_window(agent.hwnd).get("text", ""))
-                    except Exception as exc:
-                        agent.error = f"readback failed: {exc}"
-                        continue
-                    if _has_exact_line(readback, agent.expected):
+                    if agent.hwnd is not None:
+                        uia_ok, readback_error = _readback_has_exact_ack(agent)
+                        if uia_ok:
+                            agent.uia_exact_ack = True
+                        elif readback_error:
+                            agent.error = readback_error
+                    if _log_has_exact_ack(agent):
+                        agent.log_exact_ack = True
+                    if agent.hwnd is not None and (agent.uia_exact_ack or agent.log_exact_ack):
                         agent.ack_ms = (time.perf_counter() - started) * 1000.0
                         agent.status = "pass"
                         pending.remove(agent.role)
@@ -771,6 +798,12 @@ def run_baseline(
                                 "phase": "polling",
                                 "pass_count": sum(
                                     1 for agent in agents if agent.status == "pass"
+                                ),
+                                "log_ack_count": sum(
+                                    1 for agent in agents if agent.log_exact_ack
+                                ),
+                                "uia_ack_count": sum(
+                                    1 for agent in agents if agent.uia_exact_ack
                                 ),
                                 "pending_count": len(pending),
                                 "duration_ms": (now - started) * 1000.0,
@@ -831,7 +864,9 @@ def run_baseline(
                     else PROVIDERS[provider_plan[0]].display
                 ),
                 "visible_windows": True,
-                "uia_readback_required": True,
+                "uia_readback_attempted": True,
+                "uia_readback_required_for_completion": False,
+                "completion_policy": "visible_window_plus_exact_ack_from_uia_or_provider_log",
                 "logical_simulation": False,
                 "baseline_file": baseline_file,
                 "started_at": started,
@@ -863,6 +898,13 @@ def run_baseline(
                     "uia_readback_failures": sum(
                         1 for agent in failed if agent.error.startswith("readback failed:")
                     ),
+                    "log_exact_acks": sum(1 for agent in agents if agent.log_exact_ack),
+                    "uia_exact_acks": sum(1 for agent in agents if agent.uia_exact_ack),
+                    "log_only_acks": sum(
+                        1
+                        for agent in agents
+                        if agent.log_exact_ack and not agent.uia_exact_ack
+                    ),
                     "wrong_window_guard_failures": 0,
                     "drift_or_narration_events": 0,
                     "approval_stalls": 0,
@@ -892,6 +934,17 @@ def run_baseline(
                         "title": agent.title,
                         "launch_ms": agent.launch_ms,
                         "ack_ms": agent.ack_ms,
+                        "log_exact_ack": agent.log_exact_ack,
+                        "uia_exact_ack": agent.uia_exact_ack,
+                        "ack_source": (
+                            "uia+log"
+                            if agent.uia_exact_ack and agent.log_exact_ack
+                            else "uia"
+                            if agent.uia_exact_ack
+                            else "log"
+                            if agent.log_exact_ack
+                            else ""
+                        ),
                         "status": agent.status,
                         "error": agent.error,
                         "diagnosis": agent.diagnosis,

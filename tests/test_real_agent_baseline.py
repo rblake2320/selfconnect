@@ -221,6 +221,31 @@ def test_write_run_state_records_progress_without_raw_nonce() -> None:
     assert "SECRET_NONCE" not in text
 
 
+def test_log_has_exact_ack_accepts_only_standalone_line() -> None:
+    with local_tmpdir() as tmpdir:
+        log = tmpdir / "agent.log"
+        agent = baseline.AgentRun(
+            provider="gemini",
+            role="realgemini-1",
+            nonce="NONCE",
+            expected="ACK_REAL_VENDOR provider=gemini role=realgemini-1 nonce=NONCE",
+            script=tmpdir / "agent.ps1",
+            log=log,
+        )
+
+        log.write_text(
+            "prompt echoed ACK_REAL_VENDOR provider=gemini role=realgemini-1 nonce=NONCE extra\n",
+            encoding="utf-8",
+        )
+        assert not baseline._log_has_exact_ack(agent)
+
+        log.write_text(
+            "noise\nACK_REAL_VENDOR provider=gemini role=realgemini-1 nonce=NONCE\n",
+            encoding="utf-8",
+        )
+        assert baseline._log_has_exact_ack(agent)
+
+
 def test_diagnose_failed_agent_wrong_ack_format() -> None:
     with local_tmpdir() as tmpdir:
         log = tmpdir / "agent.log"
