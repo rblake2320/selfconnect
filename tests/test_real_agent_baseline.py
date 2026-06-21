@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 from collections.abc import Iterator
@@ -139,6 +140,33 @@ def test_provider_preflight_script_loads_gemini_auth_from_os_env() -> None:
     assert "GetEnvironmentVariable('GOOGLE_CLOUD_PROJECT', 'User')" in text
     assert "GetEnvironmentVariable('CLOUDSDK_CONFIG', 'User')" in text
     assert "ACK_PREFLIGHT provider=gemini nonce=N" in text
+
+
+def test_temporary_gemini_auth_type_restores_existing_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    with local_tmpdir() as tmpdir:
+        settings = tmpdir / "settings.json"
+        original = b'{"security":{"auth":{"selectedType":"oauth-personal"}},"keep":true}\n'
+        settings.write_bytes(original)
+        monkeypatch.setattr(baseline, "_gemini_settings_path", lambda: settings)
+
+        with baseline._temporary_gemini_auth_type("gemini-api-key"):
+            data = json.loads(settings.read_text(encoding="utf-8"))
+            assert data["security"]["auth"]["selectedType"] == "gemini-api-key"
+            assert data["keep"] is True
+
+        assert settings.read_bytes() == original
+
+
+def test_temporary_gemini_auth_type_removes_created_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    with local_tmpdir() as tmpdir:
+        settings = tmpdir / "nested" / "settings.json"
+        monkeypatch.setattr(baseline, "_gemini_settings_path", lambda: settings)
+
+        with baseline._temporary_gemini_auth_type("gemini-api-key"):
+            data = json.loads(settings.read_text(encoding="utf-8"))
+            assert data["security"]["auth"]["selectedType"] == "gemini-api-key"
+
+        assert not settings.exists()
 
 
 def test_diagnose_failed_agent_wrong_ack_format() -> None:

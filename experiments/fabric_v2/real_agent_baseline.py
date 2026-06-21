@@ -17,6 +17,8 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -89,6 +91,8 @@ PROVIDER_AUTH_ENV = {
     )
 }
 
+GEMINI_AUTH_CHOICES = ("current", "gemini-api-key", "oauth-personal", "vertex-ai")
+
 
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
@@ -135,6 +139,62 @@ def _provider_key(provider_plan: list[str]) -> str:
     return "_".join(
         f"{provider}{count}" for provider, count in _provider_counts(provider_plan).items()
     )
+
+
+def _gemini_settings_path() -> Path:
+    return Path.home() / ".gemini" / "settings.json"
+
+
+@contextmanager
+def _temporary_gemini_auth_type(auth_type: str) -> Iterator[None]:
+    """Temporarily select a Gemini CLI auth mode and restore the file exactly.
+
+    The Gemini CLI reads its auth mode from ~/.gemini/settings.json. API-key
+    tests can provide GEMINI_API_KEY through the process environment, but if the
+    CLI is still configured for oauth-personal it asks for interactive auth and
+    never reaches the key path. This helper changes only the auth-mode selector,
+    never writes a key, and restores the original bytes in a finally block.
+    """
+
+    if auth_type == "current":
+        yield
+        return
+    if auth_type not in GEMINI_AUTH_CHOICES:
+        raise ValueError(f"unknown Gemini auth type: {auth_type}")
+
+    path = _gemini_settings_path()
+    original = path.read_bytes() if path.exists() else None
+    try:
+        data: dict[str, Any] = {}
+        if original:
+            try:
+                parsed = json.loads(original.decode("utf-8-sig"))
+                if isinstance(parsed, dict):
+                    data = parsed
+            except json.JSONDecodeError:
+                data = {}
+
+        security = data.get("security")
+        if not isinstance(security, dict):
+            security = {}
+        auth = security.get("auth")
+        if not isinstance(auth, dict):
+            auth = {}
+        auth["selectedType"] = auth_type
+        security["auth"] = auth
+        data["security"] = security
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        yield
+    finally:
+        if original is None:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+        else:
+            path.write_bytes(original)
 
 
 def _baseline_file_name(provider_plan: list[str], count: int) -> str | None:
@@ -379,81 +439,84 @@ def run_provider_preflight(
     count: int,
     timeout_s: float,
     results_dir: Path,
+    gemini_auth_type: str = "current",
 ) -> dict[str, Any]:
     results_dir.mkdir(parents=True, exist_ok=True)
     provider_plan = _provider_plan(providers, count)
     provider_counts = _provider_counts(provider_plan)
     unique_providers = sorted(provider_counts)
+    active_gemini_auth_type = gemini_auth_type if "gemini" in unique_providers else "current"
     run_id = time.strftime("SC_PROVIDER_PREFLIGHT_%Y%m%d_%H%M%S")
     workdir = Path(tempfile.gettempdir()) / f"selfconnect_provider_preflight_{run_id}"
     workdir.mkdir(parents=True, exist_ok=True)
 
     started = time.perf_counter()
     checks: list[dict[str, Any]] = []
-    for provider in unique_providers:
-        nonce = f"{run_id}_{provider}"
-        expected = f"ACK_PREFLIGHT provider={provider} nonce={nonce}"
-        log = workdir / f"{provider}.log"
-        script = _write_provider_preflight_script(
-            workdir=workdir,
-            provider=provider,
-            expected=expected,
-            log=log,
-        )
-        check_started = time.perf_counter()
-        timed_out = False
-        output = ""
-        returncode: int | None = None
-        try:
-            completed = subprocess.run(
-                [
-                    "powershell.exe",
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                    str(script),
-                ],
-                cwd=str(ROOT),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout_s,
-                check=False,
+    with _temporary_gemini_auth_type(active_gemini_auth_type):
+        for provider in unique_providers:
+            nonce = f"{run_id}_{provider}"
+            expected = f"ACK_PREFLIGHT provider={provider} nonce={nonce}"
+            log = workdir / f"{provider}.log"
+            script = _write_provider_preflight_script(
+                workdir=workdir,
+                provider=provider,
+                expected=expected,
+                log=log,
             )
-            returncode = completed.returncode
-            output = (completed.stdout or "") + (completed.stderr or "")
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            output = ((exc.stdout or "") if isinstance(exc.stdout, str) else "") + (
-                (exc.stderr or "") if isinstance(exc.stderr, str) else ""
+            check_started = time.perf_counter()
+            timed_out = False
+            output = ""
+            returncode: int | None = None
+            try:
+                completed = subprocess.run(
+                    [
+                        "powershell.exe",
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(script),
+                    ],
+                    cwd=str(ROOT),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout_s,
+                    check=False,
+                )
+                returncode = completed.returncode
+                output = (completed.stdout or "") + (completed.stderr or "")
+            except subprocess.TimeoutExpired as exc:
+                timed_out = True
+                output = ((exc.stdout or "") if isinstance(exc.stdout, str) else "") + (
+                    (exc.stderr or "") if isinstance(exc.stderr, str) else ""
+                )
+            try:
+                output += "\n" + log.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+            status, error = _classify_provider_output(
+                output=output,
+                expected=expected,
+                nonce=nonce,
+                returncode=returncode,
+                timed_out=timed_out,
             )
-        try:
-            output += "\n" + log.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            pass
-        status, error = _classify_provider_output(
-            output=output,
-            expected=expected,
-            nonce=nonce,
-            returncode=returncode,
-            timed_out=timed_out,
-        )
-        checks.append(
-            {
-                "provider": provider,
-                "status": status,
-                "ready": status == "ready",
-                "returncode": returncode,
-                "timed_out": timed_out,
-                "duration_ms": (time.perf_counter() - check_started) * 1000.0,
-                "expected_hash": _sha256(expected),
-                "nonce_hash": _sha256(nonce),
-                "error": error,
-                "log": str(log),
-            }
-        )
+            checks.append(
+                {
+                    "provider": provider,
+                    "status": status,
+                    "ready": status == "ready",
+                    "returncode": returncode,
+                    "timed_out": timed_out,
+                    "duration_ms": (time.perf_counter() - check_started) * 1000.0,
+                    "expected_hash": _sha256(expected),
+                    "nonce_hash": _sha256(nonce),
+                    "error": error,
+                    "log": str(log),
+                }
+            )
 
     result = {
         "schema": "selfconnect.provider_preflight.v1",
@@ -461,6 +524,7 @@ def run_provider_preflight(
         "verdict": "PASS" if all(check["ready"] for check in checks) else "FAIL",
         "provider_counts": provider_counts,
         "unique_providers": unique_providers,
+        "gemini_auth_type": active_gemini_auth_type,
         "duration_ms": (time.perf_counter() - started) * 1000.0,
         "checks": checks,
     }
@@ -477,6 +541,7 @@ def run_baseline(
     timeout_s: float,
     results_dir: Path,
     keep_open: bool,
+    gemini_auth_type: str = "current",
 ) -> dict[str, Any]:
     results_dir.mkdir(parents=True, exist_ok=True)
     run_id = time.strftime("SC_REAL5_%Y%m%d_%H%M%S")
@@ -511,149 +576,155 @@ def run_baseline(
                 script=script,
                 log=log,
             )
-        )
+    )
 
     started = time.perf_counter()
-    processes = [_spawn_visible(agent.script) for agent in agents]
+    active_gemini_auth_type = gemini_auth_type if "gemini" in provider_plan else "current"
+    with _temporary_gemini_auth_type(active_gemini_auth_type):
+        processes = [_spawn_visible(agent.script) for agent in agents]
 
-    try:
-        deadline = time.perf_counter() + timeout_s
-        pending = {agent.role for agent in agents}
-        while pending and time.perf_counter() < deadline:
+        try:
             for agent in agents:
-                if agent.role not in pending:
-                    continue
-                row = _find_window(run_id, agent.role)
-                if row and agent.hwnd is None:
-                    agent.hwnd = int(row["hwnd"])
-                    agent.pid = int(row["pid"])
-                    agent.title = str(row.get("title", ""))
-                    agent.launch_ms = (time.perf_counter() - started) * 1000.0
-                if agent.hwnd is None:
-                    continue
-                try:
-                    readback = str(sc_cli.read_window(agent.hwnd).get("text", ""))
-                except Exception as exc:
-                    agent.error = f"readback failed: {exc}"
-                    continue
-                if _has_exact_line(readback, agent.expected):
-                    agent.ack_ms = (time.perf_counter() - started) * 1000.0
-                    agent.status = "pass"
-                    pending.remove(agent.role)
-            time.sleep(1.0)
+                agent.status = "pending"
 
-        for agent in agents:
-            if agent.status != "pass":
-                agent.status = "fail"
-                if not agent.error:
+            deadline = time.perf_counter() + timeout_s
+            pending = {agent.role for agent in agents}
+            while pending and time.perf_counter() < deadline:
+                for agent in agents:
+                    if agent.role not in pending:
+                        continue
+                    row = _find_window(run_id, agent.role)
+                    if row and agent.hwnd is None:
+                        agent.hwnd = int(row["hwnd"])
+                        agent.pid = int(row["pid"])
+                        agent.title = str(row.get("title", ""))
+                        agent.launch_ms = (time.perf_counter() - started) * 1000.0
                     if agent.hwnd is None:
-                        agent.error = "visible terminal window not found"
-                    else:
-                        agent.error = "expected ACK not observed via UIA before timeout"
-                _diagnose_failed_agent(agent)
+                        continue
+                    try:
+                        readback = str(sc_cli.read_window(agent.hwnd).get("text", ""))
+                    except Exception as exc:
+                        agent.error = f"readback failed: {exc}"
+                        continue
+                    if _has_exact_line(readback, agent.expected):
+                        agent.ack_ms = (time.perf_counter() - started) * 1000.0
+                        agent.status = "pass"
+                        pending.remove(agent.role)
+                time.sleep(1.0)
 
-        passed = all(agent.status == "pass" for agent in agents)
-        ack_times = [agent.ack_ms for agent in agents if agent.ack_ms is not None]
-        launch_times = [agent.launch_ms for agent in agents if agent.launch_ms is not None]
-        failed = [agent for agent in agents if agent.status != "pass"]
-        baseline_file = _baseline_file_name(provider_plan, count) if passed else None
-        result = {
-            "schema": "selfconnect.real_agent_baseline.v3",
-            "run_id": run_id,
-            "verdict": "PASS" if passed else "FAIL",
-            "agent_count": count,
-            "provider_counts": _provider_counts(provider_plan),
-            "real_agent_cli": (
-                "mixed"
-                if len(set(provider_plan)) > 1
-                else PROVIDERS[provider_plan[0]].display
-            ),
-            "visible_windows": True,
-            "uia_readback_required": True,
-            "logical_simulation": False,
-            "baseline_file": baseline_file,
-            "started_at": started,
-            "duration_ms": (time.perf_counter() - started) * 1000.0,
-            "ack_latency_ms": _latency_stats(ack_times),
-            "launch_latency_ms": _latency_stats(launch_times),
-            "governance_transport_latency_ms": {
-                "measured": False,
-                "reason": (
-                    "real CLI baseline measures real agent launch/ACK/readback; "
-                    "transport/governance p50/p95/p99 are measured by the logical "
-                    "Fabric V0 harness"
+            for agent in agents:
+                if agent.status != "pass":
+                    agent.status = "fail"
+                    if not agent.error:
+                        if agent.hwnd is None:
+                            agent.error = "visible terminal window not found"
+                        else:
+                            agent.error = "expected ACK not observed via UIA before timeout"
+                    _diagnose_failed_agent(agent)
+
+            passed = all(agent.status == "pass" for agent in agents)
+            ack_times = [agent.ack_ms for agent in agents if agent.ack_ms is not None]
+            launch_times = [agent.launch_ms for agent in agents if agent.launch_ms is not None]
+            failed = [agent for agent in agents if agent.status != "pass"]
+            baseline_file = _baseline_file_name(provider_plan, count) if passed else None
+            result = {
+                "schema": "selfconnect.real_agent_baseline.v3",
+                "run_id": run_id,
+                "verdict": "PASS" if passed else "FAIL",
+                "agent_count": count,
+                "provider_counts": _provider_counts(provider_plan),
+                "gemini_auth_type": active_gemini_auth_type,
+                "real_agent_cli": (
+                    "mixed"
+                    if len(set(provider_plan)) > 1
+                    else PROVIDERS[provider_plan[0]].display
                 ),
-            },
-            "model_call_accounting": {
-                "real_model_calls_total": count,
-                "real_model_calls_per_ack_task": 1.0,
-                "known_deterministic_task": False,
-                "model_calls_per_known_task": None,
-                "note": (
-                    "This real-agent ACK baseline intentionally invokes one real "
-                    "provider model turn per visible agent. It does not claim the zero-model-"
-                    "call deterministic replay property."
-                ),
-            },
-            "failure_counters": {
-                "missed_acks": len(failed),
-                "visible_window_missing": sum(1 for agent in failed if agent.hwnd is None),
-                "uia_readback_failures": sum(
-                    1 for agent in failed if agent.error.startswith("readback failed:")
-                ),
-                "wrong_window_guard_failures": 0,
-                "drift_or_narration_events": 0,
-                "approval_stalls": 0,
-                "wrong_ack_format": sum(
-                    1 for agent in failed if agent.diagnosis == "wrong_ack_format"
-                ),
-                "provider_auth_required": sum(
-                    1 for agent in failed if agent.diagnosis == "provider_auth_required"
-                ),
-                "provider_failures": {
-                    provider: sum(
-                        1
-                        for agent in failed
-                        if agent.provider == provider
-                    )
-                    for provider in sorted(set(provider_plan))
+                "visible_windows": True,
+                "uia_readback_required": True,
+                "logical_simulation": False,
+                "baseline_file": baseline_file,
+                "started_at": started,
+                "duration_ms": (time.perf_counter() - started) * 1000.0,
+                "ack_latency_ms": _latency_stats(ack_times),
+                "launch_latency_ms": _latency_stats(launch_times),
+                "governance_transport_latency_ms": {
+                    "measured": False,
+                    "reason": (
+                        "real CLI baseline measures real agent launch/ACK/readback; "
+                        "transport/governance p50/p95/p99 are measured by the logical "
+                        "Fabric V0 harness"
+                    ),
                 },
-            },
-            "agents": [
-                {
-                    "provider": agent.provider,
-                    "role": agent.role,
-                    "nonce_hash": _sha256(agent.nonce),
-                    "expected_hash": _sha256(agent.expected),
-                    "hwnd": agent.hwnd,
-                    "pid": agent.pid,
-                    "title": agent.title,
-                    "launch_ms": agent.launch_ms,
-                    "ack_ms": agent.ack_ms,
-                    "status": agent.status,
-                    "error": agent.error,
-                    "diagnosis": agent.diagnosis,
-                    "log": str(agent.log),
-                }
-                for agent in agents
-            ],
-        }
+                "model_call_accounting": {
+                    "real_model_calls_total": count,
+                    "real_model_calls_per_ack_task": 1.0,
+                    "known_deterministic_task": False,
+                    "model_calls_per_known_task": None,
+                    "note": (
+                        "This real-agent ACK baseline intentionally invokes one real "
+                        "provider model turn per visible agent. It does not claim the zero-model-"
+                        "call deterministic replay property."
+                    ),
+                },
+                "failure_counters": {
+                    "missed_acks": len(failed),
+                    "visible_window_missing": sum(1 for agent in failed if agent.hwnd is None),
+                    "uia_readback_failures": sum(
+                        1 for agent in failed if agent.error.startswith("readback failed:")
+                    ),
+                    "wrong_window_guard_failures": 0,
+                    "drift_or_narration_events": 0,
+                    "approval_stalls": 0,
+                    "wrong_ack_format": sum(
+                        1 for agent in failed if agent.diagnosis == "wrong_ack_format"
+                    ),
+                    "provider_auth_required": sum(
+                        1 for agent in failed if agent.diagnosis == "provider_auth_required"
+                    ),
+                    "provider_failures": {
+                        provider: sum(
+                            1
+                            for agent in failed
+                            if agent.provider == provider
+                        )
+                        for provider in sorted(set(provider_plan))
+                    },
+                },
+                "agents": [
+                    {
+                        "provider": agent.provider,
+                        "role": agent.role,
+                        "nonce_hash": _sha256(agent.nonce),
+                        "expected_hash": _sha256(agent.expected),
+                        "hwnd": agent.hwnd,
+                        "pid": agent.pid,
+                        "title": agent.title,
+                        "launch_ms": agent.launch_ms,
+                        "ack_ms": agent.ack_ms,
+                        "status": agent.status,
+                        "error": agent.error,
+                        "diagnosis": agent.diagnosis,
+                        "log": str(agent.log),
+                    }
+                    for agent in agents
+                ],
+            }
 
-        out_path = results_dir / f"real_agent_baseline_{run_id}.json"
-        out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
-        if baseline_file:
-            baseline = results_dir / baseline_file
-            baseline.write_text(json.dumps(result, indent=2), encoding="utf-8")
-            result["baseline_path"] = str(baseline)
-        result["result_path"] = str(out_path)
-        return result
-    finally:
-        # Keep visible windows open by default for inspection. If --close-windows
-        # was requested, the child shells exit naturally when their script ends.
-        if not keep_open:
-            for proc in processes:
-                if proc.poll() is None:
-                    proc.terminate()
+            out_path = results_dir / f"real_agent_baseline_{run_id}.json"
+            out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+            if baseline_file:
+                baseline = results_dir / baseline_file
+                baseline.write_text(json.dumps(result, indent=2), encoding="utf-8")
+                result["baseline_path"] = str(baseline)
+            result["result_path"] = str(out_path)
+            return result
+        finally:
+            # Keep visible windows open by default for inspection. If --close-windows
+            # was requested, the child shells exit naturally when their script ends.
+            if not keep_open:
+                for proc in processes:
+                    if proc.poll() is None:
+                        proc.terminate()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -675,6 +746,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS)
     parser.add_argument("--close-windows", action="store_true")
+    parser.add_argument(
+        "--gemini-auth-type",
+        choices=GEMINI_AUTH_CHOICES,
+        default="current",
+        help=(
+            "Temporarily select a Gemini CLI auth mode for this run, restoring "
+            "~/.gemini/settings.json afterward. Use gemini-api-key when "
+            "GEMINI_API_KEY is supplied in the environment."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.preflight_only:
@@ -683,6 +764,7 @@ def main(argv: list[str] | None = None) -> int:
             count=args.agents,
             timeout_s=args.timeout,
             results_dir=args.results_dir,
+            gemini_auth_type=args.gemini_auth_type,
         )
         print(json.dumps(result, indent=2))
         return 0 if result["verdict"] == "PASS" else 1
@@ -693,6 +775,7 @@ def main(argv: list[str] | None = None) -> int:
         timeout_s=args.timeout,
         results_dir=args.results_dir,
         keep_open=not args.close_windows,
+        gemini_auth_type=args.gemini_auth_type,
     )
     print(json.dumps(result, indent=2))
     return 0 if result["verdict"] == "PASS" else 1

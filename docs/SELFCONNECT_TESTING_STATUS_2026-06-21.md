@@ -8,9 +8,10 @@ effort on `test/win32-hardening-v1`.
 The current branch is test-clean, package-build-clean, and real-agent ladder
 clean for the providers that are authenticated on this workstation.
 
-Gemini is not yet included in the real ladder because Gemini CLI
-non-interactive authentication is not configured on this workstation. This is
-recorded as `provider_auth_required`, not as a SelfConnect transport failure.
+Gemini is now proven in the real-agent path when an API key is supplied in the
+process environment and the Gemini CLI auth selector is temporarily set to
+`gemini-api-key` for the run. The runner restores the user's original Gemini CLI
+settings afterward and does not write secret values to tracked files.
 
 ## Verified Gates
 
@@ -39,6 +40,12 @@ no longer accepted.
 | Provider preflight recheck | Codex + Claude + Gemini | `SC_PROVIDER_PREFLIGHT_20260621_023853` | Codex ready, Claude ready, Gemini auth-blocked |
 | Gemini auth recheck | Gemini | `SC_PROVIDER_PREFLIGHT_20260621_061132` | Gemini auth-blocked |
 | Gemini env-fallback recheck | Gemini | `SC_PROVIDER_PREFLIGHT_20260621_061439` | Gemini auth-blocked |
+| Gemini env-only recheck | Gemini | `SC_PROVIDER_PREFLIGHT_20260621_061757` | Gemini auth-blocked under `oauth-personal` |
+| Gemini manual API-key mode recheck | Gemini | `SC_PROVIDER_PREFLIGHT_20260621_061851` | Gemini ready |
+| Gemini API-key mode recheck | Gemini | `SC_PROVIDER_PREFLIGHT_20260621_062323` | Gemini ready |
+| Mixed provider preflight | Codex + Claude + Gemini | `SC_PROVIDER_PREFLIGHT_20260621_062823` | 3/3 ready |
+| Gemini 1 | 1 Gemini | `SC_REAL5_20260621_062543` | 1/1 ACK |
+| Mixed 3 | 1 Codex + 1 Claude + 1 Gemini | `SC_REAL5_20260621_062940` | 3/3 ACK |
 | Codex 5 | 5 Codex | `SC_REAL5_20260621_011131` | 5/5 ACK |
 | Codex 20 | 20 Codex | `SC_REAL5_20260621_011140` | 20/20 ACK |
 | Mixed 5 | 3 Codex + 2 Claude | `SC_REAL5_20260621_011156` | 5/5 ACK |
@@ -56,10 +63,12 @@ no longer accepted.
 - Provider output must preserve exact provider, role, nonce, spacing, and field
   names.
 
-## Remaining External Blocker
+## Gemini Auth History And Persistent Readiness Boundary
 
-Gemini needs non-interactive authentication before it can be part of the real
-ladder:
+Gemini requires non-interactive authentication before it can be part of the real
+ladder. This is now proven with an ephemeral process-scoped API key plus
+temporary `gemini-api-key` CLI mode, while persistent workstation readiness
+still depends on intentionally installing one of:
 
 - `GEMINI_API_KEY`, or
 - Google Application Default Credentials.
@@ -97,10 +106,32 @@ Env-fallback hardening and recheck:
   `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, or
   `CLOUDSDK_CONFIG`
 
-After that is configured, rerun:
+Gemini API-key mode hardening and proof:
+
+- A user-supplied API key passed preflight only after the Gemini CLI auth
+  selector was switched from `oauth-personal` to `gemini-api-key`
+- The runner now supports `--gemini-auth-type gemini-api-key`, which temporarily
+  updates `~/.gemini/settings.json`, runs the provider check, then restores the
+  original file bytes in a `finally` block
+- The API key is supplied only through the process environment and is removed
+  after the run
+- `SC_PROVIDER_PREFLIGHT_20260621_062323`: PASS, Gemini ready
+- `SC_REAL5_20260621_062543`: PASS, 1 visible Gemini window, exact ACK via UIA
+  readback
+- `SC_PROVIDER_PREFLIGHT_20260621_062823`: PASS, Codex + Claude + Gemini all
+  ready
+- `SC_REAL5_20260621_062940`: PASS, 1 Codex + 1 Claude + 1 Gemini, exact ACKs
+  through visible windows and UIA readback
+
+Persistent workstation readiness is still separate from ephemeral test
+readiness. If no persistent User/Machine environment variable or ADC exists,
+readiness tools should continue to report that Gemini needs configuration until
+the key or ADC is intentionally installed outside this repository.
+
+For persistent Gemini coverage, rerun:
 
 ```powershell
-python experiments\fabric_v2\real_agent_baseline.py --preflight-only --agents 3 --providers codex:1,claude:1,gemini:1 --timeout 90
-python experiments\fabric_v2\real_agent_baseline.py --agents 15 --providers codex:5,claude:5,gemini:5 --timeout 900 --close-windows
-python experiments\fabric_v2\real_agent_baseline.py --agents 20 --providers codex:7,claude:7,gemini:6 --timeout 1200 --close-windows
+python experiments\fabric_v2\real_agent_baseline.py --preflight-only --agents 3 --providers codex:1,claude:1,gemini:1 --timeout 180 --gemini-auth-type gemini-api-key
+python experiments\fabric_v2\real_agent_baseline.py --agents 15 --providers codex:5,claude:5,gemini:5 --timeout 900 --close-windows --gemini-auth-type gemini-api-key
+python experiments\fabric_v2\real_agent_baseline.py --agents 20 --providers codex:7,claude:7,gemini:6 --timeout 1200 --close-windows --gemini-auth-type gemini-api-key
 ```
