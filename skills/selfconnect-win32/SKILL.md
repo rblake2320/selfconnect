@@ -88,6 +88,7 @@ selfconnect-mesh event --type task_assigned --role codex-2 --summary "specific t
 selfconnect-mesh events --role codex-2 --limit 20
 selfconnect-mesh verify-events
 selfconnect-fleet resources
+selfconnect-bench freeze-check
 ```
 
 - Roles must be unique. Do not create multiple `B` roles; use names like
@@ -107,6 +108,9 @@ selfconnect-fleet resources
 - For staged fleet benchmarks, use `selfconnect-fleet guard` as the non-
   destructive auto-halt evaluator. A halt means stop assigning new work and
   capture evidence by default, not kill terminals.
+- For Fabric scale work, run `selfconnect-bench freeze-check` before shareable
+  runs. The 5-agent production benchmark writes the persisted baseline used by
+  later 10/15/15+5/20 rungs.
 - If a role migrates to a new terminal, use `--replace`; the registry will issue
   a new `birth_id` and increment the role generation.
 - Set `--profile explore` for local capability testing and `--profile governed`

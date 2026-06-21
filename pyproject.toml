@@ -84,6 +84,7 @@ include = [
     "sc_mesh_registry.py",
     "sc_mesh_lease.py",
     "sc_fleet_guard.py",
+    "sc_fabric_benchmark.py",
     "sc_local_model_role.py",
     "sc_echo_filter.py",
     "sc_identity.py",
@@ -115,9 +116,12 @@ include = [
     "docs/PATENT_DESIGN_AROUND_DEFENSE.md",
     "docs/ARCHITECTURE_AUDIT_2026-06-20.md",
     "docs/ARCHITECTURE_CONSENSUS_2026-06-20.md",
+    "docs/FABRIC_V0_BENCHMARK_SPEC.md",
     "docs/FABRIC_V2_BUILD_TARGETS.md",
+    "docs/FABRIC_V2_STRESS_PROTOCOL.md",
     "docs/FLEET_AUTO_HALT_PROTOCOL.md",
     "docs/OPEN_DEFENSE_BUILD_TARGETS.md",
+    "docs/PATENT_EVIDENCE_FREEZE_2026-06-20.md",
     "docs/PATENT_PRIOR_ART_SNAPSHOT.md",
     "docs/PIPE_ROLE_LEASE_PROOF.md",
     "docs/UIA_ECHO_FILTER_TERMCONTROL.md",
@@ -131,6 +135,7 @@ selfconnect = "sc_cli:main"
 selfconnect-mcp = "sc_mcp:main"
 selfconnect-mesh = "sc_mesh_registry:main"
 selfconnect-fleet = "sc_fleet_guard:main"
+selfconnect-bench = "sc_fabric_benchmark:main"
 selfconnect-local-model = "sc_local_model_role:main"
 
 [tool.pytest.ini_options]
