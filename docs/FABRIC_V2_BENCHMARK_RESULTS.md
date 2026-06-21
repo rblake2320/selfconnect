@@ -196,7 +196,7 @@ Fabric V2 host selftest:
 | First roundtrip | `0.494 ms` |
 | Total selftest elapsed | `2.568 ms` |
 | Replay rejection | PASS |
-| Boundary | IOCP dispatch is in the ACK path; direct overlapped named-pipe read/write remains next hardening step |
+| Boundary | IOCP dispatch is in the ACK path; direct overlapped named-pipe read/write is recorded below |
 
 Fabric V2 direct overlapped pipe selftest:
 
@@ -210,7 +210,7 @@ Fabric V2 direct overlapped pipe selftest:
 | First ACK payload | `ACK:overlapped-a:1` |
 | First roundtrip | `0.781 ms` |
 | Replay rejection | PASS |
-| Boundary | Router replay-state restart proof is recorded below; queued mailbox payload recovery remains open |
+| Boundary | Router replay-state restart proof is recorded below; queued mailbox payload recovery is recorded in the service wrapper proof |
 
 Fabric V2 router restart selftest:
 
@@ -223,4 +223,33 @@ Fabric V2 router restart selftest:
 | Replay rejected after restart | PASS |
 | New post-restart route | PASS, `ACK:router-a:2` |
 | Raw payload text included | `false` |
-| Boundary | Replay state recovery is proven; queued mailbox payload recovery is not claimed |
+| Boundary | Replay state recovery is proven; queued mailbox payload recovery is recorded in the service wrapper proof |
+
+Fabric V2 service wrapper selftest:
+
+| Artifact | Value |
+| --- | --- |
+| Redacted artifact | `experiments/fabric_v2/results/fabric_v2_service_selftest_20260621_113419_redacted.json` |
+| Wrapper | `sc_fabric_service.FabricService` |
+| Host/router composition | `FabricHostService` + `FabricSessionRouter` |
+| Roundtrip | PASS |
+| Restart | PASS |
+| State file | Written |
+| Watchdog | PASS |
+| Raw payload text included | `false` |
+
+Fabric V2 service-transport 5-agent baseline:
+
+| Artifact | Value |
+| --- | --- |
+| Redacted artifact | `experiments/fabric_v2/results/SC_FABRIC_SERVICE_20260621_1135_redacted.json` |
+| Baseline artifact | `experiments/fabric_v2/results/baseline_5agent_fabric_v2_service_transport.json` |
+| Transport | `fabric_v2_service_transport` |
+| Agents | `5` |
+| Transport/governance p50 | `0.756 ms` |
+| Transport/governance p95 | `0.972 ms` |
+| Transport/governance p99 | `1.049 ms` |
+| End-to-end p99 | `1.840 ms` |
+| Audit lag p99 | `0.464 ms` |
+| Model calls per known task | `0.0` |
+| Verdict | PASS |

@@ -50,6 +50,12 @@ Representative Windows species already proven or documented:
 - Fabric V2 router restart species: persisted replay-state metadata rejects a
   replay after restart and accepts a new post-restart route without storing raw
   payload text in the redacted state snapshot.
+- Fabric V2 service wrapper species: host/router composition persists replay
+  state and queued mailbox payloads across restart, emits a watchdog finding,
+  and produces a redacted service selftest artifact.
+- Fabric V2 service benchmark species: five logical agents through the service
+  transport produce p99 transport/governance `1.049 ms`, p99 end-to-end
+  `1.840 ms`, audit lag p99 `0.464 ms`, and model calls per known task `0.0`.
 
 ## Durable Virtual Role
 

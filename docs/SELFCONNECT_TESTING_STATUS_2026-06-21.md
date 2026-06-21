@@ -24,7 +24,7 @@ named-pipe selftest. This does not yet claim the production IOCP host service.
 
 | Gate | Evidence | Result |
 | --- | --- | --- |
-| Full Python suite | `python -m pytest -q` | `484 passed, 9 skipped` |
+| Full Python suite | `python -m pytest -q` | `490 passed, 9 skipped` |
 | Ruff/compile for real ladder runner | `ruff check` + `py_compile` | PASS |
 | Source doctor | `python -m sc_cli doctor --json` | `0.10.4`, Win32/UIA/TPM platform probes true |
 | Wheel build | `python -m build` | `selfconnect-0.10.4` sdist + wheel built |
@@ -38,13 +38,16 @@ named-pipe selftest. This does not yet claim the production IOCP host service.
 | Fabric V2 frame/mailbox focused tests | `pytest tests/test_fabric_v2.py tests/test_fabric_v0_benchmark.py -q` | `19 passed` |
 | Fabric V2 host focused tests | `pytest tests/test_fabric_host.py tests/test_fabric_v2.py -q` | `14 passed` |
 | Fabric V2 router focused tests | `pytest tests/test_fabric_router.py tests/test_fabric_v2.py -q` | `16 passed` |
+| Fabric V2 service focused tests | `pytest tests/test_fabric_service.py tests/test_fabric_v2.py -q` | PASS |
 | Fabric V2 combined focused tests | `pytest tests/test_fabric_router.py tests/test_fabric_host.py tests/test_fabric_v2.py tests/test_fabric_v0_benchmark.py -q` | `33 passed` |
 | Fabric V2 lint/compile | `ruff check` + `py_compile` on Fabric touched files | PASS |
 | Fabric V2 named-pipe selftest | `python -m sc_fabric_v2 selftest` | PASS, real Windows named-pipe ACK |
 | Fabric V2 host selftest | `python -m sc_fabric_host selftest` | PASS, IOCP-dispatched host ACK |
 | Fabric V2 overlapped pipe selftest | `python -m sc_fabric_host overlapped-selftest` | PASS, client/server overlapped read/write through IOCP |
 | Fabric V2 router restart selftest | `python -m sc_fabric_router selftest` | PASS, replay state survives restart |
+| Fabric V2 service wrapper selftest | `python -m sc_fabric_service selftest` | PASS, roundtrip/restart/state/watchdog |
 | Fabric V2 5-agent logical baseline | `selfconnect-bench run --transport fabric_v2_frame_mailbox --agents 5` | PASS, p99 `0.152 ms`, model calls `0.0` |
+| Fabric V2 5-agent service baseline | `selfconnect-bench run --transport fabric_v2_service_transport --agents 5` | PASS, p99 `1.049 ms`, model calls `0.0` |
 
 ## Real-Agent Exact-Line Results
 
@@ -173,6 +176,10 @@ Fabric V2 implementation status:
   proof where client and server both use `FILE_FLAG_OVERLAPPED` and IOCP
   completions
 - `selfconnect-fabric-router selftest`: restart-safe replay-state proof
+- `selfconnect-fabric-service selftest`: user-mode service wrapper with
+  host/router composition, state persistence, restart, and watchdog proof
+- `selfconnect-bench --transport fabric_v2_service_transport`: 5-agent service
+  transport benchmark path
 - `selfconnect-bench --transport fabric_v2_frame_mailbox`: V2 benchmark path
 - Latest artifacts:
   - `experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json`
@@ -180,9 +187,14 @@ Fabric V2 implementation status:
   - `experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json`
   - `experiments/fabric_v2/results/fabric_v2_router_restart_selftest_20260621_081434_redacted.json`
   - `experiments/fabric_v2/results/fabric_v2_router_state_20260621_081434_redacted.json`
+  - `experiments/fabric_v2/results/fabric_v2_service_selftest_20260621_113419_redacted.json`
+  - `experiments/fabric_v2/results/SC_FABRIC_SERVICE_20260621_1135_redacted.json`
+  - `experiments/fabric_v2/results/baseline_5agent_fabric_v2_service_transport.json`
   - `experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json`
   - `experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json`
-- Boundary: queued mailbox payload recovery after restart remains open.
+- Boundary: queued mailbox payload recovery after restart is proven in the
+  service-wrapper state path. Installed Windows service/daemon integration is
+  still open.
 
 Persistent workstation readiness is still separate from ephemeral test
 readiness. If no persistent User/Machine environment variable or ADC exists,

@@ -39,7 +39,9 @@ not been live-tested or committed as a probe, it is marked as pending.
 | Fabric V2 sign-once/MAC-many frame layer | Proven as first V2 implementation slice | `sc_fabric_v2.py`, `tests/test_fabric_v2.py`, `experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json`, `experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json`; HMAC frame sealing, receiver binding, payload hash, replay rejection, deadline rejection, bounded mailbox backpressure, and real Windows named-pipe ACK selftest |
 | Fabric V2 IOCP-dispatched host ACK path | Proven as host-service proof slice | `sc_fabric_host.py`, `tests/test_fabric_host.py`, `experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json`; long-lived local named-pipe host, IOCP completion queue in ACK path, bounded mailbox, replay rejection |
 | Fabric V2 direct overlapped pipe IO | Proven as focused data-plane proof | `sc_fabric_host.overlapped_named_pipe_exchange`, `tests/test_fabric_host.py`, `experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json`; client and server both use `FILE_FLAG_OVERLAPPED`, IOCP read/write completions, HMAC frames, bounded mailbox, and replay rejection |
-| Fabric V2 router restart replay recovery | Proven as focused router proof | `sc_fabric_router.py`, `tests/test_fabric_router.py`, `experiments/fabric_v2/results/fabric_v2_router_restart_selftest_20260621_081434_redacted.json`, `experiments/fabric_v2/results/fabric_v2_router_state_20260621_081434_redacted.json`; replay-state recovery survives restart and rejects a replay before accepting a new post-restart route. Boundary: queued mailbox payload recovery is not claimed |
+| Fabric V2 router restart replay recovery | Proven as focused router proof | `sc_fabric_router.py`, `tests/test_fabric_router.py`, `experiments/fabric_v2/results/fabric_v2_router_restart_selftest_20260621_081434_redacted.json`, `experiments/fabric_v2/results/fabric_v2_router_state_20260621_081434_redacted.json`; replay-state recovery survives restart and rejects a replay before accepting a new post-restart route. Boundary: queued mailbox payload recovery is covered by the service-wrapper proof below |
+| Fabric V2 service wrapper and queued mailbox recovery | Proven as user-mode service proof | `sc_fabric_service.py`, `tests/test_fabric_service.py`, `experiments/fabric_v2/results/fabric_v2_service_selftest_20260621_113419_redacted.json`; `FabricService` composes host + router, writes PID/state files, restores replay state and queued mailbox payloads, and runs watchdog checks. Boundary: Windows service installation/daemonization remains separate |
+| Fabric V2 service transport benchmark | Proven as 5-agent service baseline | `sc_fabric_benchmark.py`, `tests/test_fabric_v0_benchmark.py`, `experiments/fabric_v2/results/SC_FABRIC_SERVICE_20260621_1135_redacted.json`, `experiments/fabric_v2/results/baseline_5agent_fabric_v2_service_transport.json`; p99 transport/governance `1.049 ms`, p99 end-to-end `1.840 ms`, audit lag p99 `0.464 ms`, model calls per known task `0.0` |
 
 ## Positioning Boundary
 
@@ -57,8 +59,7 @@ The current non-claims are:
 - CAPTCHA bypass or anti-bot evasion;
 - production TPM attestation;
 - production named-pipe control-plane replacement for terminal-visible routing;
-- full service-mode governed daemon.
-- production Fabric V2 queued mailbox payload recovery after restart.
+- full installed OS service-mode governed daemon.
 
 ## Next Highest-Value Evidence
 
@@ -67,7 +68,7 @@ The current non-claims are:
    as an opt-in gate. Remaining: resolve the current OS owner SID at runtime
    (`OpenProcessToken` -> `GetTokenInformation(TokenUser)` ->
    `ConvertSidToStringSid`) so governed mode no longer requires an injected SID.
-2. Finish production Fabric V2 queued mailbox payload recovery and service wrapper.
+2. Finish installed OS service-mode daemonization for Fabric V2.
 3. Finish TPM platform attestation with correct `NCryptBufferDesc`.
 4. Add browser multi-tab/stale-tab proof.
 5. Add governed audit event for protected checkpoint pause.

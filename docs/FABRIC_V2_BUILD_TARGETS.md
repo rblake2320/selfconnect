@@ -147,6 +147,11 @@ Implemented and benchmarked:
 - IOCP-dispatched host ACK path through `sc_fabric_host.py`;
 - direct overlapped named-pipe read/write completions through IOCP;
 - restart-safe replay-state router proof;
+- restart-safe queued mailbox payload recovery in the service wrapper;
+- long-lived per-user service wrapper;
+- service-transport benchmark mode;
+- `selfconnect-fabric-service selftest`;
+- `selfconnect-bench --transport fabric_v2_service_transport`;
 - `selfconnect-bench --transport fabric_v2_frame_mailbox`.
 
 Latest proof artifacts:
@@ -156,6 +161,9 @@ Latest proof artifacts:
 - `experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json`
 - `experiments/fabric_v2/results/fabric_v2_router_restart_selftest_20260621_081434_redacted.json`
 - `experiments/fabric_v2/results/fabric_v2_router_state_20260621_081434_redacted.json`
+- `experiments/fabric_v2/results/fabric_v2_service_selftest_20260621_113419_redacted.json`
+- `experiments/fabric_v2/results/SC_FABRIC_SERVICE_20260621_1135_redacted.json`
+- `experiments/fabric_v2/results/baseline_5agent_fabric_v2_service_transport.json`
 - `experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json`
 - `experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json`
 
@@ -165,8 +173,12 @@ Boundary:
 - Direct overlapped named-pipe read/write associated with IOCP is proven in a
   focused one-shot exchange.
 - Router replay-state restart recovery is proven.
-- Queued mailbox payload recovery after restart is still open.
-- Long-lived per-user service wrapper is still open.
+- Queued mailbox payload recovery after restart is proven in the service
+  wrapper state path.
+- Long-lived per-user service wrapper is proven as a Python user-mode wrapper.
+- Service transport 5-agent baseline is proven with p99 `1.049 ms` and model
+  calls per known task `0.0`.
+- Service-mode installation/OS daemonization is still open.
 - This slice proves the frame/mailbox/security semantics and a real Windows
   named-pipe transport species, then measures it through the same benchmark
   schema as the current transport.

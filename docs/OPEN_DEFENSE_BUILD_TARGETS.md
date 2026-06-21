@@ -62,13 +62,17 @@ Current state:
 - Bounded mailbox backpressure: DONE.
 - Real Windows named-pipe ACK selftest: DONE.
 - Benchmark path `--transport fabric_v2_frame_mailbox`: DONE.
+- Direct overlapped named-pipe read/write associated with IOCP: DONE.
+- Router restart replay-state recovery: DONE.
+- Queued mailbox payload recovery after restart: DONE in the service wrapper
+  state path.
+- Long-lived per-user Python service wrapper: DONE.
+- Benchmark path `--transport fabric_v2_service_transport`: DONE.
 
 Still open:
 
-- queued mailbox payload recovery after restart;
-- long-lived per-user service wrapper;
 - long-lived named-pipe endpoint using the overlapped IO path;
-- service-mode integration.
+- installed Windows service / daemon integration.
 
 Now proven:
 
@@ -77,6 +81,9 @@ Now proven:
 - replay rejection still holds on the overlapped path.
 - router restart preserves replay rejection state and accepts new post-restart
   routes.
+- service wrapper composes host + router, restores queued mailbox payloads and
+  replay state from disk, and exposes a measured 5-agent service-transport
+  baseline.
 
 Tracker:
 
@@ -89,7 +96,11 @@ Why it matters:
 - The direct overlapped pipe proof establishes the high-rate data-plane
   primitive.
 - The restart-safe router proof establishes that replay protection survives
-  restart. The remaining work is queued payload recovery and service wrapping.
+  restart.
+- The service wrapper establishes user-mode restart persistence and the
+  service-transport benchmark path. The remaining work is installed service
+  integration and a long-lived endpoint that directly uses the overlapped IO
+  path.
 
 Expected next artifacts:
 

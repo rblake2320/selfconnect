@@ -77,6 +77,9 @@ Repository = "https://github.com/rblake2320/selfconnect"
 
 [tool.hatch.build.targets.wheel]
 artifacts = [
+    "experiments/fabric_v2/results/baseline_5agent_fabric_v2_service_transport.json",
+    "experiments/fabric_v2/results/SC_FABRIC_SERVICE_20260621_1135_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_service_selftest_20260621_113419_redacted.json",
     "experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json",
     "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json",
@@ -96,6 +99,7 @@ include = [
     "sc_fabric_benchmark.py",
     "sc_fabric_host.py",
     "sc_fabric_router.py",
+    "sc_fabric_service.py",
     "sc_fabric_v2.py",
     "sc_local_model_role.py",
     "sc_echo_filter.py",
@@ -120,6 +124,9 @@ include = [
     "experiments/win32_probe/results/channel_router_composition_PASS_redacted.json",
     "experiments/win32_probe/results/pipe_role_lease_PASS_redacted.json",
     "experiments/win32_probe/results/uia_echo_filter_PASS_redacted.json",
+    "experiments/fabric_v2/results/baseline_5agent_fabric_v2_service_transport.json",
+    "experiments/fabric_v2/results/SC_FABRIC_SERVICE_20260621_1135_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_service_selftest_20260621_113419_redacted.json",
     "experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json",
     "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json",
@@ -153,6 +160,9 @@ include = [
 
 [tool.hatch.build.targets.sdist]
 artifacts = [
+    "experiments/fabric_v2/results/baseline_5agent_fabric_v2_service_transport.json",
+    "experiments/fabric_v2/results/SC_FABRIC_SERVICE_20260621_1135_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_service_selftest_20260621_113419_redacted.json",
     "experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json",
     "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json",
@@ -171,6 +181,7 @@ selfconnect-bench = "sc_fabric_benchmark:main"
 selfconnect-fabric = "sc_fabric_v2:main"
 selfconnect-fabric-host = "sc_fabric_host:main"
 selfconnect-fabric-router = "sc_fabric_router:main"
+selfconnect-fabric-service = "sc_fabric_service:main"
 selfconnect-local-model = "sc_local_model_role:main"
 
 [tool.pytest.ini_options]
