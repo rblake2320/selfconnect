@@ -80,6 +80,15 @@ PROVIDERS = {
     ),
 }
 
+PROVIDER_AUTH_ENV = {
+    "gemini": (
+        "GEMINI_API_KEY",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GOOGLE_CLOUD_PROJECT",
+        "CLOUDSDK_CONFIG",
+    )
+}
+
 
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
@@ -142,6 +151,32 @@ def _has_exact_line(text: str, expected: str) -> bool:
 
 def _ps_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _provider_env_lines(provider: str) -> str:
+    lines: list[str] = []
+    provider_command = PROVIDERS[provider]
+    if provider_command.fail_fast_env:
+        lines.extend(
+            f"$env:{key} = { _ps_quote(value) }"
+            for key, value in provider_command.fail_fast_env.items()
+        )
+    for key in PROVIDER_AUTH_ENV.get(provider, ()):
+        quoted = _ps_quote(key)
+        lines.extend(
+            [
+                f"if (-not [Environment]::GetEnvironmentVariable({quoted}, 'Process')) {{",
+                f"    $value = [Environment]::GetEnvironmentVariable({quoted}, 'User')",
+                "    if (-not $value) {",
+                f"        $value = [Environment]::GetEnvironmentVariable({quoted}, 'Machine')",
+                "    }",
+                "    if ($value) {",
+                f"        [Environment]::SetEnvironmentVariable({quoted}, $value, 'Process')",
+                "    }",
+                "}",
+            ]
+        )
+    return "\n".join(lines)
 
 
 def _provider_plan(spec: str | None, count: int) -> list[str]:
@@ -219,12 +254,7 @@ def _write_agent_script(
         f"Line: {expected}"
     )
     script = workdir / f"{role}.ps1"
-    env_lines = ""
-    if provider_command.fail_fast_env:
-        env_lines = "\n".join(
-            f"$env:{key} = { _ps_quote(value) }"
-            for key, value in provider_command.fail_fast_env.items()
-        )
+    env_lines = _provider_env_lines(provider)
     stay_open = (
         "Write-Host 'WINDOW_STAYS_OPEN_FOR_UIA_INSPECTION';"
         " while ($true) { Start-Sleep -Seconds 3600 }"
@@ -261,12 +291,7 @@ def _write_provider_preflight_script(
         "Do not change the provider, nonce, spacing, or field names. "
         f"Line: {expected}"
     )
-    env_lines = ""
-    if provider_command.fail_fast_env:
-        env_lines = "\n".join(
-            f"$env:{key} = { _ps_quote(value) }"
-            for key, value in provider_command.fail_fast_env.items()
-        )
+    env_lines = _provider_env_lines(provider)
     script = workdir / f"preflight_{provider}.ps1"
     text = f"""
 $ErrorActionPreference = 'Continue'

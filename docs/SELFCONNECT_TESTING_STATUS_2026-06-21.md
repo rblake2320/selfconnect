@@ -38,6 +38,7 @@ no longer accepted.
 | Provider preflight | Codex + Claude + Gemini | `SC_PROVIDER_PREFLIGHT_20260621_011029` | Codex ready, Claude ready, Gemini auth-blocked |
 | Provider preflight recheck | Codex + Claude + Gemini | `SC_PROVIDER_PREFLIGHT_20260621_023853` | Codex ready, Claude ready, Gemini auth-blocked |
 | Gemini auth recheck | Gemini | `SC_PROVIDER_PREFLIGHT_20260621_061132` | Gemini auth-blocked |
+| Gemini env-fallback recheck | Gemini | `SC_PROVIDER_PREFLIGHT_20260621_061439` | Gemini auth-blocked |
 | Codex 5 | 5 Codex | `SC_REAL5_20260621_011131` | 5/5 ACK |
 | Codex 20 | 20 Codex | `SC_REAL5_20260621_011140` | 20/20 ACK |
 | Mixed 5 | 3 Codex + 2 Claude | `SC_REAL5_20260621_011156` | 5/5 ACK |
@@ -84,6 +85,17 @@ Additional recheck after user reported adding a Gemini key:
   still reports manual authorization required
 - Process/User/Machine environment still did not expose `GEMINI_API_KEY` or ADC
   variables to this test process
+
+Env-fallback hardening and recheck:
+
+- Runner scripts now load Gemini auth variables from Process, User, or Machine
+  environment scope at runtime before invoking Gemini, without printing or
+  embedding secret values in tracked files
+- Recheck run ID: `SC_PROVIDER_PREFLIGHT_20260621_061439`
+- Result: `FAIL`, `provider_auth_required`
+- Process/User/Machine scopes still did not expose `GEMINI_API_KEY`,
+  `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, or
+  `CLOUDSDK_CONFIG`
 
 After that is configured, rerun:
 

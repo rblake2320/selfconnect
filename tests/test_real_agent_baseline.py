@@ -117,6 +117,28 @@ def test_write_agent_script_makes_gemini_fail_fast() -> None:
         text = script.read_text(encoding="utf-8")
     assert "$env:CI = 'true'" in text
     assert "gemini -p $prompt --approval-mode yolo" in text
+    assert "GetEnvironmentVariable('GEMINI_API_KEY', 'User')" in text
+    assert "GetEnvironmentVariable('GEMINI_API_KEY', 'Machine')" in text
+    assert "SetEnvironmentVariable('GEMINI_API_KEY', $value, 'Process')" in text
+
+
+def test_provider_preflight_script_loads_gemini_auth_from_os_env() -> None:
+    with local_tmpdir() as tmpdir:
+        log = tmpdir / "gemini.log"
+        script = baseline._write_provider_preflight_script(
+            workdir=tmpdir,
+            provider="gemini",
+            expected="ACK_PREFLIGHT provider=gemini nonce=N",
+            log=log,
+        )
+
+        text = script.read_text(encoding="utf-8")
+
+    assert "GetEnvironmentVariable('GEMINI_API_KEY', 'User')" in text
+    assert "GetEnvironmentVariable('GOOGLE_APPLICATION_CREDENTIALS', 'User')" in text
+    assert "GetEnvironmentVariable('GOOGLE_CLOUD_PROJECT', 'User')" in text
+    assert "GetEnvironmentVariable('CLOUDSDK_CONFIG', 'User')" in text
+    assert "ACK_PREFLIGHT provider=gemini nonce=N" in text
 
 
 def test_diagnose_failed_agent_wrong_ack_format() -> None:
