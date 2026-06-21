@@ -71,6 +71,10 @@ Still open:
 - crash/restart recovery in the host;
 - service-mode integration.
 
+Tracker:
+
+- https://github.com/rblake2320/selfconnect/issues/7
+
 Why it matters:
 
 - The frame layer proves the governed session semantics.
