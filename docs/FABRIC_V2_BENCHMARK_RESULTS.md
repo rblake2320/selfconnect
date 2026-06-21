@@ -159,6 +159,7 @@ Validation:
 | `python -m ruff check sc_fabric_v2.py sc_fabric_benchmark.py tests/test_fabric_v2.py tests/test_fabric_v0_benchmark.py` | PASS |
 | `python -m py_compile sc_fabric_v2.py sc_fabric_benchmark.py tests\test_fabric_v2.py tests\test_fabric_v0_benchmark.py` | PASS |
 | `python -m sc_fabric_v2 selftest` | PASS, real Windows named-pipe ACK |
+| `python -m sc_fabric_host selftest` | PASS, IOCP-dispatched host ACK |
 | `selfconnect-bench run --transport fabric_v2_frame_mailbox --agents 5` | PASS |
 
 Fabric V2 5-agent baseline:
@@ -181,3 +182,16 @@ Fabric V2 named-pipe selftest:
 | ACK payload | `ACK:selftest-a:1` |
 | Elapsed | `0.797 ms` |
 | Replay rejection | PASS |
+
+Fabric V2 host selftest:
+
+| Artifact | Value |
+| --- | --- |
+| Redacted artifact | `experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json` |
+| Host transport | Windows named pipe through `AF_PIPE` |
+| Completion dispatch | Win32 IOCP `PostQueuedCompletionStatus` / `GetQueuedCompletionStatus` |
+| First ACK payload | `ACK:host-selftest-a:1` |
+| First roundtrip | `0.494 ms` |
+| Total selftest elapsed | `2.568 ms` |
+| Replay rejection | PASS |
+| Boundary | IOCP dispatch is in the ACK path; direct overlapped named-pipe read/write remains next hardening step |

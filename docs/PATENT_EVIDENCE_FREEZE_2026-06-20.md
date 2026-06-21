@@ -42,6 +42,8 @@ Representative Windows species already proven or documented:
 - Fabric V2 frame species: session-derived HMAC frames, receiver binding,
   sequence replay rejection, deadline rejection, bounded mailboxes, and a real
   Windows named-pipe ACK selftest.
+- Fabric V2 host species: IOCP-dispatched ACK path over a local named-pipe host,
+  with bounded mailbox persistence and replay rejection.
 
 ## Durable Virtual Role
 
@@ -110,6 +112,7 @@ and delivery is verified by echo-filtered readback.
 - `docs/FABRIC_V2_BENCHMARK_RESULTS.md`
 - `experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json`
 - `experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json`
+- `experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json`
 
 ## Boundary
 
@@ -130,4 +133,6 @@ Fabric V2 boundary:
   species only as tied to the SelfConnect identity/evidence chain.
 - Do not claim generic named pipes, generic HMAC, generic queues, or generic
   IOCP.
-- Production IOCP host service is not yet reduced to practice in this packet.
+- IOCP host dispatch is reduced to practice in this packet.
+- Direct overlapped named-pipe read/write associated with IOCP is not yet
+  reduced to practice in this packet.

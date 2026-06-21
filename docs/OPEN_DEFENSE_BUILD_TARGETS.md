@@ -65,7 +65,7 @@ Current state:
 
 Still open:
 
-- production IOCP host service;
+- direct overlapped named-pipe read/write associated with IOCP;
 - per-user session router;
 - long-lived named-pipe endpoint with bounded per-agent mailboxes;
 - crash/restart recovery in the host;
@@ -78,7 +78,8 @@ Tracker:
 Why it matters:
 
 - The frame layer proves the governed session semantics.
-- The IOCP host proves the high-rate operational data plane.
+- The IOCP-dispatched host proves the completion-path control plane.
+- Direct overlapped named-pipe IO is the next high-rate data-plane step.
 
 Expected next artifacts:
 

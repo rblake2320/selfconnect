@@ -144,17 +144,20 @@ Implemented and benchmarked:
 - sequence replay rejection;
 - bounded mailbox backpressure;
 - real Windows named-pipe request/ACK selftest;
+- IOCP-dispatched host ACK path through `sc_fabric_host.py`;
 - `selfconnect-bench --transport fabric_v2_frame_mailbox`.
 
 Latest proof artifacts:
 
 - `experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json`
+- `experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json`
 - `experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json`
 - `experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json`
 
 Boundary:
 
-- Production IOCP host service is still open.
+- IOCP completion dispatch in the host ACK path is proven.
+- Direct overlapped named-pipe read/write associated with IOCP is still open.
 - Long-lived per-user session router is still open.
 - This slice proves the frame/mailbox/security semantics and a real Windows
   named-pipe transport species, then measures it through the same benchmark
