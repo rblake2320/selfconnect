@@ -49,6 +49,60 @@ with no model calls for known tasks and no p99 regression against the 5-agent
 baseline. The heavy cost is event/audit persistence, not the in-process
 transport/governance path.
 
+The result that matters most for the current logical ladder is:
+
+```text
+5 logical transport/governance p99  -> 0.032 ms
+20 logical transport/governance p99 -> 0.045 ms
+```
+
+That is near-zero marginal governance cost from 5 to 20 logical participants.
+It supports the claim that policy/evidence evaluation is not the bottleneck in
+the logical control plane.
+
+## Adversarial And Load Pass
+
+After the logical ladder, the adversarial suite was run against the same
+benchmark path.
+
+| Suite | Result | Coverage |
+| --- | --- | --- |
+| Fault injection | pass | wrong nonce, wrong sender, wrong hash, wrong window, replay, stale lease, narration drift, ACK loss, queue-depth, event-log failure |
+| Tamper detection | pass | modified, deleted, and reordered event rows all failed verification |
+| Resource halt simulation | pass | RAM floor, VRAM floor with local model mode, VRAM ignored without local model mode |
+| Logical load | pass | 5 agents at 100 and 1000 messages per agent |
+
+Load details:
+
+| Load run | Logical messages | Events checked | Transport p99 | Audit p99 | End-to-end p99 | Model calls per known task |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 5 agents x 100 messages | 500 | 1,010 | 0.018 ms | 0.452 ms | 0.809 ms | 0.0 |
+| 5 agents x 1000 messages | 5,000 | 10,010 | 0.022 ms | 0.656 ms | 1.284 ms | 0.0 |
+
+The high-volume pass also validates the optimized event append path: every event
+chain still verifies, but appending no longer repeatedly scans the whole JSONL
+file.
+
+## Proven Boundary
+
+Proven by this run:
+
+- protocol/governance scale to 20 logical participants;
+- fault-injection hard stops fire as expected;
+- tamper-evident event chains detect modification, deletion, and reordering;
+- resource floors produce halt recommendations;
+- 1000-message-per-agent logical load keeps event verification intact;
+- known tasks complete with `0.0` model calls.
+
+Not proven by this run:
+
+- real-agent drift and compaction behavior;
+- approval stalls across Codex/Gemini/Claude terminals;
+- UIA saturation on many live terminal windows;
+- real process/RAM/VRAM pressure from 5-20 heavyweight CLIs;
+- real terminal discovery reliability across ConPTY, minimized windows, and
+  migrated sessions.
+
 This supports the next benchmark step:
 
 ```text
@@ -58,3 +112,12 @@ This supports the next benchmark step:
 The real-terminal ladder is still pending. That run will measure process,
 terminal, UIA, permissions, drift, and compaction effects that logical agents do
 not exercise.
+
+Use a separate real baseline such as:
+
+```text
+experiments/fabric_v2/results/baseline_5agent_real.json
+```
+
+Do not compare real-agent p99 latency against the logical
+`baseline_5agent.json`; the two measure different bottlenecks.

@@ -34,6 +34,13 @@ def test_wrong_sender_nonce_acceptance_hard_stops():
     assert result["hard_reasons"] == [{"kind": "wrong_sender_nonce_accepted", "agent": "agent-c"}]
 
 
+def test_wrong_hash_acceptance_hard_stops():
+    result = fleet.evaluate_fleet([{"name": "agent-c", "wrong_hash_accepted": True}])
+
+    assert result["verdict"] == "hard_stop"
+    assert result["hard_reasons"] == [{"kind": "wrong_hash_accepted", "agent": "agent-c"}]
+
+
 def test_ram_and_vram_floor_recommend_halt_not_process_kill():
     result = fleet.evaluate_fleet(
         [],

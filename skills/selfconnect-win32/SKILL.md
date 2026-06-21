@@ -89,6 +89,7 @@ selfconnect-mesh events --role codex-2 --limit 20
 selfconnect-mesh verify-events
 selfconnect-fleet resources
 selfconnect-bench freeze-check
+selfconnect-bench adversarial
 ```
 
 - Roles must be unique. Do not create multiple `B` roles; use names like
@@ -111,6 +112,9 @@ selfconnect-bench freeze-check
 - For Fabric scale work, run `selfconnect-bench freeze-check` before shareable
   runs. The 5-agent production benchmark writes the persisted baseline used by
   later 10/15/15+5/20 rungs.
+- Run `selfconnect-bench adversarial` before real-terminal ladders. It exercises
+  fault injection, tamper detection, resource halt simulation, and 100/1000
+  messages-per-agent logical load.
 - If a role migrates to a new terminal, use `--replace`; the registry will issue
   a new `birth_id` and increment the role generation.
 - Set `--profile explore` for local capability testing and `--profile governed`

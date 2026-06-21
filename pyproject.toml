@@ -119,6 +119,7 @@ include = [
     "docs/FABRIC_V0_BENCHMARK_SPEC.md",
     "docs/FABRIC_V2_BENCHMARK_RESULTS.md",
     "docs/FABRIC_V2_BUILD_TARGETS.md",
+    "docs/FABRIC_V2_REAL_LADDER_PROTOCOL.md",
     "docs/FABRIC_V2_STRESS_PROTOCOL.md",
     "docs/FLEET_AUTO_HALT_PROTOCOL.md",
     "docs/OPEN_DEFENSE_BUILD_TARGETS.md",

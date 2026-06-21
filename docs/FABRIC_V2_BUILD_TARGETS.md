@@ -56,6 +56,7 @@ Expected artifacts:
 - `docs/FABRIC_V2_BENCHMARK_RESULTS.md`
 - `docs/FABRIC_V0_BENCHMARK_SPEC.md`
 - `docs/FABRIC_V2_STRESS_PROTOCOL.md`
+- `docs/FABRIC_V2_REAL_LADDER_PROTOCOL.md`
 - `docs/PATENT_EVIDENCE_FREEZE_2026-06-20.md`
 - `docs/FLEET_AUTO_HALT_PROTOCOL.md`
 - tests for metrics parsing and pass/fail gate evaluation.
@@ -65,6 +66,7 @@ The package command for the v0/current-transport harness is:
 ```powershell
 selfconnect-bench freeze-check
 selfconnect-bench run --agents 5 --stage production --profiles all
+selfconnect-bench adversarial
 ```
 
 ## Benchmark Metrics

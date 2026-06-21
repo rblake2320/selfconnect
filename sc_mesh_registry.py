@@ -232,17 +232,28 @@ def compute_event_hash(record: dict[str, Any]) -> str:
 def _last_event_hash(path: Path) -> str:
     if not path.exists():
         return EVENT_GENESIS_HASH
-    last_hash = EVENT_GENESIS_HASH
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            item = json.loads(line)
-        except Exception:
-            continue
-        if isinstance(item, dict):
-            last_hash = str(item.get("event_hash") or compute_event_hash(item))
-    return last_hash
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            pos = fh.tell()
+            buffer = b""
+            while pos > 0:
+                size = min(4096, pos)
+                pos -= size
+                fh.seek(pos)
+                buffer = fh.read(size) + buffer
+                lines = buffer.splitlines()
+                if len(lines) > 1 or pos == 0:
+                    for raw_line in reversed(lines):
+                        if not raw_line.strip():
+                            continue
+                        item = json.loads(raw_line.decode("utf-8"))
+                        if isinstance(item, dict):
+                            return str(item.get("event_hash") or compute_event_hash(item))
+                    break
+    except Exception:
+        pass
+    return EVENT_GENESIS_HASH
 
 
 def append_event(
@@ -262,6 +273,7 @@ def append_event(
     registry_path: str | Path | None = None,
     event_log_path: str | Path | None = None,
     repo_path: str | Path | None = None,
+    repo_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Append a durable mesh event.
 
@@ -287,7 +299,7 @@ def append_event(
         "status": status,
         "profile": profile,
         "summary": summary,
-        "repo": git_snapshot(repo_path),
+        "repo": repo_snapshot if repo_snapshot is not None else git_snapshot(repo_path),
         "data": data or {},
     }
     record["event_hash"] = compute_event_hash(record)

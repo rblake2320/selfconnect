@@ -28,6 +28,7 @@ If `15+5` passes and `20 real` fails, the record should say
 - Patent evidence freeze is complete.
 - Branch and commit are recorded.
 - `selfconnect-mesh verify-events` returns `ok=true`.
+- `selfconnect-bench adversarial` has passed.
 - Dashboard fleet panel is running.
 - All real agents have unique role names and birth IDs.
 - Codex/Gemini permission profiles are preconfigured.

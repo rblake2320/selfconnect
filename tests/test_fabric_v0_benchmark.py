@@ -139,3 +139,74 @@ def test_unknown_profile_rejected():
             profiles="unknown",
             resources=_RESOURCES,
         )
+
+
+def test_fault_injection_suite_exercises_all_hard_stops():
+    temp_dir = tempfile.TemporaryDirectory()
+
+    try:
+        artifact = bench.run_fault_injection_suite(output_dir=temp_dir.name, run_id="faults")
+        assert artifact["ok"] is True
+        names = {case["name"] for case in artifact["cases"]}
+        assert {
+            "wrong_nonce",
+            "wrong_sender",
+            "wrong_hash",
+            "wrong_window",
+            "replay",
+            "stale_lease",
+            "narration_drift",
+            "ack_loss",
+            "queue_depth",
+            "event_log_failure",
+        } <= names
+        assert all(case["actual_verdict"] == "hard_stop" for case in artifact["cases"])
+    finally:
+        temp_dir.cleanup()
+
+
+def test_resource_suite_exercises_halt_recommended():
+    temp_dir = tempfile.TemporaryDirectory()
+
+    try:
+        artifact = bench.run_resource_suite(output_dir=temp_dir.name, run_id="resources")
+        assert artifact["ok"] is True
+        by_name = {case["name"]: case for case in artifact["cases"]}
+        assert by_name["ram_floor"]["actual_verdict"] == "halt_recommended"
+        assert by_name["vram_floor_local_model"]["actual_verdict"] == "halt_recommended"
+        assert by_name["vram_floor_ignored_without_local_model"]["actual_verdict"] == "pass"
+    finally:
+        temp_dir.cleanup()
+
+
+def test_tamper_suite_detects_modify_delete_and_reorder():
+    temp_dir = tempfile.TemporaryDirectory()
+
+    try:
+        artifact = bench.run_tamper_suite(output_dir=temp_dir.name, run_id="tamper")
+        assert artifact["ok"] is True
+        assert artifact["clean_verify_ok"] is True
+        assert {case["name"] for case in artifact["cases"]} == {"modify", "delete", "reorder"}
+        assert all(case["verify_ok"] is False for case in artifact["cases"])
+        assert all(case["error_count"] >= 1 for case in artifact["cases"])
+    finally:
+        temp_dir.cleanup()
+
+
+def test_load_suite_runs_small_message_sweep():
+    temp_dir = tempfile.TemporaryDirectory()
+
+    try:
+        artifact = bench.run_load_suite(
+            output_dir=temp_dir.name,
+            run_id="load",
+            agent_count=2,
+            messages=(2, 4),
+            profiles="normal",
+        )
+        assert artifact["ok"] is True
+        assert [run["messages_per_agent"] for run in artifact["runs"]] == [2, 4]
+        assert [run["logical_message_count"] for run in artifact["runs"]] == [4, 8]
+        assert all(run["event_verify_ok"] is True for run in artifact["runs"])
+    finally:
+        temp_dir.cleanup()

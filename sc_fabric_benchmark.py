@@ -203,6 +203,7 @@ def _run_profile(
     agents: list[dict[str, Any]],
     messages_per_agent: int,
     event_log_path: Path,
+    repo_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     config = PROFILE_CONFIGS[profile]
     total_messages = len(agents) * messages_per_agent
@@ -229,6 +230,7 @@ def _run_profile(
             vendor="logical",
             task=f"fabric-v0-{profile}",
             event_log_path=event_log_path,
+            repo_snapshot=repo_snapshot,
         )
 
     for seq in range(total_messages):
@@ -286,6 +288,7 @@ def _run_profile(
                 "model_calls": 0,
             },
             event_log_path=event_log_path,
+            repo_snapshot=repo_snapshot,
         )
         audit_end = time.perf_counter()
         sc_fleet_guard.fleet_heartbeat(
@@ -297,6 +300,7 @@ def _run_profile(
             ack_seq=seq,
             latency_ms=(t1 - t0) * 1000,
             event_log_path=event_log_path,
+            repo_snapshot=repo_snapshot,
         )
         t2 = time.perf_counter()
         transport_ms.append((t1 - t0) * 1000)
@@ -323,6 +327,7 @@ def _run_profile(
             vendor="logical",
             result="success",
             event_log_path=event_log_path,
+            repo_snapshot=repo_snapshot,
         )
 
     transport_stats = _percentiles(transport_ms)
@@ -385,6 +390,7 @@ def run_benchmark(
     run_id = run_id or f"{DEFAULT_TRANSPORT}_{_now_id()}"
     event_log_path = output_root / f"{run_id}_events.jsonl"
     baseline = load_baseline(baseline_json)
+    repo_snapshot = sc_mesh_registry.git_snapshot()
     profile_results = []
     fleet_agents = []
 
@@ -395,6 +401,7 @@ def run_benchmark(
             agents=agents,
             messages_per_agent=messages_per_agent,
             event_log_path=event_log_path,
+            repo_snapshot=repo_snapshot,
         )
         profile_results.append(result)
         fleet_agents.extend(result["agents"])
@@ -459,7 +466,7 @@ def run_benchmark(
         },
         "fleet_guard": guard,
         "freeze": freeze,
-        "repo": sc_mesh_registry.git_snapshot(),
+        "repo": repo_snapshot,
         "event_log_path": str(event_log_path),
         "raw_text_included": False,
     }
@@ -482,6 +489,334 @@ def run_benchmark(
         artifact["baseline"]["written"] = False
         write_json(artifact_path, artifact)
 
+    return artifact
+
+
+FAULT_SCENARIOS: dict[str, dict[str, Any]] = {
+    "wrong_nonce": {
+        "agents": [{"name": "agent-1", "wrong_sender_nonce_accepted": True}],
+        "expected_verdict": "hard_stop",
+        "expected_reason": "wrong_sender_nonce_accepted",
+    },
+    "wrong_sender": {
+        "agents": [{"name": "agent-1", "wrong_sender_nonce_accepted": True}],
+        "expected_verdict": "hard_stop",
+        "expected_reason": "wrong_sender_nonce_accepted",
+    },
+    "wrong_hash": {
+        "agents": [{"name": "agent-1", "wrong_hash_accepted": True}],
+        "expected_verdict": "hard_stop",
+        "expected_reason": "wrong_hash_accepted",
+    },
+    "wrong_window": {
+        "agents": [{"name": "agent-1", "wrong_window_guard_failed": True}],
+        "expected_verdict": "hard_stop",
+        "expected_reason": "wrong_window_guard_failed",
+    },
+    "replay": {
+        "agents": [{"name": "agent-1", "replay_accepted": True}],
+        "expected_verdict": "hard_stop",
+        "expected_reason": "replay_accepted",
+    },
+    "stale_lease": {
+        "agents": [{"name": "agent-1", "stale_lease_accepted": True}],
+        "expected_verdict": "hard_stop",
+        "expected_reason": "stale_lease_accepted",
+    },
+    "narration_drift": {
+        "agents": [{"name": "agent-1", "local_narration_count": 2}],
+        "expected_verdict": "hard_stop",
+        "expected_reason": "local_narration_violation",
+    },
+    "ack_loss": {
+        "agents": [
+            {"name": "agent-1", "missed_acks": 2},
+            {"name": "agent-2", "missed_acks": 2},
+            {"name": "agent-3", "missed_acks": 2},
+        ],
+        "expected_verdict": "hard_stop",
+        "expected_reason": "blocked_agent_count",
+    },
+    "queue_depth": {
+        "agents": [{"name": "agent-1", "queue_depth": 101}],
+        "thresholds": {"queue_depth_limit": 100},
+        "expected_verdict": "hard_stop",
+        "expected_reason": "queue_depth_exceeded",
+    },
+    "event_log_failure": {
+        "agents": [{"name": "agent-1"}],
+        "event_log_ok": False,
+        "expected_verdict": "hard_stop",
+        "expected_reason": "event_log_verify_failed",
+    },
+}
+
+
+def _reason_kinds(result: dict[str, Any]) -> set[str]:
+    return {str(item.get("kind")) for item in result.get("hard_reasons", [])}
+
+
+def run_fault_injection_suite(
+    *,
+    output_dir: str | Path = DEFAULT_OUTPUT_DIR,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    run_id = run_id or f"fault_injection_{_now_id()}"
+    cases = []
+    for name, scenario in FAULT_SCENARIOS.items():
+        result = sc_fleet_guard.evaluate_fleet(
+            list(scenario["agents"]),
+            resources={"ram_free_mb": 100_000, "gpu": {"vram_free_mb": 24_000}},
+            thresholds=scenario.get("thresholds"),
+            event_log_ok=bool(scenario.get("event_log_ok", True)),
+        )
+        expected_reason = str(scenario["expected_reason"])
+        passed = (
+            result["verdict"] == scenario["expected_verdict"]
+            and expected_reason in _reason_kinds(result)
+        )
+        cases.append({
+            "name": name,
+            "pass": passed,
+            "expected_verdict": scenario["expected_verdict"],
+            "actual_verdict": result["verdict"],
+            "expected_reason": expected_reason,
+            "actual_reasons": sorted(_reason_kinds(result)),
+            "action": result["action"],
+        })
+    artifact = {
+        "schema_version": SCHEMA_VERSION,
+        "suite": "fault_injection",
+        "run_id": run_id,
+        "ok": all(case["pass"] for case in cases),
+        "cases": cases,
+        "repo": sc_mesh_registry.git_snapshot(),
+        "raw_text_included": False,
+    }
+    artifact_path = Path(output_dir) / f"{run_id}_redacted.json"
+    artifact["artifact_path"] = str(artifact_path)
+    write_json(artifact_path, artifact)
+    return artifact
+
+
+def run_resource_suite(
+    *,
+    output_dir: str | Path = DEFAULT_OUTPUT_DIR,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    run_id = run_id or f"resource_halt_{_now_id()}"
+    cases = [
+        {
+            "name": "ram_floor",
+            "resources": {"ram_free_mb": 24_000, "gpu": {"vram_free_mb": 24_000}},
+            "local_models_active": False,
+            "expected_verdict": "halt_recommended",
+            "expected_reason": "ram_floor",
+        },
+        {
+            "name": "vram_floor_local_model",
+            "resources": {"ram_free_mb": 100_000, "gpu": {"vram_free_mb": 5_000}},
+            "local_models_active": True,
+            "expected_verdict": "halt_recommended",
+            "expected_reason": "vram_floor",
+        },
+        {
+            "name": "vram_floor_ignored_without_local_model",
+            "resources": {"ram_free_mb": 100_000, "gpu": {"vram_free_mb": 5_000}},
+            "local_models_active": False,
+            "expected_verdict": "pass",
+            "expected_reason": "",
+        },
+    ]
+    results = []
+    for case in cases:
+        result = sc_fleet_guard.evaluate_fleet(
+            [],
+            resources=case["resources"],
+            local_models_active=bool(case["local_models_active"]),
+        )
+        halt_reasons = {str(item.get("kind")) for item in result.get("halt_reasons", [])}
+        expected_reason = str(case["expected_reason"])
+        passed = result["verdict"] == case["expected_verdict"] and (
+            not expected_reason or expected_reason in halt_reasons
+        )
+        results.append({
+            "name": case["name"],
+            "pass": passed,
+            "expected_verdict": case["expected_verdict"],
+            "actual_verdict": result["verdict"],
+            "expected_reason": expected_reason,
+            "actual_halt_reasons": sorted(halt_reasons),
+            "action": result["action"],
+        })
+    artifact = {
+        "schema_version": SCHEMA_VERSION,
+        "suite": "resource_halt",
+        "run_id": run_id,
+        "ok": all(case["pass"] for case in results),
+        "cases": results,
+        "repo": sc_mesh_registry.git_snapshot(),
+        "raw_text_included": False,
+    }
+    artifact_path = Path(output_dir) / f"{run_id}_redacted.json"
+    artifact["artifact_path"] = str(artifact_path)
+    write_json(artifact_path, artifact)
+    return artifact
+
+
+def _seed_event_log(path: Path, repo_snapshot: dict[str, Any]) -> None:
+    for idx in range(3):
+        sc_mesh_registry.append_event(
+            "tamper_seed",
+            role=f"tamper-{idx}",
+            status="seed",
+            summary=f"tamper seed {idx}",
+            data={"idx": idx},
+            event_log_path=path,
+            repo_snapshot=repo_snapshot,
+        )
+
+
+def _tamper_lines(source: Path, target: Path, mode: str) -> None:
+    lines = source.read_text(encoding="utf-8").splitlines()
+    if mode == "modify":
+        item = json.loads(lines[1])
+        item["summary"] = "tampered summary"
+        lines[1] = json.dumps(item, sort_keys=True)
+    elif mode == "delete":
+        del lines[1]
+    elif mode == "reorder":
+        lines[1], lines[2] = lines[2], lines[1]
+    else:
+        raise ValueError(f"unknown tamper mode: {mode}")
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def run_tamper_suite(
+    *,
+    output_dir: str | Path = DEFAULT_OUTPUT_DIR,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    run_id = run_id or f"tamper_{_now_id()}"
+    output_root = Path(output_dir)
+    output_root.mkdir(parents=True, exist_ok=True)
+    repo_snapshot = sc_mesh_registry.git_snapshot()
+    clean_log = output_root / f"{run_id}_clean_events.jsonl"
+    _seed_event_log(clean_log, repo_snapshot)
+    clean_verify = sc_mesh_registry.verify_events(event_log_path=clean_log)
+    cases = []
+    for mode in ("modify", "delete", "reorder"):
+        target = output_root / f"{run_id}_{mode}_events.jsonl"
+        _tamper_lines(clean_log, target, mode)
+        verified = sc_mesh_registry.verify_events(event_log_path=target)
+        cases.append({
+            "name": mode,
+            "pass": verified["ok"] is False,
+            "verify_ok": verified["ok"],
+            "error_count": len(verified.get("errors", [])),
+        })
+    artifact = {
+        "schema_version": SCHEMA_VERSION,
+        "suite": "tamper",
+        "run_id": run_id,
+        "ok": clean_verify["ok"] is True and all(case["pass"] for case in cases),
+        "clean_verify_ok": clean_verify["ok"],
+        "cases": cases,
+        "repo": repo_snapshot,
+        "raw_text_included": False,
+    }
+    artifact_path = output_root / f"{run_id}_redacted.json"
+    artifact["artifact_path"] = str(artifact_path)
+    write_json(artifact_path, artifact)
+    return artifact
+
+
+def run_load_suite(
+    *,
+    output_dir: str | Path = DEFAULT_OUTPUT_DIR,
+    run_id: str | None = None,
+    agent_count: int = 5,
+    messages: tuple[int, ...] = (100, 1000),
+    profiles: str = "normal",
+) -> dict[str, Any]:
+    run_id = run_id or f"logical_load_{_now_id()}"
+    runs = []
+    for message_count in messages:
+        run = run_benchmark(
+            agent_count=agent_count,
+            messages_per_agent=message_count,
+            stage="production",
+            profiles=profiles,
+            output_dir=output_dir,
+            allow_unfrozen=False,
+            write_baseline=False,
+            run_id=f"{run_id}_{message_count}",
+            resources={"ram_free_mb": 100_000, "gpu": {"vram_free_mb": 24_000}},
+        )
+        verify = sc_mesh_registry.verify_events(event_log_path=run["event_log_path"])
+        runs.append({
+            "messages_per_agent": message_count,
+            "logical_message_count": run["logical_message_count"],
+            "verdict": run["verdict"],
+            "ok": run["ok"] and verify["ok"],
+            "transport_p99_ms": run["aggregate"]["transport_governance_ms"]["p99"],
+            "audit_p99_ms": run["aggregate"]["audit_lag_ms"]["p99"],
+            "end_to_end_p99_ms": run["aggregate"]["end_to_end_task_ms"]["p99"],
+            "model_calls_per_known_task": run["aggregate"]["model_calls_per_known_task"],
+            "events_checked": verify["events_checked"],
+            "event_verify_ok": verify["ok"],
+            "artifact_path": run["artifact_path"],
+        })
+    artifact = {
+        "schema_version": SCHEMA_VERSION,
+        "suite": "logical_load",
+        "run_id": run_id,
+        "ok": all(run["ok"] for run in runs),
+        "agent_count": agent_count,
+        "profiles": _profile_list(profiles),
+        "runs": runs,
+        "repo": sc_mesh_registry.git_snapshot(),
+        "raw_text_included": False,
+    }
+    artifact_path = Path(output_dir) / f"{run_id}_redacted.json"
+    artifact["artifact_path"] = str(artifact_path)
+    write_json(artifact_path, artifact)
+    return artifact
+
+
+def run_adversarial_suite(
+    *,
+    output_dir: str | Path = DEFAULT_OUTPUT_DIR,
+    run_id: str | None = None,
+    include_load: bool = True,
+) -> dict[str, Any]:
+    run_id = run_id or f"adversarial_{_now_id()}"
+    suites = [
+        run_fault_injection_suite(output_dir=output_dir, run_id=f"{run_id}_faults"),
+        run_tamper_suite(output_dir=output_dir, run_id=f"{run_id}_tamper"),
+        run_resource_suite(output_dir=output_dir, run_id=f"{run_id}_resources"),
+    ]
+    if include_load:
+        suites.append(run_load_suite(output_dir=output_dir, run_id=f"{run_id}_load"))
+    artifact = {
+        "schema_version": SCHEMA_VERSION,
+        "suite": "adversarial",
+        "run_id": run_id,
+        "ok": all(suite["ok"] for suite in suites),
+        "suites": [
+            {
+                "suite": suite["suite"],
+                "ok": suite["ok"],
+                "artifact_path": suite["artifact_path"],
+            }
+            for suite in suites
+        ],
+        "repo": sc_mesh_registry.git_snapshot(),
+        "raw_text_included": False,
+    }
+    artifact_path = Path(output_dir) / f"{run_id}_redacted.json"
+    artifact["artifact_path"] = str(artifact_path)
+    write_json(artifact_path, artifact)
     return artifact
 
 
@@ -509,6 +844,30 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--allow-unfrozen", action="store_true")
     p.add_argument("--local-models-active", action="store_true")
     p.add_argument("--run-id", default="")
+
+    p = sub.add_parser("fault-injection")
+    p.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    p.add_argument("--run-id", default="")
+
+    p = sub.add_parser("tamper")
+    p.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    p.add_argument("--run-id", default="")
+
+    p = sub.add_parser("resource")
+    p.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    p.add_argument("--run-id", default="")
+
+    p = sub.add_parser("load")
+    p.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    p.add_argument("--run-id", default="")
+    p.add_argument("--agents", type=int, default=5)
+    p.add_argument("--messages", default="100,1000")
+    p.add_argument("--profiles", default="normal")
+
+    p = sub.add_parser("adversarial")
+    p.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    p.add_argument("--run-id", default="")
+    p.add_argument("--no-load", action="store_true")
     return parser
 
 
@@ -547,6 +906,40 @@ def main(argv: list[str] | None = None) -> int:
             "aggregate": artifact.get("aggregate"),
             "freeze_ok": artifact.get("freeze", {}).get("ok"),
         })
+    if args.command == "fault-injection":
+        return _print_json(run_fault_injection_suite(
+            output_dir=args.output_dir,
+            run_id=args.run_id or None,
+        ))
+    if args.command == "tamper":
+        return _print_json(run_tamper_suite(
+            output_dir=args.output_dir,
+            run_id=args.run_id or None,
+        ))
+    if args.command == "resource":
+        return _print_json(run_resource_suite(
+            output_dir=args.output_dir,
+            run_id=args.run_id or None,
+        ))
+    if args.command == "load":
+        try:
+            messages = tuple(int(item.strip()) for item in args.messages.split(",") if item.strip())
+            artifact = run_load_suite(
+                output_dir=args.output_dir,
+                run_id=args.run_id or None,
+                agent_count=args.agents,
+                messages=messages,
+                profiles=args.profiles,
+            )
+        except ValueError as exc:
+            return _print_json({"ok": False, "verdict": "input_error", "message": str(exc)})
+        return _print_json(artifact)
+    if args.command == "adversarial":
+        return _print_json(run_adversarial_suite(
+            output_dir=args.output_dir,
+            run_id=args.run_id or None,
+            include_load=not args.no_load,
+        ))
     return 2
 
 

@@ -182,6 +182,9 @@ def evaluate_fleet(
         if agent.get("wrong_sender_nonce_accepted"):
             report["risk"] = "red"
             hard_reasons.append({"kind": "wrong_sender_nonce_accepted", "agent": name})
+        if agent.get("wrong_hash_accepted"):
+            report["risk"] = "red"
+            hard_reasons.append({"kind": "wrong_hash_accepted", "agent": name})
         if agent.get("replay_accepted"):
             report["risk"] = "red"
             hard_reasons.append({"kind": "replay_accepted", "agent": name})
@@ -284,6 +287,7 @@ def fleet_register(
     generation: int | None = None,
     vendor: str = "",
     event_log_path: str | Path | None = None,
+    repo_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     data = _event_payload(
         name=name,
@@ -308,6 +312,7 @@ def fleet_register(
         summary=f"fleet agent registered: {name}",
         data=data,
         event_log_path=event_log_path,
+        repo_snapshot=repo_snapshot,
     )
 
 
@@ -324,6 +329,7 @@ def fleet_heartbeat(
     vendor: str = "",
     hwnd: int | None = None,
     event_log_path: str | Path | None = None,
+    repo_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     data = _event_payload(
         name=name,
@@ -347,6 +353,7 @@ def fleet_heartbeat(
         summary=f"fleet heartbeat: {name}",
         data=data,
         event_log_path=event_log_path,
+        repo_snapshot=repo_snapshot,
     )
 
 
@@ -362,6 +369,7 @@ def fleet_done(
     vendor: str = "",
     hwnd: int | None = None,
     event_log_path: str | Path | None = None,
+    repo_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     data = _event_payload(
         name=name,
@@ -385,6 +393,7 @@ def fleet_done(
         summary=f"fleet agent done: {name} -> {result}",
         data=data,
         event_log_path=event_log_path,
+        repo_snapshot=repo_snapshot,
     )
 
 

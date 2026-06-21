@@ -23,6 +23,7 @@ operator explicitly passes `--allow-unfrozen` for private local testing.
 ```powershell
 selfconnect-bench run --agents 5 --stage production --profiles all
 selfconnect-bench run --agents 10 --stage production --profiles all --baseline-json experiments/fabric_v2/results/baseline_5agent.json
+selfconnect-bench adversarial
 ```
 
 The 5-agent production run writes:
@@ -33,6 +34,10 @@ experiments/fabric_v2/results/baseline_5agent.json
 
 Later rungs read that file so `p99 > 5x baseline` is an automated stop, not a
 manual judgment.
+
+Run `selfconnect-bench adversarial` before real-terminal ladders. It covers
+fault injection, tamper detection, resource halt simulation, and 100/1000
+messages-per-agent logical load.
 
 ## Latency Tracks
 
