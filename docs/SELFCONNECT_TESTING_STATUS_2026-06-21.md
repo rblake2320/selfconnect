@@ -69,6 +69,8 @@ Fresh recheck on 2026-06-21:
 - `GOOGLE_APPLICATION_CREDENTIALS`: not present
 - `GOOGLE_CLOUD_PROJECT`: not present
 - `CLOUDSDK_CONFIG`: not present
+- `gcloud`: not installed on this workstation
+- default ADC files under `%APPDATA%\gcloud` and `%USERPROFILE%\.config\gcloud`: not present
 - Provider preflight result: `provider_auth_required`
 
 After that is configured, rerun:
