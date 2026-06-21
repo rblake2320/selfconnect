@@ -11,26 +11,31 @@ available on this workstation: 10 Codex + 10 Claude.
 
 This ladder used real visible Windows Terminal windows running real `codex exec`
 and/or `claude -p` agent processes. Each rung required UIA readback from each
-visible window to contain that agent's expected ACK. This is not the logical
-harness and not a simulation.
+visible window to contain a standalone exact ACK line for that agent. This is
+not the logical harness and not a simulation.
 
 ## Rungs
 
 | Rung | Run ID | Verdict | ACKs | ACK p50 ms | ACK p95 ms | ACK p99 ms | ACK max ms | Missed ACKs | Drift | Approval stalls |
 | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 5 real | `SC_REAL5_20260621_001643` | PASS | 5/5 | `2301.398` | `2368.903` | `2374.646` | `2376.082` | `0` | `0` | `0` |
-| 10 real | `SC_REAL5_20260621_002246` | PASS | 10/10 | `3029.689` | `3135.248` | `3146.907` | `3149.821` | `0` | `0` | `0` |
-| 15 real | `SC_REAL5_20260621_002307` | PASS | 15/15 | `4318.245` | `5677.138` | `5704.588` | `5711.451` | `0` | `0` | `0` |
-| 20 real | `SC_REAL5_20260621_002328` | PASS | 20/20 | `6173.721` | `7884.952` | `7919.280` | `7927.862` | `0` | `0` | `0` |
+| 5 real | `SC_REAL5_20260621_011131` | PASS | 5/5 | `4540.131` | `5638.907` | `5643.165` | `5644.230` | `0` | `0` | `0` |
+| 20 real | `SC_REAL5_20260621_011140` | PASS | 20/20 | `10286.688` | `13024.686` | `13828.675` | `14029.672` | `0` | `0` | `0` |
 
 ## Launch Latency
 
 | Rung | Launch p50 ms | Launch p95 ms | Launch p99 ms | Run duration ms |
 | ---: | ---: | ---: | ---: | ---: |
-| 5 real | `934.631` | `1017.985` | `1025.061` | `3376.273` |
-| 10 real | `1659.302` | `1873.050` | `1889.082` | `4149.988` |
-| 15 real | `2734.545` | `3034.839` | `3058.798` | `6711.848` |
-| 20 real | `4130.816` | `4614.559` | `4694.177` | `8928.079` |
+| 5 real | `990.835` | `1086.513` | `1094.927` | `6644.802` |
+| 20 real | `4427.701` | `4898.740` | `4939.833` | `15029.895` |
+
+Mixed exact-line launch latency:
+
+| Rung | Launch p50 ms | Launch p95 ms | Launch p99 ms | Run duration ms |
+| ---: | ---: | ---: | ---: | ---: |
+| 5 mixed | `1214.032` | `1324.877` | `1334.781` | `22626.523` |
+| 10 mixed | `2158.107` | `2892.569` | `2926.035` | `31774.216` |
+| 15 mixed | `3168.915` | `3526.832` | `3556.505` | `42822.978` |
+| 20 mixed | `3940.608` | `4367.332` | `4419.071` | `59158.251` |
 
 ## Resource Check
 
@@ -56,12 +61,12 @@ Authenticated provider coverage:
 
 | Rung | Run ID | Providers | Verdict | ACKs | ACK p50 ms | ACK p95 ms | ACK p99 ms | ACK max ms | Missed ACKs | Wrong ACK | Provider auth |
 | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2 smoke | `SC_REAL5_20260621_003240` | 1 Codex + 1 Claude | PASS | 2/2 | `13153.273` | `20824.184` | `21506.042` | `21676.507` | `0` | `0` | `0` |
+| preflight | `SC_PROVIDER_PREFLIGHT_20260621_011029` | Codex + Claude + Gemini | FAIL | 2/3 ready | n/a | n/a | n/a | n/a | n/a | `0` | `1` |
 | 1 smoke | `SC_REAL5_20260621_003308` | 1 Gemini | FAIL | 0/1 | n/a | n/a | n/a | n/a | `1` | `0` | `1` |
-| 5 mixed | `SC_REAL5_20260621_003518` | 3 Codex + 2 Claude | PASS | 5/5 | `18172.997` | `21503.808` | `21686.640` | `21732.349` | `0` | `0` | `0` |
-| 10 mixed | `SC_REAL5_20260621_003549` | 5 Codex + 5 Claude | PASS | 10/10 | `20065.985` | `33397.959` | `34668.060` | `34985.586` | `0` | `0` | `0` |
-| 15 mixed | `SC_REAL5_20260621_004724` | 8 Codex + 7 Claude | PASS | 15/15 | `4763.204` | `40615.021` | `41191.536` | `41335.665` | `0` | `0` | `0` |
-| 20 mixed | `SC_REAL5_20260621_010359` | 10 Codex + 10 Claude | PASS | 20/20 | `30801.068` | `57087.581` | `57107.396` | `57112.350` | `0` | `0` | `0` |
+| 5 mixed | `SC_REAL5_20260621_011156` | 3 Codex + 2 Claude | PASS | 5/5 | `6958.033` | `21621.477` | `21625.034` | `21625.924` | `0` | `0` | `0` |
+| 10 mixed | `SC_REAL5_20260621_011220` | 5 Codex + 5 Claude | PASS | 10/10 | `25623.109` | `30763.294` | `30771.810` | `30773.938` | `0` | `0` | `0` |
+| 15 mixed | `SC_REAL5_20260621_011254` | 8 Codex + 7 Claude | PASS | 15/15 | `11751.627` | `41091.218` | `41676.188` | `41822.430` | `0` | `0` | `0` |
+| 20 mixed | `SC_REAL5_20260621_011338` | 10 Codex + 10 Claude | PASS | 20/20 | `30458.832` | `57182.844` | `57962.971` | `58158.003` | `0` | `0` | `0` |
 
 Two failed attempts were intentionally kept as learning evidence:
 
@@ -74,12 +79,23 @@ Two failed attempts were intentionally kept as learning evidence:
 
 The 15 and 20 mixed rungs were rerun after those fixes and passed.
 
+After the substring ACK issue was found, the Codex endpoint and every mixed rung
+above were rerun with standalone exact-line ACK matching. Those exact-line runs
+are the final evidence rows in this document.
+
 ## Evidence Files
 
 Raw JSON artifacts are local and ignored by Git:
 
 - `experiments/fabric_v2/results/baseline_5agent_real.json`
 - `experiments/fabric_v2/results/baseline_5agent_real_claude2_codex3.json`
+- `experiments/fabric_v2/results/provider_preflight_SC_PROVIDER_PREFLIGHT_20260621_011029.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_011131.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_011140.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_011156.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_011220.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_011254.json`
+- `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_011338.json`
 - `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_002246.json`
 - `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_002307.json`
 - `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_002328.json`

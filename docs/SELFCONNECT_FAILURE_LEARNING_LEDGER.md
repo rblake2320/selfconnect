@@ -90,11 +90,28 @@ GitHub, without storing raw private transcripts or noisy local artifacts.
   - local artifact `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_004812.json`
   - passing rerun `experiments/fabric_v2/results/real_agent_baseline_SC_REAL5_20260621_010359.json`
 
+### 2026-06-21: ACK Substring Matching Is Not Strong Enough
+
+- Context: provider output can include the expected ACK inside a prompt echo or
+  as a prefix of a longer line such as `ACK ... status=ready`.
+- Result: substring matching could overstate a PASS even when the agent did not
+  emit the required standalone ACK line.
+- Decision: final real-agent evidence must require a standalone line whose
+  stripped text equals the expected ACK exactly.
+- Fix: `_has_exact_line()` now backs both provider preflight and visible UIA
+  readback. Regression tests reject prompt-embedded and suffix-extended ACKs.
+- Evidence:
+  - exact-line Codex 5/20 reruns:
+    `SC_REAL5_20260621_011131`, `SC_REAL5_20260621_011140`
+  - exact-line mixed 5/10/15/20 reruns:
+    `SC_REAL5_20260621_011156`, `SC_REAL5_20260621_011220`,
+    `SC_REAL5_20260621_011254`, `SC_REAL5_20260621_011338`
+
 ## Current Learning
 
 - The correct real ladder control path is visible terminal + real CLI process +
-  UIA readback, not stale terminal reuse and not assuming an injected prompt has
-  been interpreted as authority.
+  UIA readback with standalone exact-line ACKs, not stale terminal reuse and not
+  assuming an injected prompt has been interpreted as authority.
 - The 20-real ladder now passes with 0 missed ACKs, 0 drift events, and 0
   approval stalls for Codex-only and for authenticated mixed Codex+Claude.
 - Gemini remains blocked until non-interactive auth is configured with

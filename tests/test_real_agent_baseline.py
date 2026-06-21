@@ -71,6 +71,14 @@ def test_title_match_requires_role_boundary() -> None:
     assert not baseline._title_matches("SC_RUN realclaude-10 DONE", "SC_RUN", "realclaude-1")
 
 
+def test_has_exact_line_rejects_substring_ack() -> None:
+    expected = "ACK_PREFLIGHT provider=claude nonce=N"
+    assert baseline._has_exact_line(expected, expected)
+    assert baseline._has_exact_line(f"noise\n{expected}\nmore noise", expected)
+    assert not baseline._has_exact_line(f"{expected} status=ready", expected)
+    assert not baseline._has_exact_line(f"prompt says: {expected}", expected)
+
+
 def test_write_agent_script_uses_claude_command() -> None:
     with local_tmpdir() as tmpdir:
         log = tmpdir / "claude.log"
@@ -155,3 +163,71 @@ def test_diagnose_failed_agent_auth_required() -> None:
 
     assert agent.diagnosis == "provider_auth_required"
     assert "authentication required" in agent.error
+
+
+def test_provider_output_ready() -> None:
+    status, error = baseline._classify_provider_output(
+        output="ACK_PREFLIGHT provider=codex nonce=N",
+        expected="ACK_PREFLIGHT provider=codex nonce=N",
+        nonce="N",
+        returncode=0,
+        timed_out=False,
+    )
+
+    assert status == "ready"
+    assert error == ""
+
+
+def test_provider_output_auth_required() -> None:
+    status, error = baseline._classify_provider_output(
+        output="FatalAuthenticationError: Manual authorization is required",
+        expected="ACK_PREFLIGHT provider=gemini nonce=N",
+        nonce="N",
+        returncode=41,
+        timed_out=False,
+    )
+
+    assert status == "provider_auth_required"
+    assert "authentication required" in error
+
+
+def test_provider_output_wrong_ack_format() -> None:
+    status, error = baseline._classify_provider_output(
+        output="ACK_PREFLIGHT provider=claude nonce=N status=ready",
+        expected="ACK_PREFLIGHT provider=claude nonce=N",
+        nonce="N",
+        returncode=0,
+        timed_out=False,
+    )
+
+    assert status == "wrong_ack_format"
+    assert "exact expected ACK" in error
+
+
+def test_provider_output_timeout() -> None:
+    status, error = baseline._classify_provider_output(
+        output="",
+        expected="ACK_PREFLIGHT provider=gemini nonce=N",
+        nonce="N",
+        returncode=None,
+        timed_out=True,
+    )
+
+    assert status == "timeout"
+    assert "timed out" in error
+
+
+def test_write_provider_preflight_script_uses_provider_command() -> None:
+    with local_tmpdir() as tmpdir:
+        log = tmpdir / "codex.log"
+        script = baseline._write_provider_preflight_script(
+            workdir=tmpdir,
+            provider="codex",
+            expected="ACK_PREFLIGHT provider=codex nonce=N",
+            log=log,
+        )
+
+        text = script.read_text(encoding="utf-8")
+
+    assert "codex exec --dangerously-bypass-approvals-and-sandbox" in text
+    assert "ACK_PREFLIGHT provider=codex nonce=N" in text

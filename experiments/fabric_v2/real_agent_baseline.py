@@ -136,6 +136,10 @@ def _baseline_file_name(provider_plan: list[str], count: int) -> str | None:
     return f"baseline_5agent_real_{_provider_key(provider_plan)}.json"
 
 
+def _has_exact_line(text: str, expected: str) -> bool:
+    return any(line.strip() == expected for line in text.splitlines())
+
+
 def _ps_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -244,6 +248,38 @@ $Host.UI.RawUI.WindowTitle = { _ps_quote(run_id + ' ' + role + ' DONE') }
     return script
 
 
+def _write_provider_preflight_script(
+    *,
+    workdir: Path,
+    provider: str,
+    expected: str,
+    log: Path,
+) -> Path:
+    provider_command = PROVIDERS[provider]
+    prompt = (
+        "Reply with exactly this one line and nothing else. "
+        "Do not change the provider, nonce, spacing, or field names. "
+        f"Line: {expected}"
+    )
+    env_lines = ""
+    if provider_command.fail_fast_env:
+        env_lines = "\n".join(
+            f"$env:{key} = { _ps_quote(value) }"
+            for key, value in provider_command.fail_fast_env.items()
+        )
+    script = workdir / f"preflight_{provider}.ps1"
+    text = f"""
+$ErrorActionPreference = 'Continue'
+Set-Location -LiteralPath { _ps_quote(str(ROOT)) }
+{env_lines}
+$prompt = { _ps_quote(prompt) }
+{provider_command.command} 2>&1 |
+    Tee-Object -FilePath { _ps_quote(str(log)) }
+"""
+    script.write_text(text.strip() + "\n", encoding="utf-8")
+    return script
+
+
 def _spawn_visible(script: Path) -> subprocess.Popen[bytes]:
     return subprocess.Popen(
         [
@@ -283,12 +319,130 @@ def _diagnose_failed_agent(agent: AgentRun) -> None:
         agent.diagnosis = "provider_auth_required"
         agent.error = "provider authentication required; exact ACK could not be produced"
         return
-    if agent.nonce in log_text and agent.expected not in log_text:
+    if agent.nonce in log_text and not _has_exact_line(log_text, agent.expected):
         agent.diagnosis = "wrong_ack_format"
         agent.error = "nonce observed in provider output, but exact expected ACK was not produced"
         return
     if agent.nonce not in log_text:
         agent.diagnosis = "no_nonce_observed"
+
+
+def _classify_provider_output(
+    *,
+    output: str,
+    expected: str,
+    nonce: str,
+    returncode: int | None,
+    timed_out: bool,
+) -> tuple[str, str]:
+    if timed_out:
+        return "timeout", "provider command timed out before exact ACK"
+    if _has_exact_line(output, expected):
+        return "ready", ""
+    if "Manual authorization is required" in output or "FatalAuthenticationError" in output:
+        return "provider_auth_required", "provider authentication required before non-interactive ACK"
+    if nonce in output:
+        return "wrong_ack_format", "nonce observed, but exact expected ACK was not produced"
+    if returncode not in (0, None):
+        return "provider_error", f"provider command exited {returncode} without exact ACK"
+    return "no_nonce_observed", "provider output did not include expected nonce"
+
+
+def run_provider_preflight(
+    *,
+    providers: str | None,
+    count: int,
+    timeout_s: float,
+    results_dir: Path,
+) -> dict[str, Any]:
+    results_dir.mkdir(parents=True, exist_ok=True)
+    provider_plan = _provider_plan(providers, count)
+    provider_counts = _provider_counts(provider_plan)
+    unique_providers = sorted(provider_counts)
+    run_id = time.strftime("SC_PROVIDER_PREFLIGHT_%Y%m%d_%H%M%S")
+    workdir = Path(tempfile.gettempdir()) / f"selfconnect_provider_preflight_{run_id}"
+    workdir.mkdir(parents=True, exist_ok=True)
+
+    started = time.perf_counter()
+    checks: list[dict[str, Any]] = []
+    for provider in unique_providers:
+        nonce = f"{run_id}_{provider}"
+        expected = f"ACK_PREFLIGHT provider={provider} nonce={nonce}"
+        log = workdir / f"{provider}.log"
+        script = _write_provider_preflight_script(
+            workdir=workdir,
+            provider=provider,
+            expected=expected,
+            log=log,
+        )
+        check_started = time.perf_counter()
+        timed_out = False
+        output = ""
+        returncode: int | None = None
+        try:
+            completed = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script),
+                ],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout_s,
+                check=False,
+            )
+            returncode = completed.returncode
+            output = (completed.stdout or "") + (completed.stderr or "")
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+            output = ((exc.stdout or "") if isinstance(exc.stdout, str) else "") + (
+                (exc.stderr or "") if isinstance(exc.stderr, str) else ""
+            )
+        try:
+            output += "\n" + log.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+        status, error = _classify_provider_output(
+            output=output,
+            expected=expected,
+            nonce=nonce,
+            returncode=returncode,
+            timed_out=timed_out,
+        )
+        checks.append(
+            {
+                "provider": provider,
+                "status": status,
+                "ready": status == "ready",
+                "returncode": returncode,
+                "timed_out": timed_out,
+                "duration_ms": (time.perf_counter() - check_started) * 1000.0,
+                "expected_hash": _sha256(expected),
+                "nonce_hash": _sha256(nonce),
+                "error": error,
+                "log": str(log),
+            }
+        )
+
+    result = {
+        "schema": "selfconnect.provider_preflight.v1",
+        "run_id": run_id,
+        "verdict": "PASS" if all(check["ready"] for check in checks) else "FAIL",
+        "provider_counts": provider_counts,
+        "unique_providers": unique_providers,
+        "duration_ms": (time.perf_counter() - started) * 1000.0,
+        "checks": checks,
+    }
+    out_path = results_dir / f"provider_preflight_{run_id}.json"
+    out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    result["result_path"] = str(out_path)
+    return result
 
 
 def run_baseline(
@@ -357,7 +511,7 @@ def run_baseline(
                 except Exception as exc:
                     agent.error = f"readback failed: {exc}"
                     continue
-                if agent.expected in readback:
+                if _has_exact_line(readback, agent.expected):
                     agent.ack_ms = (time.perf_counter() - started) * 1000.0
                     agent.status = "pass"
                     pending.remove(agent.role)
@@ -489,9 +643,24 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--timeout", type=float, default=240.0)
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="run real provider one-shot ACK readiness checks without visible windows",
+    )
     parser.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS)
     parser.add_argument("--close-windows", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.preflight_only:
+        result = run_provider_preflight(
+            providers=args.providers,
+            count=args.agents,
+            timeout_s=args.timeout,
+            results_dir=args.results_dir,
+        )
+        print(json.dumps(result, indent=2))
+        return 0 if result["verdict"] == "PASS" else 1
 
     result = run_baseline(
         count=args.agents,
