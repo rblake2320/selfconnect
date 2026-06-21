@@ -23,8 +23,8 @@ recorded as `provider_auth_required`, not as a SelfConnect transport failure.
 | Installed package | `pip install --force-reinstall --no-deps dist/selfconnect-0.10.4-py3-none-any.whl` | installed `0.10.4` |
 | Installed CLI doctor | `selfconnect doctor --json` outside repo | PASS |
 | Patent freeze gate | `selfconnect-bench freeze-check` in repo | PASS |
-| Adversarial suite | `selfconnect-bench adversarial` | PASS |
-| Mesh event chain | `selfconnect-mesh verify-events` | PASS, 32 events |
+| Adversarial suite | `selfconnect-bench adversarial` | PASS, latest run `adversarial_20260621_023543` |
+| Mesh event chain | `selfconnect-mesh verify-events` | PASS, 32 events, head `66a303516a8bf39576ffe679ed6747e8b8802ab99a240cdc2e8f8d88cbb36bd1` |
 | Stale real-run windows | `sc_cli.list_window_records(query='SC_REAL5_')` | `0` |
 | Resource floor | `selfconnect-fleet resources` | RAM/VRAM above floor |
 
@@ -36,6 +36,7 @@ no longer accepted.
 | Run | Providers | Run ID | Result |
 | --- | --- | --- | --- |
 | Provider preflight | Codex + Claude + Gemini | `SC_PROVIDER_PREFLIGHT_20260621_011029` | Codex ready, Claude ready, Gemini auth-blocked |
+| Provider preflight recheck | Codex + Claude + Gemini | `SC_PROVIDER_PREFLIGHT_20260621_023853` | Codex ready, Claude ready, Gemini auth-blocked |
 | Codex 5 | 5 Codex | `SC_REAL5_20260621_011131` | 5/5 ACK |
 | Codex 20 | 20 Codex | `SC_REAL5_20260621_011140` | 20/20 ACK |
 | Mixed 5 | 3 Codex + 2 Claude | `SC_REAL5_20260621_011156` | 5/5 ACK |
@@ -61,6 +62,15 @@ ladder:
 - `GEMINI_API_KEY`, or
 - Google Application Default Credentials.
 
+Fresh recheck on 2026-06-21:
+
+- Gemini CLI installed: `0.46.0`
+- `GEMINI_API_KEY`: not present
+- `GOOGLE_APPLICATION_CREDENTIALS`: not present
+- `GOOGLE_CLOUD_PROJECT`: not present
+- `CLOUDSDK_CONFIG`: not present
+- Provider preflight result: `provider_auth_required`
+
 After that is configured, rerun:
 
 ```powershell
@@ -68,4 +78,3 @@ python experiments\fabric_v2\real_agent_baseline.py --preflight-only --agents 3 
 python experiments\fabric_v2\real_agent_baseline.py --agents 15 --providers codex:5,claude:5,gemini:5 --timeout 900 --close-windows
 python experiments\fabric_v2\real_agent_baseline.py --agents 20 --providers codex:7,claude:7,gemini:6 --timeout 1200 --close-windows
 ```
-
