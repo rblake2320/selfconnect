@@ -24,7 +24,7 @@ named-pipe selftest. This does not yet claim the production IOCP host service.
 
 | Gate | Evidence | Result |
 | --- | --- | --- |
-| Full Python suite | `python -m pytest -q` | `497 passed, 9 skipped` |
+| Full Python suite | `python -m pytest -q` | `501 passed, 9 skipped` |
 | Ruff/compile for real ladder runner | `ruff check` + `py_compile` | PASS |
 | Source doctor | `python -m sc_cli doctor --json` | `0.10.5`, Win32/UIA/TPM platform probes true |
 | Wheel build | `python -m build` | `selfconnect-0.10.5` sdist + wheel built |
