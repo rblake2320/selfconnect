@@ -1,4 +1,5 @@
 import json
+import sys
 import tempfile
 from pathlib import Path
 
@@ -208,5 +209,28 @@ def test_load_suite_runs_small_message_sweep():
         assert [run["messages_per_agent"] for run in artifact["runs"]] == [2, 4]
         assert [run["logical_message_count"] for run in artifact["runs"]] == [4, 8]
         assert all(run["event_verify_ok"] is True for run in artifact["runs"])
+    finally:
+        temp_dir.cleanup()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows named-pipe transport only")
+def test_benchmark_service_transport_runs_on_windows():
+    temp_dir = tempfile.TemporaryDirectory()
+
+    try:
+        artifact = bench.run_benchmark(
+            agent_count=2,
+            messages_per_agent=3,
+            stage="production",
+            profiles="normal",
+            transport="fabric_v2_service_transport",
+            output_dir=temp_dir.name,
+            allow_unfrozen=True,
+            write_baseline=False,
+            resources={"ram_free_mb": 100_000, "gpu": {"vram_free_mb": 24_000}},
+        )
+        assert artifact["ok"] is True
+        assert artifact["transport"] == "fabric_v2_service_transport"
+        assert artifact["aggregate"]["transport_governance_ms"]["p50"] > 0
     finally:
         temp_dir.cleanup()

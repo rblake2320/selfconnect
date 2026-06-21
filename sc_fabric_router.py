@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import time
@@ -29,9 +30,21 @@ class RouterAgent:
     role: str
     birth_id: str
     status: str = "active"
+    hwnd: int = 0
+    pid: int = 0
+    task: str = ""
+    heartbeat_at_ns: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return {"role": self.role, "birth_id": self.birth_id, "status": self.status}
+        return {
+            "role": self.role,
+            "birth_id": self.birth_id,
+            "status": self.status,
+            "hwnd": self.hwnd,
+            "pid": self.pid,
+            "task": self.task,
+            "heartbeat_at_ns": self.heartbeat_at_ns,
+        }
 
 
 class FabricSessionRouter:
@@ -51,10 +64,28 @@ class FabricSessionRouter:
         self._mailboxes: dict[str, sc_fabric_v2.BoundedMailbox] = {}
         self._events: list[dict[str, Any]] = []
 
-    def register_agent(self, *, role: str, birth_id: str, status: str = "active") -> None:
+    def register_agent(
+        self,
+        *,
+        role: str,
+        birth_id: str,
+        status: str = "active",
+        hwnd: int = 0,
+        pid: int = 0,
+        task: str = "",
+        heartbeat_at_ns: int = 0,
+    ) -> None:
         if not role or not birth_id:
             raise ValueError("role and birth_id are required")
-        self._agents[birth_id] = RouterAgent(role=role, birth_id=birth_id, status=status)
+        self._agents[birth_id] = RouterAgent(
+            role=role,
+            birth_id=birth_id,
+            status=status,
+            hwnd=hwnd,
+            pid=pid,
+            task=task,
+            heartbeat_at_ns=heartbeat_at_ns,
+        )
         self._mailboxes.setdefault(
             birth_id,
             sc_fabric_v2.BoundedMailbox(birth_id, max_depth=self.mailbox_depth),
@@ -95,6 +126,13 @@ class FabricSessionRouter:
                 }
                 for birth_id, mailbox in self._mailboxes.items()
             },
+            "mailbox_payloads": {
+                birth_id: [
+                    base64.b64encode(frame).decode("ascii")
+                    for frame in list(mailbox._queue.queue)
+                ]
+                for birth_id, mailbox in self._mailboxes.items()
+            },
             "accepted_sequences": self.session.export_replay_state(),
             "events": list(self._events),
             "raw_text_included": False,
@@ -105,6 +143,28 @@ class FabricSessionRouter:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(self.snapshot_state(), indent=2, sort_keys=True), encoding="utf-8")
         return target
+
+    def record_heartbeat(self, birth_id: str, now_ns: int | None = None) -> None:
+        """Update the heartbeat timestamp for an agent. No-op if birth_id not registered."""
+        agent = self._agents.get(birth_id)
+        if agent is not None:
+            agent.heartbeat_at_ns = now_ns if now_ns is not None else time.time_ns()
+
+    def check_watchdog(
+        self,
+        now_ns: int | None = None,
+        timeout_ns: int = 30_000_000_000,
+    ) -> list[str]:
+        """Return birth_ids of agents whose heartbeat has expired.
+
+        Agents with heartbeat_at_ns == 0 are never considered stale.
+        """
+        t = now_ns if now_ns is not None else time.time_ns()
+        return [
+            birth_id
+            for birth_id, agent in self._agents.items()
+            if agent.heartbeat_at_ns > 0 and (t - agent.heartbeat_at_ns) > timeout_ns
+        ]
 
     @classmethod
     def from_state(
@@ -127,6 +187,15 @@ class FabricSessionRouter:
             )
         session.import_replay_state(list(state.get("accepted_sequences", [])))
         router._events = list(state.get("events", []))
+        for birth_id, b64_frames in state.get("mailbox_payloads", {}).items():
+            mailbox = router._mailboxes.get(birth_id)
+            if mailbox is not None:
+                for b64_frame in b64_frames:
+                    frame = base64.b64decode(b64_frame.encode("ascii"))
+                    try:
+                        mailbox.put(frame, timeout_ms=0)
+                    except sc_fabric_v2.MailboxFullError:
+                        pass
         return router
 
 
@@ -145,6 +214,10 @@ def selftest(*, output_dir: str | Path = "experiments/fabric_v2/results") -> dic
     first_frame = session.seal(sender="router-a", receiver="router-b", payload="SC_ROUTER_FIRST")
     first_ack = session.open(router.route_frame(first_frame), expected_receiver="router-a")
 
+    # Verify snapshot captures mailbox payload before saving
+    pre_save_state = router.snapshot_state()
+    snapshot_has_payload = bool(pre_save_state.get("mailbox_payloads", {}).get("router-b"))
+
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
     state_path = root / f"fabric_v2_router_state_{time.strftime('%Y%m%d_%H%M%S')}_redacted.json"
@@ -156,6 +229,9 @@ def selftest(*, output_dir: str | Path = "experiments/fabric_v2/results") -> dic
         session=restored_session,
         mailbox_depth=10,
     )
+
+    # Verify mailbox payload was restored
+    mailbox_payload_recovered = restored_router._mailboxes["router-b"].depth() > 0
 
     replay_rejected = False
     try:
@@ -192,7 +268,7 @@ def selftest(*, output_dir: str | Path = "experiments/fabric_v2/results") -> dic
         },
         "accepted_sequence_count": len(final_state["accepted_sequences"]),
         "recovered_replay_state": replay_rejected,
-        "mailbox_payload_recovery": False,
+        "mailbox_payload_recovery": snapshot_has_payload and mailbox_payload_recovered,
         "first_ack_payload": first_ack.payload.decode("utf-8"),
         "second_ack_payload": second_ack.payload.decode("utf-8"),
         "replay_rejected_after_restart": replay_rejected,

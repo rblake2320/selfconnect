@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -20,13 +21,15 @@ import sc_echo_filter
 import sc_fabric_v2
 import sc_fleet_guard
 import sc_mesh_registry
+from sc_fabric_host import FabricHostService, host_roundtrip
 
 SCHEMA_VERSION = 1
 DEFAULT_OUTPUT_DIR = Path("experiments") / "fabric_v2" / "results"
 DEFAULT_MESSAGES_PER_AGENT = 3
 DEFAULT_TRANSPORT = "current_transport"
 TRANSPORT_FABRIC_V2 = "fabric_v2_frame_mailbox"
-VALID_TRANSPORTS = {DEFAULT_TRANSPORT, TRANSPORT_FABRIC_V2}
+TRANSPORT_FABRIC_V2_SERVICE = "fabric_v2_service_transport"
+VALID_TRANSPORTS = {DEFAULT_TRANSPORT, TRANSPORT_FABRIC_V2, TRANSPORT_FABRIC_V2_SERVICE}
 DEFAULT_PROFILES = ("normal", "enterprise", "government")
 
 FREEZE_DOCS = (
@@ -281,6 +284,74 @@ def _deliver_fabric_v2(
     return delivered_text, record
 
 
+def _service_context(profile: str, agents: list[dict[str, Any]]) -> dict[str, Any]:
+    session = sc_fabric_v2.FabricSession.from_secret(
+        f"{profile}:{time.time_ns()}:{len(agents)}",
+        session_id=f"sfv2-svc-{profile}-{_now_id()}",
+    )
+    pipe_name = "SelfConnectBench_" + profile + "_" + uuid.uuid4().hex[:8]
+    host = FabricHostService(
+        session=session,
+        address=pipe_name,
+        mailbox_depth=max(10, len(agents) * DEFAULT_MESSAGES_PER_AGENT),
+    )
+    return {
+        "session": session,
+        "host": host,
+        "address": host.address,
+        "started": False,
+        "errors": [],
+    }
+
+
+def _deliver_fabric_v2_service(
+    *,
+    context: dict[str, Any],
+    sender: dict[str, Any],
+    receiver: dict[str, Any],
+    nonce: str,
+    sent_text: str,
+    timestamp_send: float,
+) -> tuple[str, sc_echo_filter.FilterRecord]:
+    if not context["started"]:
+        context["host"].start()
+        context["started"] = True
+    session: sc_fabric_v2.FabricSession = context["session"]
+    address: str = context["address"]
+    try:
+        result = host_roundtrip(
+            session=session,
+            address=address,
+            sender=str(sender["birth_id"]),
+            receiver=str(receiver["birth_id"]),
+            payload=sent_text,
+        )
+        elapsed_ms: float = float(result.get("elapsed_ms", 0.0))
+        if not result.get("ok"):
+            raise RuntimeError(result.get("message", "host_roundtrip failed"))
+    except Exception as exc:
+        context["errors"].append(str(exc))
+        record = sc_echo_filter.build_record(
+            delta=sent_text,
+            nonce=nonce,
+            sent_text=sent_text,
+            readback_method="fabric_v2_service_transport_pipe",
+            timestamp_send=timestamp_send,
+            timestamp_recv=timestamp_send,
+        )
+        return sent_text, record
+    timestamp_recv = timestamp_send + elapsed_ms / 1000.0
+    record = sc_echo_filter.build_record(
+        delta=sent_text,
+        nonce=nonce,
+        sent_text=sent_text,
+        readback_method="fabric_v2_service_transport_pipe",
+        timestamp_send=timestamp_send,
+        timestamp_recv=timestamp_recv,
+    )
+    return sent_text, record
+
+
 def _run_profile(
     *,
     profile: str,
@@ -306,6 +377,7 @@ def _run_profile(
     seen_sequences: set[tuple[str, int]] = set()
     message_hashes: list[str] = []
     fabric_context = _fabric_v2_context(profile, agents) if transport == TRANSPORT_FABRIC_V2 else None
+    service_context: dict[str, Any] | None = _service_context(profile, agents) if transport == TRANSPORT_FABRIC_V2_SERVICE else None
 
     for agent in agents:
         sc_fleet_guard.fleet_register(
@@ -335,6 +407,15 @@ def _run_profile(
                 nonce=nonce,
                 sent_text=sent_text,
                 observed_text=observed_text,
+                timestamp_send=read_send_ts,
+            )
+        elif transport == TRANSPORT_FABRIC_V2_SERVICE:
+            delivered_text, record = _deliver_fabric_v2_service(
+                context=service_context or {},
+                sender=sender,
+                receiver=receiver,
+                nonce=nonce,
+                sent_text=sent_text,
                 timestamp_send=read_send_ts,
             )
         else:
@@ -406,6 +487,9 @@ def _run_profile(
         readback_ms.append((t1 - t0) * 1000)
         message_hashes.append(message_hash)
 
+    if service_context is not None and service_context["started"]:
+        service_context["host"].stop()
+
     if total_messages:
         if transport == TRANSPORT_FABRIC_V2 and fabric_context and fabric_context["first_frame"]:
             try:
@@ -465,6 +549,7 @@ def _run_profile(
             "mailbox_backpressure_events": int(fabric_context["mailbox_backpressure_events"]) if fabric_context else 0,
         },
         "message_hash_sample": message_hashes[:3],
+        "service_errors": list(service_context["errors"]) if service_context is not None else [],
         "agents": agents,
     }
 
