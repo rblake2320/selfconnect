@@ -72,7 +72,7 @@ Current state:
 Still open:
 
 - long-lived named-pipe endpoint using the overlapped IO path;
-- installed Windows service / daemon integration.
+- full governed daemon coverage beyond the Fabric V2 service scope.
 
 Now proven:
 

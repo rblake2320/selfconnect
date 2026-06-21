@@ -24,11 +24,11 @@ named-pipe selftest. This does not yet claim the production IOCP host service.
 
 | Gate | Evidence | Result |
 | --- | --- | --- |
-| Full Python suite | `python -m pytest -q` | `490 passed, 9 skipped` |
+| Full Python suite | `python -m pytest -q` | `497 passed, 9 skipped` |
 | Ruff/compile for real ladder runner | `ruff check` + `py_compile` | PASS |
-| Source doctor | `python -m sc_cli doctor --json` | `0.10.4`, Win32/UIA/TPM platform probes true |
-| Wheel build | `python -m build` | `selfconnect-0.10.4` sdist + wheel built |
-| Installed package | `pip install --force-reinstall --no-deps dist/selfconnect-0.10.4-py3-none-any.whl` | installed `0.10.4` |
+| Source doctor | `python -m sc_cli doctor --json` | `0.10.5`, Win32/UIA/TPM platform probes true |
+| Wheel build | `python -m build` | `selfconnect-0.10.5` sdist + wheel built |
+| Installed package | `pip install --force-reinstall --no-deps dist/selfconnect-0.10.5-py3-none-any.whl` | installed `0.10.5` |
 | Installed CLI doctor | `selfconnect doctor --json` outside repo | PASS |
 | Patent freeze gate | `selfconnect-bench freeze-check` in repo | PASS |
 | Adversarial suite | `selfconnect-bench adversarial` | PASS, latest run `adversarial_20260621_023543` |
