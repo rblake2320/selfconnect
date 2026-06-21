@@ -166,16 +166,18 @@ Why it matters:
 
 ### 3. Runtime OS SID Lookup For Governed Lease Gate
 
-The current governed gate can validate role, `birth_id`, generation, HWND, and
-`owner_sid_hash`, but runtime OS SID lookup is still the next hardening step.
+**DONE** — `sc_mesh_lease.py` `_get_process_owner_sid_win32()` +
+`current_owner_sid()`, proof `experiments/win32_probe/runtime_sid_probe.py`,
+artifact `experiments/win32_probe/results/runtime_sid_probe_PASS_redacted.json`.
+Runtime SID tests added to `tests/test_mesh_lease.py`.
 
-Build:
+Built:
 
 - `OpenProcessToken`;
 - `GetTokenInformation(TokenUser)`;
-- `ConvertSidToStringSid`;
+- `ConvertSidToStringSidW`;
 - hash comparison to lease `owner_sid_hash`;
-- fail-closed behavior on `<unknown-sid>`.
+- fail-closed behavior on `<unknown-sid>` (non-Windows and any Win32 error).
 
 Why it matters:
 

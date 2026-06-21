@@ -105,15 +105,18 @@ The lease gate is now wired into the shippable guarded send/read path as an
 - Evidence: `sc_mesh_lease.evaluate_lease_gate`, `tests/test_mesh_lease.py`,
   `tests/test_package_adapters.py`.
 
-Current-SID runtime integration (`OpenProcessToken` ->
-`GetTokenInformation(TokenUser)` -> `ConvertSidToStringSid`) is the documented
-next step; until then governed callers inject `owner_sid` or fail closed.
+Current-SID runtime integration is now proven:
+`OpenProcessToken` -> `GetTokenInformation(TokenUser)` ->
+`ConvertSidToStringSidW`. Governed callers may still inject `owner_sid` for
+tests/control-plane handoffs, but the Windows runtime path can now resolve the
+current process SID directly and still fails closed on `"<unknown-sid>"`.
 
 ## What It Does Not Yet Do
 
 - The gate is in-process and optional; it does not yet replace visible terminal
   routing, and it is not a long-running service daemon.
-- Runtime OS owner-SID resolution is not yet implemented (inject or fail closed).
+- Runtime OS owner-SID resolution is implemented on Windows and still fails
+  closed on unsupported platforms or Win32 failure.
 - `selfconnect-mesh heartbeat` does not yet consult the gate.
 - It uses a proof-local named pipe, not a long-running service daemon.
 - It hashes/redacts the OS caller SID instead of storing the raw SID.
@@ -133,5 +136,6 @@ send_text / read_window resolve to either:
 ```
 
 For governed agents, `role + generation + hwnd + owner SID hash` is checked
-before any UI fallback write/read action. The remaining step is runtime OS
-owner-SID resolution so governed mode no longer needs an injected SID.
+before any UI fallback write/read action. Runtime owner-SID resolution is proven
+in `experiments/win32_probe/runtime_sid_probe.py` and redacted artifact
+`experiments/win32_probe/results/runtime_sid_probe_PASS_redacted.json`.

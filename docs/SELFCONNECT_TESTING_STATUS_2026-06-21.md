@@ -35,6 +35,7 @@ named-pipe selftest. This does not yet claim the production IOCP host service.
 | Mesh event chain | `selfconnect-mesh verify-events` | PASS, 32 events, head `66a303516a8bf39576ffe679ed6747e8b8802ab99a240cdc2e8f8d88cbb36bd1` |
 | Stale real-run windows | `sc_cli.list_window_records(query='SC_REAL5_')` | `0` |
 | Resource floor | `selfconnect-fleet resources` | RAM/VRAM above floor |
+| Runtime OS SID lookup | `python experiments\win32_probe\runtime_sid_probe.py` | PASS, live SID resolved, governed gate allowed real SID and denied `UNKNOWN_SID` |
 | Fabric V2 frame/mailbox focused tests | `pytest tests/test_fabric_v2.py tests/test_fabric_v0_benchmark.py -q` | `19 passed` |
 | Fabric V2 host focused tests | `pytest tests/test_fabric_host.py tests/test_fabric_v2.py -q` | `14 passed` |
 | Fabric V2 router focused tests | `pytest tests/test_fabric_router.py tests/test_fabric_v2.py -q` | `16 passed` |

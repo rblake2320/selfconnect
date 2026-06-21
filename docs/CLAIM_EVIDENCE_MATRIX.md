@@ -26,7 +26,7 @@ not been live-tested or committed as a probe, it is marked as pending.
 | CAPTCHA bypass | Not claimed | `docs/BROWSER_LOCAL_PROOF.md`, `docs/PROVEN_VS_UNTESTED.md` |
 | Named pipe + DACL + impersonation | Proven; DACL hardened | `sc_fabric_v2.create_pipe_security_attributes()`, `sc_fabric_v2.pipe_security_summary()`, `tests/test_fabric_v2.py`; pipe restricted to owner SID + SYSTEM, deny-all fallback, no raw SID in output |
 | Pipe-authenticated role leases/generations | Proven as isolated control-plane proof | `sc_mesh_lease.py`, `experiments/win32_probe/pipe_role_lease_probe.py`, redacted PASS artifact |
-| Governed lease gate on guarded send/read path | Proven as optional in-process runtime gate | optional runtime governed enforcement on the guarded send/read path (role+birth_id+generation+hwnd+owner_sid_hash) layered over the explore-mode target guard; `sc_mesh_lease.evaluate_lease_gate`, `sc_cli.send_text_to_window`/`read_window`, `sc_mcp` tools, `tests/test_mesh_lease.py`, `tests/test_package_adapters.py`. Boundary: OPTIONAL, in-process, NOT a full daemon; explore mode unchanged (no-op); birth_id optional in gate (checked when provided, skipped when omitted for backward compat); runtime OS SID lookup is the next step (currently injectable / fails closed on `<unknown-sid>`) |
+| Governed lease gate on guarded send/read path | Proven as optional in-process runtime gate | optional runtime governed enforcement on the guarded send/read path (role+birth_id+generation+hwnd+owner_sid_hash) layered over the explore-mode target guard; `sc_mesh_lease.evaluate_lease_gate`, `sc_mesh_lease.current_owner_sid`, `sc_cli.send_text_to_window`/`read_window`, `sc_mcp` tools, `tests/test_mesh_lease.py`, `tests/test_package_adapters.py`, `experiments/win32_probe/runtime_sid_probe.py`, `experiments/win32_probe/results/runtime_sid_probe_PASS_redacted.json`. Boundary: OPTIONAL, in-process, NOT a full daemon; explore mode unchanged (no-op); birth_id optional in gate (checked when provided, skipped when omitted for backward compat); runtime OS SID lookup now uses `OpenProcessToken` -> `GetTokenInformation(TokenUser)` -> `ConvertSidToStringSidW` and fails closed on `<unknown-sid>` |
 | Channel-router composition proof | Proven as redacted model proof plus live throwaway/local proof | `experiments/win32_probe/channel_router_composition_probe.py`, `experiments/win32_probe/results/channel_router_composition_PASS_redacted.json`, `experiments/win32_probe/results/channel_router_composition_LIVE_PASS_redacted.json`, `tests/test_channel_router_composition.py`, `docs/CHANNEL_ROUTER_COMPOSITION_PROOF.md`. Boundary: deterministic model proof selects terminal `WM_CHAR`, browser UIA Value/Invoke, metadata file registry, governed lease gate, stale-denial, wrong-target denial, and echo-filtered readback; live proof composes throwaway terminal `TextChanged_event` and isolated local browser UIA-class read/write without MCP; strict public-browser no-keyboard rerun remains separate |
 | TPM/CNG key use | Proven in experiment/enterprise lane | `experiments/win32_probe/CAPABILITY_BACKLOG.md`; full attestation pending |
 | TPM platform attestation | Pending | `NCryptCreateClaim` descriptor fix still required |
@@ -66,9 +66,9 @@ Note: Windows SCM service daemonization is now proven (`sc_fabric_windows_svc.py
 
 1. Done (optional in-process gate): role leases/generation IDs including birth_id
    are wired into governed `sc_cli send`/`read` and MCP `send_text`/`read_window`
-   as an opt-in gate. Remaining: resolve the current OS owner SID at runtime
-   (`OpenProcessToken` -> `GetTokenInformation(TokenUser)` ->
-   `ConvertSidToStringSid`) so governed mode no longer requires an injected SID.
+   as an opt-in gate. Runtime OS owner SID lookup is proven via
+   `OpenProcessToken` -> `GetTokenInformation(TokenUser)` ->
+   `ConvertSidToStringSidW`.
 2. Done: installed OS service-mode daemonization for Fabric V2 (`sc_fabric_windows_svc.py`, `sc_fabric_service.py`).
 3. Finish TPM platform attestation with correct `NCryptBufferDesc`.
 4. Add browser multi-tab/stale-tab proof.

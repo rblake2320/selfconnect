@@ -1,0 +1,19 @@
+{
+  "gate_fail_reason": "owner sid mismatch",
+  "gate_with_real_sid": true,
+  "gate_with_unknown_sid_denied": true,
+  "latency_ms": 0.0,
+  "na_reason": "",
+  "notes": [
+    "current_owner_sid() resolved a real Windows SID via OpenProcessToken.",
+    "GetTokenInformation(TokenUser) + ConvertSidToStringSidW confirmed live OS identity.",
+    "Governed lease gate ALLOWed the live SID and DENYed UNKNOWN_SID (fail-closed).",
+    "Raw SID is redacted; only SHA-256 hash is included in this artifact."
+  ],
+  "platform": "win32",
+  "redacted": true,
+  "sid_hash": "688b7d43a987148401f3a4d681a63ecf1fb16412cf611067b72cd88fb81cbe27",
+  "sid_is_real": true,
+  "sid_resolved": true,
+  "verdict": "PASS"
+}

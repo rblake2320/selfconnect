@@ -1,9 +1,13 @@
 import json
+import sys
 
+import pytest
 from sc_mesh_lease import (
     GOVERNED_PROFILE,
+    UNKNOWN_SID,
     LeaseDecision,
     RoleLeaseTable,
+    _get_process_owner_sid_win32,
     current_owner_sid,
     evaluate_lease_gate,
     hash_sid,
@@ -419,3 +423,68 @@ def test_to_dict_includes_birth_id_in_lease():
     )
     data = result.to_dict()
     assert data["lease"]["birth_id"] == "b-abc12345"
+
+
+# --- Runtime OS SID lookup tests ---
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Win32 only")
+def test_get_process_owner_sid_win32_returns_real_sid():
+    sid = _get_process_owner_sid_win32()
+    assert sid.startswith("S-1-"), f"expected real Windows SID, got {sid!r}"
+    assert sid != UNKNOWN_SID
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Win32 only")
+def test_current_owner_sid_no_injection_returns_real_sid_on_windows():
+    sid = current_owner_sid()
+    assert sid.startswith("S-1-"), f"expected real Windows SID, got {sid!r}"
+    assert sid != UNKNOWN_SID
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Win32 only")
+def test_governed_gate_allows_live_sid_and_denies_unknown():
+    sid = current_owner_sid()
+    table = RoleLeaseTable()
+    lease = table.issue(
+        mesh="default",
+        role="B",
+        hwnd=2820438,
+        pid=1,
+        exe_name="WindowsTerminal.exe",
+        class_name="CASCADIA_HOSTING_WINDOW_CLASS",
+        title="runtime-sid-test",
+        owner_sid=sid,
+        ttl_s=60,
+        now=1.0,
+    )
+
+    allow = evaluate_lease_gate(
+        profile=GOVERNED_PROFILE,
+        table=table,
+        mesh="default",
+        role="B",
+        generation=lease.generation,
+        hwnd=lease.hwnd,
+        owner_sid=sid,
+        now=2.0,
+    )
+    assert allow.ok is True, f"expected ALLOW with live SID, got {allow.reason}"
+
+    deny = evaluate_lease_gate(
+        profile=GOVERNED_PROFILE,
+        table=table,
+        mesh="default",
+        role="B",
+        generation=lease.generation,
+        hwnd=lease.hwnd,
+        owner_sid=UNKNOWN_SID,
+        now=3.0,
+    )
+    assert deny.ok is False, "expected DENY with UNKNOWN_SID (fail-closed)"
+    assert "sid" in deny.reason
+
+
+def test_unknown_sid_hash_equals_empty_string_hash():
+    # Verifies fail-closed sentinel: empty SID maps to same hash as UNKNOWN_SID.
+    assert hash_sid(UNKNOWN_SID) == hash_sid("")

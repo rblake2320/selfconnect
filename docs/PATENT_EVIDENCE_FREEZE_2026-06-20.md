@@ -37,6 +37,8 @@ Representative Windows species already proven or documented:
 - terminal path: `WM_CHAR` / UIA readback;
 - browser path: UIA `ValuePattern` / `InvokePattern`;
 - control-plane identity: named-pipe SID lease;
+- runtime OS identity: current process owner SID resolved via `OpenProcessToken`,
+  `GetTokenInformation(TokenUser)`, and `ConvertSidToStringSidW`;
 - readback integrity: nonce/hash echo filter;
 - target safety: HWND/PID/exe/class/title guard.
 - Fabric V2 frame species: session-derived HMAC frames, receiver binding,
