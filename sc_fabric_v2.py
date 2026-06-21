@@ -108,6 +108,32 @@ class FabricSession:
             self._next_sequences[sender] = current
             return current
 
+    def export_replay_state(self) -> list[dict[str, Any]]:
+        """Return accepted sequence tuples for durable router restart.
+
+        This contains routing identities and sequence numbers, but no payload
+        text, keys, or MAC values.
+        """
+        with self._lock:
+            return [
+                {
+                    "sender": sender,
+                    "receiver": receiver,
+                    "sequence": sequence,
+                    "tuple_hash": hashlib.sha256(f"{sender}|{receiver}|{sequence}".encode()).hexdigest(),
+                }
+                for sender, receiver, sequence in sorted(self._accepted_sequences)
+            ]
+
+    def import_replay_state(self, entries: list[dict[str, Any]]) -> None:
+        """Load accepted sequence tuples after a router restart."""
+        with self._lock:
+            for item in entries:
+                sender = str(item["sender"])
+                receiver = str(item["receiver"])
+                sequence = int(item["sequence"])
+                self._accepted_sequences.add((sender, receiver, sequence))
+
     def seal(
         self,
         *,

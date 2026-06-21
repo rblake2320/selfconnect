@@ -116,6 +116,60 @@ def test_fabric_v2_benchmark_uses_frame_mailbox_transport():
         temp_dir.cleanup()
 
 
+def test_export_replay_state_empty_on_fresh_session():
+    session = fabric.FabricSession.from_secret("secret", session_id="test-session")
+    assert session.export_replay_state() == []
+
+
+def test_export_replay_state_captures_accepted_tuples():
+    session = fabric.FabricSession.from_secret("secret", session_id="test-session")
+    session.seal(sender="a", receiver="b", payload="msg1")
+    encoded2 = session.seal(sender="c", receiver="d", payload="msg2")
+
+    # Open one frame so it lands in accepted_sequences
+    encoded1 = session.seal(sender="a", receiver="b", payload="hello")
+    session.open(encoded1, expected_receiver="b")
+    session.open(encoded2, expected_receiver="d")
+
+    entries = session.export_replay_state()
+    assert len(entries) == 2
+    senders = {e["sender"] for e in entries}
+    assert senders == {"a", "c"}
+    for e in entries:
+        assert "tuple_hash" in e
+        assert len(e["tuple_hash"]) == 64
+
+
+def test_import_replay_state_causes_replay_rejection():
+    # Original session seals and opens a frame
+    original = fabric.FabricSession.from_secret("secret", session_id="recover-test")
+    encoded = original.seal(sender="a", receiver="b", payload="important")
+    original.open(encoded, expected_receiver="b")
+
+    # Export and re-import into a fresh session (simulating router restart)
+    state = original.export_replay_state()
+    recovered = fabric.FabricSession.from_secret("secret", session_id="recover-test")
+    recovered.import_replay_state(state)
+
+    # The recovered session must reject the already-accepted frame
+    with pytest.raises(fabric.ReplayRejectedError):
+        recovered.open(encoded, expected_receiver="b")
+
+
+def test_import_replay_state_tuple_hash_matches():
+    import hashlib
+
+    session = fabric.FabricSession.from_secret("secret", session_id="hash-test")
+    encoded = session.seal(sender="x", receiver="y", payload="data")
+    session.open(encoded, expected_receiver="y")
+
+    entries = session.export_replay_state()
+    assert len(entries) == 1
+    e = entries[0]
+    expected = hashlib.sha256(f"{e['sender']}|{e['receiver']}|{e['sequence']}".encode()).hexdigest()
+    assert e["tuple_hash"] == expected
+
+
 def test_fabric_v2_five_agent_baseline_uses_transport_specific_name():
     temp_dir = tempfile.TemporaryDirectory()
 

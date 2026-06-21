@@ -161,6 +161,7 @@ Validation:
 | `python -m sc_fabric_v2 selftest` | PASS, real Windows named-pipe ACK |
 | `python -m sc_fabric_host selftest` | PASS, IOCP-dispatched host ACK |
 | `python -m sc_fabric_host overlapped-selftest` | PASS, direct overlapped pipe read/write through IOCP |
+| `python -m sc_fabric_router selftest` | PASS, replay state survives router restart |
 | `selfconnect-bench run --transport fabric_v2_frame_mailbox --agents 5` | PASS |
 
 Fabric V2 5-agent baseline:
@@ -209,4 +210,17 @@ Fabric V2 direct overlapped pipe selftest:
 | First ACK payload | `ACK:overlapped-a:1` |
 | First roundtrip | `0.781 ms` |
 | Replay rejection | PASS |
-| Boundary | Long-lived per-user session router and crash/restart proof remain open |
+| Boundary | Router replay-state restart proof is recorded below; queued mailbox payload recovery remains open |
+
+Fabric V2 router restart selftest:
+
+| Artifact | Value |
+| --- | --- |
+| Redacted artifact | `experiments/fabric_v2/results/fabric_v2_router_restart_selftest_20260621_081434_redacted.json` |
+| Redacted state snapshot | `experiments/fabric_v2/results/fabric_v2_router_state_20260621_081434_redacted.json` |
+| Agent count | `3` |
+| Accepted sequence count after restart | `4` |
+| Replay rejected after restart | PASS |
+| New post-restart route | PASS, `ACK:router-a:2` |
+| Raw payload text included | `false` |
+| Boundary | Replay state recovery is proven; queued mailbox payload recovery is not claimed |

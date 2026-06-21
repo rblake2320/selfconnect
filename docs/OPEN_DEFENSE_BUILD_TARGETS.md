@@ -65,9 +65,9 @@ Current state:
 
 Still open:
 
-- per-user session router;
-- long-lived named-pipe endpoint with bounded per-agent mailboxes;
-- crash/restart recovery in the host;
+- queued mailbox payload recovery after restart;
+- long-lived per-user service wrapper;
+- long-lived named-pipe endpoint using the overlapped IO path;
 - service-mode integration.
 
 Now proven:
@@ -75,6 +75,8 @@ Now proven:
 - direct overlapped named-pipe read/write associated with IOCP;
 - client and server both use overlapped read/write in the focused proof;
 - replay rejection still holds on the overlapped path.
+- router restart preserves replay rejection state and accepts new post-restart
+  routes.
 
 Tracker:
 
@@ -85,7 +87,9 @@ Why it matters:
 - The frame layer proves the governed session semantics.
 - The IOCP-dispatched host proves the completion-path control plane.
 - The direct overlapped pipe proof establishes the high-rate data-plane
-  primitive. The remaining work is keeping it alive as a router/service.
+  primitive.
+- The restart-safe router proof establishes that replay protection survives
+  restart. The remaining work is queued payload recovery and service wrapping.
 
 Expected next artifacts:
 

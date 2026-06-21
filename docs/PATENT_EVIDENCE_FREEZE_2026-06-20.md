@@ -47,6 +47,9 @@ Representative Windows species already proven or documented:
 - Fabric V2 overlapped pipe species: client and server named-pipe handles using
   `FILE_FLAG_OVERLAPPED`, with read/write completions observed through IOCP,
   HMAC frame verification, bounded mailbox persistence, and replay rejection.
+- Fabric V2 router restart species: persisted replay-state metadata rejects a
+  replay after restart and accepts a new post-restart route without storing raw
+  payload text in the redacted state snapshot.
 
 ## Durable Virtual Role
 
@@ -117,6 +120,8 @@ and delivery is verified by echo-filtered readback.
 - `experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json`
 - `experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json`
 - `experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json`
+- `experiments/fabric_v2/results/fabric_v2_router_restart_selftest_20260621_081434_redacted.json`
+- `experiments/fabric_v2/results/fabric_v2_router_state_20260621_081434_redacted.json`
 
 ## Boundary
 
@@ -140,5 +145,6 @@ Fabric V2 boundary:
 - IOCP host dispatch is reduced to practice in this packet.
 - Direct overlapped named-pipe read/write associated with IOCP is reduced to
   practice in this packet.
-- Long-lived per-user router/crash recovery is not yet reduced to practice in
-  this packet.
+- Router replay-state restart recovery is reduced to practice in this packet.
+- Queued mailbox payload recovery after restart is not yet reduced to practice
+  in this packet.

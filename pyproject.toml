@@ -81,6 +81,8 @@ artifacts = [
     "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_router_restart_selftest_20260621_081434_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_router_state_20260621_081434_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json",
 ]
 include = [
@@ -93,6 +95,7 @@ include = [
     "sc_fleet_guard.py",
     "sc_fabric_benchmark.py",
     "sc_fabric_host.py",
+    "sc_fabric_router.py",
     "sc_fabric_v2.py",
     "sc_local_model_role.py",
     "sc_echo_filter.py",
@@ -121,6 +124,8 @@ include = [
     "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_router_restart_selftest_20260621_081434_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_router_state_20260621_081434_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json",
     "docs/BROWSER_LOCAL_PROOF.md",
     "docs/CHANNEL_ROUTER_COMPOSITION_PROOF.md",
@@ -152,6 +157,8 @@ artifacts = [
     "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_router_restart_selftest_20260621_081434_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_router_state_20260621_081434_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json",
 ]
 
@@ -163,6 +170,7 @@ selfconnect-fleet = "sc_fleet_guard:main"
 selfconnect-bench = "sc_fabric_benchmark:main"
 selfconnect-fabric = "sc_fabric_v2:main"
 selfconnect-fabric-host = "sc_fabric_host:main"
+selfconnect-fabric-router = "sc_fabric_router:main"
 selfconnect-local-model = "sc_local_model_role:main"
 
 [tool.pytest.ini_options]
