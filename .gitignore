@@ -24,6 +24,9 @@ tmp_*.png
 # Test temp output
 tests/_tmp/
 
+# Fabric benchmark artifacts stay local unless deliberately redacted/promoted.
+experiments/fabric_v2/results/
+
 # Local Claude Code workspace state
 .claude/
 

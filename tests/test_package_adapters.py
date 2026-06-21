@@ -710,6 +710,7 @@ def test_pyproject_exports_package_adapter_entry_points():
     assert '"docs/ARCHITECTURE_AUDIT_2026-06-20.md"' in text
     assert '"docs/ARCHITECTURE_CONSENSUS_2026-06-20.md"' in text
     assert '"docs/FABRIC_V0_BENCHMARK_SPEC.md"' in text
+    assert '"docs/FABRIC_V2_BENCHMARK_RESULTS.md"' in text
     assert '"docs/FABRIC_V2_BUILD_TARGETS.md"' in text
     assert '"docs/FABRIC_V2_STRESS_PROTOCOL.md"' in text
     assert '"docs/FLEET_AUTO_HALT_PROTOCOL.md"' in text
