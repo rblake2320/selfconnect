@@ -37,6 +37,7 @@ no longer accepted.
 | --- | --- | --- | --- |
 | Provider preflight | Codex + Claude + Gemini | `SC_PROVIDER_PREFLIGHT_20260621_011029` | Codex ready, Claude ready, Gemini auth-blocked |
 | Provider preflight recheck | Codex + Claude + Gemini | `SC_PROVIDER_PREFLIGHT_20260621_023853` | Codex ready, Claude ready, Gemini auth-blocked |
+| Gemini auth recheck | Gemini | `SC_PROVIDER_PREFLIGHT_20260621_061132` | Gemini auth-blocked |
 | Codex 5 | 5 Codex | `SC_REAL5_20260621_011131` | 5/5 ACK |
 | Codex 20 | 20 Codex | `SC_REAL5_20260621_011140` | 20/20 ACK |
 | Mixed 5 | 3 Codex + 2 Claude | `SC_REAL5_20260621_011156` | 5/5 ACK |
@@ -72,6 +73,17 @@ Fresh recheck on 2026-06-21:
 - `gcloud`: not installed on this workstation
 - default ADC files under `%APPDATA%\gcloud` and `%USERPROFILE%\.config\gcloud`: not present
 - Provider preflight result: `provider_auth_required`
+
+Additional recheck after user reported adding a Gemini key:
+
+- Command:
+  `python experiments\fabric_v2\real_agent_baseline.py --preflight-only --agents 1 --providers gemini:1 --timeout 60`
+- Run ID: `SC_PROVIDER_PREFLIGHT_20260621_061132`
+- Result: `FAIL`, `provider_auth_required`
+- Gemini CLI config: OAuth personal account selected, but non-interactive run
+  still reports manual authorization required
+- Process/User/Machine environment still did not expose `GEMINI_API_KEY` or ADC
+  variables to this test process
 
 After that is configured, rerun:
 
