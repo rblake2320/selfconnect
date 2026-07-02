@@ -1,5 +1,8 @@
 """Launch Codex CLI as Agent-D in a new standalone terminal window."""
-import subprocess, time, os, sys, ctypes
+import ctypes
+import os
+import subprocess
+import time
 
 codex_bin = os.path.expandvars(
     r'%APPDATA%\npm\node_modules\@openai\codex\bin\codex.js'
@@ -20,7 +23,6 @@ print("Wait ~5s for window to open, then we grab its HWND")
 time.sleep(5)
 
 # Find the new Codex window
-import ctypes
 user32 = ctypes.windll.user32
 
 found = []

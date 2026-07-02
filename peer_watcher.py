@@ -25,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import sys
+
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
@@ -34,7 +35,7 @@ import re
 import time
 
 try:
-    from self_connect import get_text_uia, send_string, WindowTarget
+    from self_connect import WindowTarget, get_text_uia, send_string
 except ImportError as exc:
     sys.exit(f"[peer_watcher] ERROR: {exc}")
 

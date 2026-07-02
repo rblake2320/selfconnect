@@ -1,7 +1,12 @@
 """Session B runs this to spawn Session C (Codex/ChatGPT)."""
-import sys, os, time, subprocess, ctypes
+import ctypes
+import os
+import subprocess
+import sys
+import time
+
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-from self_connect import list_windows, send_string, save_capture, restore_window
+from self_connect import list_windows, restore_window, save_capture, send_string
 
 user32 = ctypes.windll.user32
 os.makedirs('proofs', exist_ok=True)

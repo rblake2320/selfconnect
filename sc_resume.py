@@ -31,14 +31,14 @@ from typing import Optional
 
 _ENTERPRISE_AVAILABLE = False
 try:
-    from enterprise.session_index import SessionIndex, SessionIndexError
-    from enterprise.provenance import SessionState, verify_log
+    from enterprise.provenance import SessionState
+    from enterprise.session_index import SessionIndex
     _ENTERPRISE_AVAILABLE = True
 except ImportError:
     pass
 
 
-def _get_index(log_dir: Optional[str] = None) -> "SessionIndex":
+def _get_index(log_dir: Optional[str] = None) -> SessionIndex:
     if not _ENTERPRISE_AVAILABLE:
         print("ERROR: selfconnect-enterprise not installed.", file=sys.stderr)
         sys.exit(1)

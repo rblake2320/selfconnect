@@ -1,5 +1,9 @@
 """Skip the Codex update dialog and brief it on the mesh."""
-import sys, os, time, ctypes
+import ctypes
+import os
+import sys
+import time
+
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from self_connect import list_windows, send_string
@@ -17,14 +21,14 @@ KEYEVENTF_KEYUP = 0x0002
 VK_RETURN = 0x0D
 VK_2 = 0x32
 
-class KEYBDINPUT(ctypes.Structure):  # noqa: RUF012
+class KEYBDINPUT(ctypes.Structure):
     _fields_ = [  # noqa: RUF012
         ('wVk', ctypes.c_ushort), ('wScan', ctypes.c_ushort),
         ('dwFlags', ctypes.c_ulong), ('time', ctypes.c_ulong),
         ('dwExtraInfo', ctypes.POINTER(ctypes.c_ulong))
     ]
 
-class INPUT(ctypes.Structure):  # noqa: RUF012
+class INPUT(ctypes.Structure):
     _fields_ = [('type', ctypes.c_ulong), ('ki', KEYBDINPUT), ('padding', ctypes.c_ubyte * 8)]  # noqa: RUF012
 
 def send_key(hwnd, vk):

@@ -3,11 +3,12 @@ test_action_queue.py — Unit tests for the action queue state machine.
 Tests enqueue, state transitions, cancel, and command parsing.
 SDK calls are mocked — no real Win32 API required.
 """
-import asyncio
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+import os
+import sys
+from unittest.mock import AsyncMock, MagicMock, patch
 
-import sys, os
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vision_server.models.schemas import ActionRequest
@@ -135,7 +136,8 @@ class TestCommandParsing:
     @pytest.mark.skipif(sys.platform != "win32", reason="ctypes.windll only available on Windows")
     async def test_click_command_resolves_detection(self, mock_event_bus):
         """click command must look up label in detections and use real coords."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
+
         import vision_server.services.detection_service as ds
         from vision_server.models.schemas import Detection
 
@@ -146,31 +148,29 @@ class TestCommandParsing:
         mock_rect.left = 100; mock_rect.top = 200
         mock_rect.right = 900; mock_rect.bottom = 700
 
-        with patch.object(ds, '_latest', [fake_det]):
-            with patch('vision_server.config.active_hwnd', 12345):
-                with patch('ctypes.windll.user32.GetWindowRect',
-                           side_effect=lambda h, r: (
-                               setattr(r, 'left', 100), setattr(r, 'top', 200),
-                               setattr(r, 'right', 900), setattr(r, 'bottom', 700)
-                           )):
-                    with patch('ctypes.wintypes.RECT', return_value=MagicMock(
-                        left=100, top=200, right=900, bottom=700)):
-                        # Should NOT raise — detection found
-                        try:
-                            item = await action_queue.enqueue_command("click Submit")
-                            assert item["kind"] == "click"
-                            assert item["target"] == "Submit"
-                        except Exception:
-                            pass  # ctypes mocking is complex; key test is LookupError below
+        with patch.object(ds, '_latest', [fake_det]), patch('vision_server.config.active_hwnd', 12345):
+            with patch('ctypes.windll.user32.GetWindowRect',
+                       side_effect=lambda h, r: (
+                           setattr(r, 'left', 100), setattr(r, 'top', 200),
+                           setattr(r, 'right', 900), setattr(r, 'bottom', 700)
+                       )):
+                with patch('ctypes.wintypes.RECT', return_value=MagicMock(
+                    left=100, top=200, right=900, bottom=700)):
+                    # Should NOT raise — detection found
+                    try:
+                        item = await action_queue.enqueue_command("click Submit")
+                        assert item["kind"] == "click"
+                        assert item["target"] == "Submit"
+                    except Exception:
+                        pass  # ctypes mocking is complex; key test is LookupError below
 
     @pytest.mark.asyncio
     async def test_click_command_raises_when_not_found(self, mock_event_bus):
         """click command must raise ValueError when label not in detections."""
         import vision_server.services.detection_service as ds
-        with patch.object(ds, '_latest', []):
-            with patch('vision_server.config.active_hwnd', 12345):
-                with pytest.raises(ValueError, match="not found in current detections"):
-                    await action_queue.enqueue_command("click NonExistentButton")
+        with patch.object(ds, '_latest', []), patch('vision_server.config.active_hwnd', 12345):
+            with pytest.raises(ValueError, match="not found in current detections"):
+                await action_queue.enqueue_command("click NonExistentButton")
 
     @pytest.mark.asyncio
     async def test_click_command_no_attached_window(self, mock_event_bus):
@@ -179,10 +179,9 @@ class TestCommandParsing:
         from vision_server.models.schemas import Detection
         fake_det = Detection(id="d1", cls="button", label="OK",
                              conf=0.9, x=0.5, y=0.5, w=0.1, h=0.05)
-        with patch.object(ds, '_latest', [fake_det]):
-            with patch('vision_server.config.active_hwnd', 0):
-                with pytest.raises(ValueError, match="No active window"):
-                    await action_queue.enqueue_command("click OK")
+        with patch.object(ds, '_latest', [fake_det]), patch('vision_server.config.active_hwnd', 0):
+            with pytest.raises(ValueError, match="No active window"):
+                await action_queue.enqueue_command("click OK")
 
     @pytest.mark.asyncio
     async def test_type_command(self, mock_event_bus):

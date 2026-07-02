@@ -66,7 +66,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 import uuid
 from pathlib import Path
@@ -87,12 +86,12 @@ _ENTERPRISE_AVAILABLE = False
 try:
     from enterprise.provenance import (
         AuditMode,
+        InMemoryWitnessSink,
         ProvenanceRecorder,
         ProvenanceRecorderError,
         SessionEventType,
-        InMemoryWitnessSink,
     )
-    from enterprise.session_index import SessionIndex, SessionIndexError
+    from enterprise.session_index import SessionIndex
     _ENTERPRISE_AVAILABLE = True
 except ImportError:
     logger.warning(
@@ -160,7 +159,7 @@ def register_with_mesh(
     agent_id: str,
     role: str,
     mesh_socket: Optional[str],
-    recorder: Optional["ProvenanceRecorder"],
+    recorder: Optional[ProvenanceRecorder],
 ) -> bool:
     """Register this agent with the mesh coordinator.
 
@@ -183,7 +182,6 @@ def register_with_mesh(
             sys.platform == "win32" and not mesh_socket.startswith("/")
         ):
             # Windows named pipe
-            import ctypes
             logger.info("Mesh registration via named pipe: %s", mesh_socket)
             # Stub: full named pipe client with SECURITY_IDENTIFICATION is
             # implemented in the Phase 2 Windows service deployment.
@@ -235,8 +233,8 @@ def boot(args: argparse.Namespace) -> int:
     )
 
     # ── Step 1: Start ProvenanceRecorder (fail-closed) ────────────────────
-    recorder: Optional["ProvenanceRecorder"] = None
-    index: Optional["SessionIndex"] = None
+    recorder: Optional[ProvenanceRecorder] = None
+    index: Optional[SessionIndex] = None
 
     if _ENTERPRISE_AVAILABLE:
         try:
@@ -400,16 +398,16 @@ def _interactive_loop(
     session_id: str,
     agent_id: str,
     role: str,
-    recorder: Optional["ProvenanceRecorder"],
+    recorder: Optional[ProvenanceRecorder],
     profile: dict,
 ) -> int:
     """Minimal interactive REPL for development and testing."""
-    print(f"\nSelfConnect Agent REPL")
+    print("\nSelfConnect Agent REPL")
     print(f"  session : {session_id}")
     print(f"  agent   : {agent_id}")
     print(f"  role    : {role}")
     print(f"  profile : {profile.get('description', 'unknown')}")
-    print(f"  type 'exit' or Ctrl-C to quit\n")
+    print("  type 'exit' or Ctrl-C to quit\n")
 
     while True:
         try:

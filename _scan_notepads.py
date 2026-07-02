@@ -1,5 +1,7 @@
 """Scan all open Notepad windows and capture screenshots."""
-import sys, os
+import os
+import sys
+
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 from self_connect import *
@@ -25,6 +27,6 @@ for i, w in enumerate(windows):
         final.save(path)
         print(f'       -> {path} ({final.size[0]}x{final.size[1]})')
     else:
-        print(f'       -> capture FAILED')
+        print('       -> capture FAILED')
 
 print(f'\nDone. {len(windows)} windows scanned.')

@@ -41,9 +41,10 @@ async def describe_frame(jpeg_bytes: bytes):
     Call Ollama llava with the given JPEG bytes.
     Returns VLDescription.
     """
-    from vision_server.models.schemas import VLDescription
-    from vision_server.config import OLLAMA_URL, OLLAMA_VL_MODEL, OLLAMA_VL_TIMEOUT
     import httpx
+
+    from vision_server.config import OLLAMA_URL, OLLAMA_VL_MODEL, OLLAMA_VL_TIMEOUT
+    from vision_server.models.schemas import VLDescription
 
     b64 = base64.b64encode(jpeg_bytes).decode()
     prompt = "Describe what you see on this screen. What application is shown? What are the key UI elements?"

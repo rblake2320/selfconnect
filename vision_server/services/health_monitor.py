@@ -16,8 +16,8 @@ def get_status() -> dict:
 
 async def _check_sdk() -> str:
     try:
-        from concurrent.futures import ThreadPoolExecutor
         import asyncio
+        from concurrent.futures import ThreadPoolExecutor
         loop = asyncio.get_event_loop()
         with ThreadPoolExecutor(max_workers=1) as pool:
             wins = await loop.run_in_executor(pool, __import__("self_connect").list_windows)
@@ -29,6 +29,7 @@ async def _check_sdk() -> str:
 def _check_yolo() -> str:
     """degraded if no custom UI-YOLO model file present; ok if file exists."""
     import os
+
     from vision_server.config import YOLO_MODEL_PATH
     return "ok" if os.path.isfile(YOLO_MODEL_PATH) else "degraded"
 
@@ -42,6 +43,7 @@ def _check_claude() -> str:
 async def _check_vl() -> str:
     try:
         import httpx
+
         from vision_server.config import OLLAMA_URL
         async with httpx.AsyncClient(timeout=3) as client:
             r = await client.get(f"{OLLAMA_URL}/api/tags")

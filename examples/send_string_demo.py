@@ -1,4 +1,4 @@
-from self_connect import send_string, list_windows
+from self_connect import list_windows, send_string
 
 windows = list_windows()
 if windows:

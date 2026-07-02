@@ -2,6 +2,7 @@
 routers/health.py — Health check endpoint.
 """
 from fastapi import APIRouter
+
 from vision_server.models.schemas import HealthStatus
 
 router = APIRouter()

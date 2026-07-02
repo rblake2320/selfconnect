@@ -1,10 +1,15 @@
 """Spawn Agent-E (Observer) — a Claude Code instance in a NEW separate window.
 Watches all mesh agents, logs patent-worthy events, and can communicate with the mesh."""
-import sys, os, time, subprocess, ctypes
+import ctypes
+import os
+import subprocess
+import sys
+import time
+
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from self_connect import list_windows, send_string, get_text_uia, save_capture
+from self_connect import get_text_uia, list_windows, send_string
 
 SC_DIR = os.path.dirname(os.path.abspath(__file__))
 user32 = ctypes.windll.user32
@@ -67,7 +72,7 @@ else:
 
 # --- Step 4: Update mesh_config.py ---
 mc_path = os.path.join(SC_DIR, 'mesh_config.py')
-with open(mc_path, 'r') as f:
+with open(mc_path) as f:
     mc = f.read()
 
 if 'AGENT_E_HWND' in mc:
@@ -96,6 +101,7 @@ print('Step 5: Injecting Observer briefing...')
 
 # Read current mesh HWNDs from config
 import importlib.util
+
 spec = importlib.util.spec_from_file_location('mesh_config', mc_path)
 mcfg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mcfg)

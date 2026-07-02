@@ -3,21 +3,21 @@ main.py — SelfConnect Vision Server
 FastAPI app: REST + WebSocket, localhost only, token auth.
 Port 7421 (matches dashboard default).
 """
-import sys
-import os
 import logging
-from logging.handlers import RotatingFileHandler
+import os
+import sys
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import FastAPI, Request, HTTPException, status
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
 
 from vision_server import config
-from vision_server.routers import windows, capture, detections, vl, actions, macros, health, search, events
+from vision_server.routers import actions, capture, detections, events, health, macros, search, vl, windows
+
 
 def _configure_logging() -> None:
     """Configure console logging plus a durable rotating error log."""
@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI):
     print("=" * 60)
 
     # Start background services
-    from vision_server.services import capture_service, health_monitor, detection_service
+    from vision_server.services import capture_service, detection_service, health_monitor
     await capture_service.start()
     await health_monitor.start()
     await detection_service.start_detection_loop()

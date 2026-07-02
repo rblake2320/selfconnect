@@ -14,7 +14,11 @@ Technique:
 
 No clipboard, no SendInput, no foreground window required.
 """
-import sys, ctypes, time, argparse
+import argparse
+import ctypes
+import sys
+import time
+
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 ctypes.windll.shcore.SetProcessDpiAwareness(2)

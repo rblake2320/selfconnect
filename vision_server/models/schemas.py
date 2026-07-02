@@ -2,8 +2,9 @@
 schemas.py — Pydantic models matching vision_agent_dashboard.html mock data shapes exactly.
 All field names match what the dashboard expects.
 """
-from pydantic import BaseModel
 from typing import Optional
+
+from pydantic import BaseModel
 
 
 class WindowInfo(BaseModel):

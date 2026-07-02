@@ -19,21 +19,17 @@ CMD Protocol:
 """
 
 import json
+import os
+import re
 import sys
 import time
 import traceback
-import urllib.request
 import urllib.error
-import os
-import re
+import urllib.request
 
 # Allow running from any cwd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from self_connect import (
-    list_windows, get_window_text, send_string, send_frame,
-    capture_window, save_capture, find_target, WindowTarget,
-    build_frame, parse_frame
-)
+from self_connect import get_window_text, list_windows, save_capture, send_frame, send_string
 
 HUB = "http://192.168.12.132:8765"  # Spark-1 direct — no tunnel needed
 FROM_AGENT = "windows-a"
@@ -269,9 +265,9 @@ def main():
     # Send an online notification
     try:
         reply_to_hub(
-            f"[windows-a] Relay loop active. hwnd=6756828. "
-            f"Mesh: D(4854222)=READY E(12585234)=READY B(3546648)=STALLED C(6624714)=STALLED. "
-            f"Send CMD:MESH_STATUS to start."
+            "[windows-a] Relay loop active. hwnd=6756828. "
+            "Mesh: D(4854222)=READY E(12585234)=READY B(3546648)=STALLED C(6624714)=STALLED. "
+            "Send CMD:MESH_STATUS to start."
         )
     except Exception as e:
         print(f"[relay] startup notify error: {e}")

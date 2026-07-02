@@ -1,5 +1,7 @@
 """Inject a Claude message directly into Antigravity's VS Code chat input."""
-import ctypes, time
+import ctypes
+import time
+
 from PIL import ImageGrab
 
 user32 = ctypes.windll.user32
@@ -13,15 +15,15 @@ VK_SHIFT   = 0x10
 VK_P       = 0x50
 VK_RETURN  = 0x0D
 
-class KEYBDINPUT(ctypes.Structure):  # noqa: RUF012
+class KEYBDINPUT(ctypes.Structure):
     _fields_ = [('wVk',ctypes.c_ushort),('wScan',ctypes.c_ushort),('dwFlags',ctypes.c_ulong),
-                ('time',ctypes.c_ulong),('dwExtraInfo',ctypes.POINTER(ctypes.c_ulong))]  # noqa: RUF012
+                ('time',ctypes.c_ulong),('dwExtraInfo',ctypes.POINTER(ctypes.c_ulong))]
 
-class MOUSEINPUT(ctypes.Structure):  # noqa: RUF012
+class MOUSEINPUT(ctypes.Structure):
     _fields_ = [('dx',ctypes.c_long),('dy',ctypes.c_long),('mouseData',ctypes.c_ulong),
-                ('dwFlags',ctypes.c_ulong),('time',ctypes.c_ulong),('dwExtraInfo',ctypes.POINTER(ctypes.c_ulong))]  # noqa: RUF012
+                ('dwFlags',ctypes.c_ulong),('time',ctypes.c_ulong),('dwExtraInfo',ctypes.POINTER(ctypes.c_ulong))]
 
-class INPUT(ctypes.Structure):  # noqa: RUF012
+class INPUT(ctypes.Structure):
     _fields_ = [('type',ctypes.c_ulong),('mi',MOUSEINPUT),('padding',ctypes.c_ubyte*8)]  # noqa: RUF012
 
 def key_down(vk):

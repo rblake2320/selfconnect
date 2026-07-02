@@ -3,7 +3,11 @@ SelfConnect → Antigravity clipboard injection.
 Finds Antigravity window, focuses chat input, pastes message via Ctrl+V.
 More reliable than character-by-character SendInput for WebView inputs.
 """
-import sys, ctypes, time, subprocess
+import ctypes
+import subprocess
+import sys
+import time
+
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 user32 = ctypes.windll.user32
@@ -86,7 +90,6 @@ def find_antigravity_hwnd():
     def cb(hwnd, _):
         pid = ctypes.c_ulong()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        buf = ctypes.create_unicode_buffer(512)
         kernel32.GetModuleFileNameExW = None  # not available this way
         # Check window title
         title_buf = ctypes.create_unicode_buffer(256)
@@ -125,7 +128,7 @@ anti_only = [(h,t,p) for h,t,p in windows
              if 'antigravity' in t.lower() and 'google chrome' not in t.lower()
              and 'visual studio code' not in t.lower()]
 
-print(f"\nAntigravity candidates:")
+print("\nAntigravity candidates:")
 for hwnd, title, pid in anti_only:
     print(f"  0x{hwnd:x}  pid={pid}  '{title[:70]}'")
 
@@ -150,8 +153,10 @@ H = rect.bottom - rect.top
 print(f"Window: {W}x{H} at ({rect.left},{rect.top})")
 
 # ─── Screenshot before injection ──────────────────────────────────────────────
-from PIL import ImageGrab
 import os
+
+from PIL import ImageGrab
+
 os.makedirs("proofs", exist_ok=True)
 
 img = ImageGrab.grab(bbox=(rect.left, rect.top, rect.right, rect.bottom), all_screens=True)

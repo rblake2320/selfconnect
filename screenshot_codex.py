@@ -1,5 +1,8 @@
 """Screenshot all Codex/new windows."""
-import ctypes, os, time
+import ctypes
+import os
+import time
+
 from PIL import ImageGrab
 
 user32 = ctypes.windll.user32

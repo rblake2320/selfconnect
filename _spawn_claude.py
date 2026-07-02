@@ -1,10 +1,13 @@
 """Spawn a new terminal, type into it via SelfConnect, then launch Claude."""
-import sys, os, time, subprocess, ctypes
+import ctypes
+import os
+import subprocess
+import sys
+import time
+
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-from self_connect import (
-    list_windows, send_string, capture_window, save_capture, restore_window
-)
+from self_connect import list_windows, restore_window, save_capture, send_string
 
 user32 = ctypes.windll.user32
 

@@ -14,40 +14,39 @@ from __future__ import annotations
 
 import os
 import tempfile
-import time
 import threading
+import time
 
 import pytest
-
+from sc_firewall import (
+    DecisionFirewall,
+    FirewallPolicy,
+    FirewallVerdict,
+    InputProvenance,
+    InputProvenanceTagger,
+    KillSwitch,
+)
 from sc_identity import (
+    A2ABindingAdapter,
     AgentIdentity,
     Caveat,
     DelegationToken,
-    ProvenanceLedger,
     MCPAuthAdapter,
-    A2ABindingAdapter,
-)
-from sc_firewall import (
-    InputProvenance,
-    InputProvenanceTagger,
-    FirewallPolicy,
-    DecisionFirewall,
-    FirewallVerdict,
-    KillSwitch,
-)
-from sc_reliability import (
-    ReliabilityHarness,
-    BoundaryProbe,
-    TrialOutcome,
-    FailureMode,
-    ReliabilityReport,
+    ProvenanceLedger,
 )
 from sc_pq import (
-    MLDSALevel,
-    HybridSignature,
-    HybridIdentity,
     HybridDelegationToken,
+    HybridIdentity,
+    HybridSignature,
+    MLDSALevel,
     upgrade_identity,
+)
+from sc_reliability import (
+    BoundaryProbe,
+    FailureMode,
+    ReliabilityHarness,
+    ReliabilityReport,
+    TrialOutcome,
 )
 
 # ML-DSA tests require the optional dilithium-py package.
@@ -832,10 +831,11 @@ class TestA2AAgentCardSanitizer:
 class TestGoalDriftMonitor:
     """Fix 2 — GoalDriftMonitor wired into sc_reliability."""
 
-    def _make_report(self, task_id: str, pass_at_1: float, consistency: float = 1.0) -> "ReliabilityReport":
+    def _make_report(self, task_id: str, pass_at_1: float, consistency: float = 1.0) -> ReliabilityReport:
         """Helper: construct a minimal ReliabilityReport for drift testing."""
-        from sc_reliability import ReliabilityReport, TrialOutcome
         import uuid
+
+        from sc_reliability import ReliabilityReport, TrialOutcome
         return ReliabilityReport(
             run_id=str(uuid.uuid4())[:8],
             task_id=task_id,
@@ -851,7 +851,7 @@ class TestGoalDriftMonitor:
         )
 
     def test_import(self):
-        from sc_reliability import GoalDriftMonitor, DriftSeverity, DriftEvent  # noqa: F401
+        from sc_reliability import DriftEvent, DriftSeverity, GoalDriftMonitor  # noqa: F401
 
     def test_no_drift_before_baseline_established(self):
         from sc_reliability import GoalDriftMonitor
@@ -863,7 +863,7 @@ class TestGoalDriftMonitor:
         assert monitor.baseline_stats() is None
 
     def test_no_drift_when_consistent(self):
-        from sc_reliability import GoalDriftMonitor, DriftSeverity
+        from sc_reliability import DriftSeverity, GoalDriftMonitor
         monitor = GoalDriftMonitor(task_id="stable-task", baseline_window=5)
         # Establish baseline with perfect scores
         for _ in range(5):
@@ -875,7 +875,7 @@ class TestGoalDriftMonitor:
         assert len(warning_events) == 0
 
     def test_drift_detected_on_significant_drop(self):
-        from sc_reliability import GoalDriftMonitor, DriftSeverity
+        from sc_reliability import DriftSeverity, GoalDriftMonitor
         monitor = GoalDriftMonitor(task_id="drifting-task", baseline_window=5)
         # Establish baseline with perfect scores
         for _ in range(5):

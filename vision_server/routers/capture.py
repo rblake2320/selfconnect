@@ -4,7 +4,8 @@ ASSIGNED TO: Agent B
 """
 import asyncio
 import logging
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 
 router = APIRouter()
@@ -38,7 +39,7 @@ async def ws_capture(websocket: WebSocket):
             try:
                 msg = await asyncio.wait_for(websocket.receive_text(), timeout=30)
                 logger.debug(f"[ws/capture] client message: {msg[:50]}")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass  # just keep alive
     except WebSocketDisconnect:
         logger.info("[ws/capture] client disconnected")
@@ -51,6 +52,7 @@ async def get_capture(hwnd: int):
     """Return a single JPEG snapshot of the specified window."""
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
+
     from vision_server.services.capture_service import _capture_one
 
     loop = asyncio.get_event_loop()

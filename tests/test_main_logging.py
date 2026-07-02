@@ -5,7 +5,6 @@ import logging
 from logging.handlers import RotatingFileHandler
 
 from fastapi.testclient import TestClient
-
 from vision_server import config
 from vision_server.main import app
 

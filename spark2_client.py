@@ -20,11 +20,10 @@ Hub URL: http://10.0.0.2:8765  (Spark-2 can hit this directly)
 
 import json
 import time
-import uuid
-import urllib.request
 import urllib.error
+import urllib.request
+import uuid
 from dataclasses import dataclass
-from typing import Optional
 
 HUB = "http://192.168.12.132:8765"  # Spark-1 direct — reachable from both Windows and Spark-2
 ME = "cc-spark2"

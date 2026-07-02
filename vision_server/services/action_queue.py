@@ -109,9 +109,9 @@ async def _execute_loop():
 
 async def _execute_item(item: dict):
     """Execute a single queue item via SelfConnect SDK."""
-    import sys, os
+    import os
+    import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    from concurrent.futures import ThreadPoolExecutor
 
     loop = asyncio.get_event_loop()
     kind = item["kind"]
@@ -128,8 +128,9 @@ async def _execute_item(item: dict):
         await loop.run_in_executor(None, click_at, x, y)
 
     elif kind == "type":
-        from vision_server.config import active_hwnd, ACTION_FOCUS_VERIFY
         from self_connect import focus_window, list_windows, send_string
+
+        from vision_server.config import ACTION_FOCUS_VERIFY, active_hwnd
         hwnd = int(item.get("hwnd") or active_hwnd or 0)
         if not hwnd:
             raise ValueError("type action requires active_hwnd or request.hwnd")
@@ -147,8 +148,9 @@ async def _execute_item(item: dict):
         await loop.run_in_executor(None, send_keys, *keys)
 
     elif kind == "scroll":
-        from vision_server.config import active_hwnd
         from self_connect import scroll_window
+
+        from vision_server.config import active_hwnd
         hwnd = int(item.get("hwnd") or active_hwnd or 0)
         if not hwnd:
             raise ValueError("scroll action requires active_hwnd or request.hwnd")
@@ -175,10 +177,12 @@ async def enqueue_command(text: str) -> dict:
 
     if text_lower.startswith("click "):
         label = text[6:].strip()
-        from vision_server.services.detection_service import get_latest_detections
-        from vision_server.models.schemas import ActionRequest
-        import ctypes, ctypes.wintypes
+        import ctypes
+        import ctypes.wintypes
+
         from vision_server import config
+        from vision_server.models.schemas import ActionRequest
+        from vision_server.services.detection_service import get_latest_detections
 
         detections = get_latest_detections()
         # Exact label match first, then partial

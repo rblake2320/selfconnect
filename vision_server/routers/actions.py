@@ -3,7 +3,8 @@ routers/actions.py — Action queue management.
 ASSIGNED TO: Agent C (Phase 4)
 """
 from fastapi import APIRouter, HTTPException
-from vision_server.models.schemas import QueueItem, ActionRequest, CommandRequest
+
+from vision_server.models.schemas import ActionRequest, CommandRequest, QueueItem
 
 router = APIRouter()
 

@@ -1,8 +1,7 @@
-import requests
-import json
 import os
-import sys
 from datetime import datetime
+
+import requests
 
 # Configuration
 OLLAMA_API_URL = "http://localhost:11434/api/chat"

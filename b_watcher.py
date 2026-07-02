@@ -2,7 +2,11 @@
 Watch Agent B's terminal. Auto-execute any python -c lines B generates.
 Runs in a loop — proves B is the initiator, not Agent A.
 """
-import sys, os, time, subprocess, re
+import os
+import subprocess
+import sys
+import time
+
 sys.stdout.reconfigure(encoding='utf-8')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from self_connect import get_text_uia

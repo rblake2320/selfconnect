@@ -85,13 +85,17 @@ async def detect(hwnd: int, frame_jpeg: bytes | None = None) -> list:
 
 def _get_win32_controls(hwnd: int) -> list:
     """Use list_child_controls to get Win32 UI elements."""
-    import sys, os
+    import os
+    import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+    import ctypes
+    import ctypes.wintypes
+
+    from self_connect import list_child_controls
 
     from vision_server import config
     from vision_server.models.schemas import Detection
-    from self_connect import list_child_controls
-    import ctypes, ctypes.wintypes
 
     # Get parent window rect for normalization
     user32 = ctypes.windll.user32
@@ -167,8 +171,17 @@ def _clamp01(value: float) -> float:
 
 async def _detect_via_llava(frame_jpeg: bytes) -> list:
     """Use Ollama llava to detect UI elements in a browser screenshot."""
-    import base64, json, httpx
-    from vision_server.config import OLLAMA_URL, OLLAMA_VL_MODEL, OLLAMA_VL_TIMEOUT
+    import base64
+    import json
+
+    import httpx
+
+    from vision_server.config import (
+        DETECTION_VL_CONFIDENCE,
+        OLLAMA_URL,
+        OLLAMA_VL_MODEL,
+        OLLAMA_VL_TIMEOUT,
+    )
     from vision_server.models.schemas import Detection
 
     b64 = base64.b64encode(frame_jpeg).decode()
@@ -208,7 +221,7 @@ async def _detect_via_llava(frame_jpeg: bytes) -> list:
             id=f"vl_{i}",
             cls=TYPE_MAP.get(item.get("type", "label"), "label"),
             label=item.get("label", "")[:40],
-            conf=config.DETECTION_VL_CONFIDENCE,
+            conf=DETECTION_VL_CONFIDENCE,
             x=x,
             y=y,
             w=w,

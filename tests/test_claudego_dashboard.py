@@ -9,8 +9,6 @@ import sys
 import types
 from unittest.mock import MagicMock
 
-import pytest
-
 # ── Mock self_connect + approval_partner ─────────────────────────────────────
 
 class _FakeWindowTarget:
@@ -26,7 +24,9 @@ _mock_sc.list_windows = MagicMock(return_value=[])
 _mock_sc.send_string = MagicMock()
 sys.modules.setdefault("self_connect", _mock_sc)
 
-import importlib, pathlib as _pl
+import importlib
+import pathlib as _pl
+
 try:
     importlib.import_module("approval_partner")
 except ImportError:
@@ -34,9 +34,9 @@ except ImportError:
     if _root not in sys.path:
         sys.path.insert(0, _root)
 
-from fastapi.testclient import TestClient  # noqa: E402
 from claudego.dashboard import app, set_scanner  # noqa: E402
 from claudego.scanner import Scanner  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 _scanner = Scanner()
 set_scanner(_scanner)

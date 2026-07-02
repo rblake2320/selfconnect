@@ -4,6 +4,7 @@ All channels (detections, log, queue, health, windows, vl) flow through here.
 """
 import asyncio
 import logging
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 router = APIRouter()
@@ -33,7 +34,7 @@ async def ws_events(websocket: WebSocket):
         while True:
             try:
                 await asyncio.wait_for(websocket.receive_text(), timeout=30)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
     except WebSocketDisconnect:
         logger.info("[ws/events] client disconnected")

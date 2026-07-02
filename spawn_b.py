@@ -1,8 +1,12 @@
 """Spawn Agent-B (ollama run qwen3.6:27b), get HWND, disable thinking, inject full briefing."""
-import sys, os, time, subprocess
+import os
+import subprocess
+import sys
+import time
+
 sys.stdout.reconfigure(encoding='utf-8')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from self_connect import list_windows, send_string, get_text_uia
+from self_connect import list_windows, send_string
 
 SC_DIR = os.path.dirname(os.path.abspath(__file__))
 A_HWND = 0x0ea80dfe
@@ -56,9 +60,10 @@ time.sleep(10)
 
 # --- Step 5: Update mesh_config.py ---
 mc_path = os.path.join(SC_DIR, 'mesh_config.py')
-with open(mc_path, 'r') as f:
+with open(mc_path) as f:
     mc = f.read()
 import re
+
 mc = re.sub(r'AGENT_B_HWND\s*=\s*0x[0-9a-fA-F]+', f'AGENT_B_HWND = 0x{B_HWND:x}', mc)
 with open(mc_path, 'w') as f:
     f.write(mc)
@@ -67,5 +72,5 @@ print(f'mesh_config.py updated: AGENT_B_HWND = 0x{B_HWND:x}')
 # --- Step 6: Inject first task (B finds A and reports in) ---
 task = 'Find the window titled airgap-sop-production and send it the message: AGENT-B ONLINE via local_agent'
 send_string(b, task + '\r', char_delay=0.02)
-print(f'Task injected. B will execute autonomously.')
+print('Task injected. B will execute autonomously.')
 print(f'\nDone. B HWND: 0x{B_HWND:x}')

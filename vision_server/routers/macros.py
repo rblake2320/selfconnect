@@ -3,6 +3,7 @@ routers/macros.py — Macro recording and replay.
 ASSIGNED TO: Agent C (Phase 4)
 """
 from fastapi import APIRouter
+
 from vision_server.models.schemas import MacroStep
 
 router = APIRouter()

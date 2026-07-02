@@ -1,6 +1,10 @@
 """Open Notepad, draw ASCII art using clipboard + aggressive focus."""
+import ctypes
+import subprocess
+import sys
+import time
+
 from self_connect import *
-import subprocess, time, sys, ctypes
 
 user32 = ctypes.windll.user32
 
@@ -53,7 +57,9 @@ art = r"""         ^
 """
 
 # Write art to a temp file, then open that file in Notepad
-import tempfile, os
+import os
+import tempfile
+
 tmpfile = os.path.join(tempfile.gettempdir(), "selfconnect_art.txt")
 with open(tmpfile, "w") as f:
     f.write(art)

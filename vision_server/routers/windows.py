@@ -1,12 +1,15 @@
 """
 routers/windows.py — Window discovery and attachment.
 """
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from fastapi import APIRouter, HTTPException
-from vision_server.models.schemas import WindowInfo, AttachRequest
+
 from vision_server import config
+from vision_server.models.schemas import WindowInfo
 
 router = APIRouter()
 
@@ -25,6 +28,7 @@ async def list_windows_endpoint():
     """Return all visible windows from SelfConnect SDK."""
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
+
     from self_connect import list_windows
 
     loop = asyncio.get_event_loop()
@@ -45,6 +49,7 @@ async def attach_window(hwnd: str):
 
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
+
     from self_connect import list_windows
 
     loop = asyncio.get_event_loop()

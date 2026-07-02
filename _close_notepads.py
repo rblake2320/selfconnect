@@ -1,5 +1,9 @@
 """Close all Notepad windows — PostMessage keystrokes to dismiss save dialogs."""
-import sys, os, time, ctypes, ctypes.wintypes
+import ctypes
+import ctypes.wintypes
+import sys
+import time
+
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 from self_connect import list_windows, restore_window
@@ -53,7 +57,7 @@ for i, w in enumerate(windows):
 
     # Check if still alive
     if not user32.IsWindow(w.hwnd):
-        print(f"       -> Closed (clean)")
+        print("       -> Closed (clean)")
         continue
 
     # Dialog appeared — try posting Tab+Enter to the main hwnd
@@ -64,7 +68,7 @@ for i, w in enumerate(windows):
     time.sleep(0.8)
 
     if not user32.IsWindow(w.hwnd):
-        print(f"       -> Closed (Don't Save via main hwnd)")
+        print("       -> Closed (Don't Save via main hwnd)")
         continue
 
     # Try InputSite children
@@ -95,7 +99,7 @@ for i, w in enumerate(windows):
                 break
 
         if user32.IsWindow(w.hwnd):
-            print(f"       -> STILL OPEN")
+            print("       -> STILL OPEN")
 
 time.sleep(1)
 remaining = [w for w in list_windows() if 'Notepad' in w.title]
