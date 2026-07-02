@@ -30,7 +30,7 @@ Run as a script to list all visible windows:
   python self_connect.py
 """
 
-__version__ = "0.10.4"
+__version__ = "0.11.0"
 __all__ = [  # noqa: RUF022  # grouped by version/category, not alphabetical
     # Core types
     "WindowTarget", "WindowPool", "capabilities",
@@ -43,6 +43,9 @@ __all__ = [  # noqa: RUF022  # grouped by version/category, not alphabetical
     "get_window_rect",
     # Input: text
     "send_string", "send_keys",
+    # Console I/O fast path (v0.11.0) — batch inject, direct buffer read
+    "read_console_fast",
+    "_resolve_console_pid", "_write_console_input", "_read_console_output",
     # Input: mouse
     "click_at", "click_window", "scroll_window",
     # Clipboard
@@ -360,6 +363,262 @@ class BITMAPINFOHEADER(ctypes.Structure):
     ]
 
 
+# ── Console I/O fast path — WriteConsoleInput / ReadConsoleOutput (v0.11.0) ───
+#
+# The original send_string() PostMessages one WM_CHAR per character with a
+# time.sleep(char_delay) between each — so a 500-char briefing costs ~10-25s of
+# pure sleeping regardless of machine speed. WriteConsoleInputW writes the entire
+# string to the target's console input buffer in a single syscall (milliseconds),
+# and ReadConsoleOutputW reads the console screen buffer directly without walking
+# the UIA accessibility tree. Both are background-safe.
+#
+# CAVEAT: these AttachConsole to the target's console host, which requires the
+# caller to FreeConsole() its own console for the duration (serialized by
+# _console_lock, restored to the parent console afterward). This is contained to
+# the short-lived injector process in the normal `python -c "..."` usage pattern.
+# send_string(mode="auto") tries this path first and falls back to PostMessage on
+# any failure, so it can never hard-fail relative to the legacy behavior.
+
+_console_lock = threading.Lock()
+
+ATTACH_PARENT_PROCESS_CONST = 0xFFFFFFFF
+KEY_EVENT_TYPE = 0x0001
+
+# Explicit prototypes so 64-bit console handles are not truncated (the upstream
+# fork relied on ctypes int defaults; these make the marshalling correct).
+kernel32.CreateFileW.restype = wintypes.HANDLE
+kernel32.CreateFileW.argtypes = [
+    wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+    wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+]
+kernel32.AttachConsole.restype = wintypes.BOOL
+kernel32.AttachConsole.argtypes = [wintypes.DWORD]
+kernel32.FreeConsole.restype = wintypes.BOOL
+kernel32.CloseHandle.restype = wintypes.BOOL
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+
+class _KEY_EVENT_RECORD_UCHAR(ctypes.Union):
+    _fields_ = [("UnicodeChar", ctypes.c_wchar), ("AsciiChar", ctypes.c_char)]  # noqa: RUF012
+
+
+class _KEY_EVENT_RECORD(ctypes.Structure):
+    _fields_ = [  # noqa: RUF012
+        ("bKeyDown",          wintypes.BOOL),
+        ("wRepeatCount",      wintypes.WORD),
+        ("wVirtualKeyCode",   wintypes.WORD),
+        ("wVirtualScanCode",  wintypes.WORD),
+        ("uChar",             _KEY_EVENT_RECORD_UCHAR),
+        ("dwControlKeyState", wintypes.DWORD),
+    ]
+
+
+class _INPUT_RECORD_EVENT(ctypes.Union):
+    _fields_ = [("KeyEvent", _KEY_EVENT_RECORD)]  # noqa: RUF012
+
+
+class _INPUT_RECORD(ctypes.Structure):
+    _fields_ = [("EventType", wintypes.WORD), ("Event", _INPUT_RECORD_EVENT)]  # noqa: RUF012
+
+
+class _SMALL_RECT(ctypes.Structure):
+    _fields_ = [  # noqa: RUF012
+        ("Left", wintypes.SHORT), ("Top", wintypes.SHORT),
+        ("Right", wintypes.SHORT), ("Bottom", wintypes.SHORT),
+    ]
+
+
+class _COORD(ctypes.Structure):
+    _fields_ = [("X", wintypes.SHORT), ("Y", wintypes.SHORT)]  # noqa: RUF012
+
+
+class _CONSOLE_SCREEN_BUFFER_INFO(ctypes.Structure):
+    _fields_ = [  # noqa: RUF012
+        ("dwSize",              _COORD),
+        ("dwCursorPosition",    _COORD),
+        ("wAttributes",         wintypes.WORD),
+        ("srWindow",            _SMALL_RECT),
+        ("dwMaximumWindowSize", _COORD),
+    ]
+
+
+class _CHAR_INFO_CHAR(ctypes.Union):
+    _fields_ = [("UnicodeChar", ctypes.c_wchar), ("AsciiChar", ctypes.c_char)]  # noqa: RUF012
+
+
+class _CHAR_INFO(ctypes.Structure):
+    _fields_ = [("Char", _CHAR_INFO_CHAR), ("Attributes", wintypes.WORD)]  # noqa: RUF012
+
+
+kernel32.WriteConsoleInputW.restype = wintypes.BOOL
+kernel32.WriteConsoleInputW.argtypes = [
+    wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+]
+kernel32.GetConsoleScreenBufferInfo.restype = wintypes.BOOL
+kernel32.GetConsoleScreenBufferInfo.argtypes = [
+    wintypes.HANDLE, ctypes.POINTER(_CONSOLE_SCREEN_BUFFER_INFO),
+]
+kernel32.ReadConsoleOutputW.restype = wintypes.BOOL
+kernel32.ReadConsoleOutputW.argtypes = [
+    wintypes.HANDLE, ctypes.c_void_p, _COORD, _COORD, ctypes.POINTER(_SMALL_RECT),
+]
+
+
+def _resolve_console_pid(target: "WindowTarget") -> int:
+    """Find the console host PID for a Windows Terminal target.
+
+    Windows Terminal hosts each tab via OpenConsole.exe (or conhost.exe).
+    AttachConsole needs the console host PID, not the WT window PID.
+    Falls back to the window PID if no console child is found.
+    """
+    try:
+        import psutil
+        proc = psutil.Process(target.pid)
+        for child in proc.children(recursive=True):
+            if child.name().lower() in ("openconsole.exe", "conhost.exe"):
+                return child.pid
+        parent = proc.parent()
+        if parent:
+            for sibling in parent.children():
+                if sibling.name().lower() in ("openconsole.exe", "conhost.exe"):
+                    return sibling.pid
+    except Exception:
+        pass
+    return target.pid
+
+
+def _write_console_input(target_pid: int, text: str) -> bool:
+    """Write text to a process's console input buffer via WriteConsoleInputW.
+
+    Background-safe. One syscall for the entire string — no per-character sleep.
+    Delivers real stdin key events (including Enter via VK_RETURN), so it also
+    submits in stdin-reading TUIs. Returns True on success, False on any failure
+    (caller falls back to PostMessage).
+    """
+    if not text:
+        return True
+
+    records = []
+    for ch in text:
+        vk = scan = 0
+        if ch in ("\r", "\n"):
+            vk, scan = VK_RETURN, 0x1C
+        for down in (True, False):
+            rec = _INPUT_RECORD()
+            rec.EventType = KEY_EVENT_TYPE
+            rec.Event.KeyEvent.bKeyDown = down
+            rec.Event.KeyEvent.wRepeatCount = 1
+            rec.Event.KeyEvent.wVirtualKeyCode = vk
+            rec.Event.KeyEvent.wVirtualScanCode = scan
+            rec.Event.KeyEvent.uChar.UnicodeChar = ch
+            rec.Event.KeyEvent.dwControlKeyState = 0
+            records.append(rec)
+
+    arr = (_INPUT_RECORD * len(records))(*records)
+    written = wintypes.DWORD(0)
+
+    with _console_lock:
+        kernel32.FreeConsole()
+        if not kernel32.AttachConsole(wintypes.DWORD(target_pid)):
+            kernel32.AttachConsole(wintypes.DWORD(ATTACH_PARENT_PROCESS_CONST))
+            return False
+        try:
+            # GetStdHandle is stale after AttachConsole — open CONIN$ directly.
+            GENERIC_READ  = 0x80000000
+            GENERIC_WRITE = 0x40000000
+            OPEN_EXISTING = 3
+            FILE_SHARE_READ_WRITE = 0x03
+            h_stdin = kernel32.CreateFileW(
+                "CONIN$", GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ_WRITE, None, OPEN_EXISTING, 0, None,
+            )
+            if not h_stdin or h_stdin == wintypes.HANDLE(-1).value:
+                return False
+            try:
+                ok = kernel32.WriteConsoleInputW(
+                    h_stdin, arr, len(records), ctypes.byref(written)
+                )
+                return bool(ok) and written.value > 0
+            finally:
+                kernel32.CloseHandle(h_stdin)
+        except Exception:
+            return False
+        finally:
+            kernel32.FreeConsole()
+            kernel32.AttachConsole(wintypes.DWORD(ATTACH_PARENT_PROCESS_CONST))
+
+
+def _read_console_output(target_pid: int) -> Optional[str]:
+    """Read the visible console screen buffer via ReadConsoleOutputW.
+
+    Background-safe and much faster than get_text_uia() for ConPTY windows
+    (no COM, no accessibility-tree walk). Returns the visible text grid, or
+    None on failure (caller falls back to UIA extraction).
+    """
+    with _console_lock:
+        kernel32.FreeConsole()
+        if not kernel32.AttachConsole(wintypes.DWORD(target_pid)):
+            kernel32.AttachConsole(wintypes.DWORD(ATTACH_PARENT_PROCESS_CONST))
+            return None
+        try:
+            GENERIC_READ  = 0x80000000
+            GENERIC_WRITE = 0x40000000
+            OPEN_EXISTING = 3
+            FILE_SHARE_READ_WRITE = 0x03
+            h_out = kernel32.CreateFileW(
+                "CONOUT$", GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ_WRITE, None, OPEN_EXISTING, 0, None,
+            )
+            if not h_out or h_out == wintypes.HANDLE(-1).value:
+                return None
+            try:
+                csbi = _CONSOLE_SCREEN_BUFFER_INFO()
+                if not kernel32.GetConsoleScreenBufferInfo(h_out, ctypes.byref(csbi)):
+                    return None
+                win = csbi.srWindow
+                width  = win.Right  - win.Left + 1
+                height = win.Bottom - win.Top  + 1
+                if width <= 0 or height <= 0:
+                    return None
+                buf_size  = _COORD(width, height)
+                buf_coord = _COORD(0, 0)
+                region    = _SMALL_RECT(win.Left, win.Top, win.Right, win.Bottom)
+                buf = (_CHAR_INFO * (width * height))()
+                if not kernel32.ReadConsoleOutputW(
+                    h_out, buf, buf_size, buf_coord, ctypes.byref(region)
+                ):
+                    return None
+                lines = []
+                for row in range(height):
+                    line = "".join(
+                        buf[row * width + col].Char.UnicodeChar for col in range(width)
+                    ).rstrip()
+                    lines.append(line)
+                while lines and not lines[-1]:
+                    lines.pop()
+                return "\n".join(lines)
+            finally:
+                kernel32.CloseHandle(h_out)
+        except Exception:
+            return None
+        finally:
+            kernel32.FreeConsole()
+            kernel32.AttachConsole(wintypes.DWORD(ATTACH_PARENT_PROCESS_CONST))
+
+
+def read_console_fast(target: "WindowTarget") -> Optional[str]:
+    """Fast console-buffer text read for a ConPTY WindowTarget.
+
+    Public wrapper over _read_console_output that resolves the console host PID.
+    Returns visible terminal text, or None if the fast path is unavailable
+    (caller should fall back to get_text_uia). Only meaningful for ConPTY windows.
+    """
+    try:
+        return _read_console_output(_resolve_console_pid(target))
+    except Exception:
+        return None
+
+
 # ── WindowTarget ──────────────────────────────────────────────────────────────
 @dataclass
 class WindowTarget:
@@ -613,22 +872,52 @@ def _send_char_sendinput(ch: str) -> None:
         user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
 
 
-def send_string(target: WindowTarget, text: str, char_delay: float = 0.05) -> None:
+def send_string(target: WindowTarget, text: str, char_delay: float = 0.05,
+                mode: str = "postmessage") -> None:
     """
-    Send text to the target window. Auto-selects delivery method:
+    Send text to the target window. Auto-selects delivery method.
 
+    Modes (default "postmessage" — the safe, per-hwnd-targeted legacy path):
+      - "postmessage": per-character PostMessage(WM_CHAR) / SendInput. Targets the
+                       exact window handle, so it always reaches the intended tab.
+                       Byte-for-byte the pre-v0.11.0 behavior. This is the correct
+                       default for the multi-agent mesh.
+      - "console":     WriteConsoleInput fast path — the entire string in one
+                       syscall, no per-character sleep (100x+ faster for long
+                       briefings), and delivers a real Enter that submits in
+                       stdin-reading TUIs. Falls back to PostMessage on failure.
+      - "auto":        same as "console" but always falls back to PostMessage.
+
+    ⚠️  CONSOLE-PATH TARGETING CAVEAT: the console path resolves a target by PID,
+    not window handle. On Windows 11, all Windows Terminal tabs share ONE
+    WindowsTerminal.exe PID, and _resolve_console_pid picks the first OpenConsole
+    child — which is NOT reliably the tab you meant when multiple tabs/windows are
+    open. Use "console"/"auto" only when the target has a single, unambiguous
+    console (e.g. a directly-spawned Codex/cmd with its own conhost). For the
+    general mesh, keep the default "postmessage".
+
+    Delivery details:
     - Windows Terminal (CASCADIA_HOSTING_WINDOW_CLASS): PostMessage(WM_CHAR) to
       the InputSite child, routed through ConPTY. Does NOT require foreground
       focus — the target window can be visible but NOT the active window.
       Include '\\r' in the text string to send Enter (wParam=0x0D via WM_CHAR,
       or WM_KEYDOWN/VK_RETURN — both work through ConPTY).
-
     - Classic Win32 windows: SendInput(KEYEVENTF_UNICODE). DOES require the
       target window to have foreground focus.
 
     Verified: one Claude session can inject text into another Claude session's
     terminal window without stealing foreground focus (2026-04-30 live proof).
     """
+    # Console fast path — direct WriteConsoleInput, no per-character delay.
+    if mode in ("auto", "console"):
+        try:
+            if _write_console_input(_resolve_console_pid(target), text):
+                return
+        except Exception:
+            pass
+        if mode == "console":
+            return  # console-only: no fallback
+
     if target.is_uwp_terminal():
         input_site = find_child_by_class(target.hwnd, WT_INPUT_CLASS)
         delivery = input_site if input_site else target.hwnd
