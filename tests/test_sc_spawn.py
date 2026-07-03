@@ -118,6 +118,30 @@ def test_budget_gate_allows_and_denies(monkeypatch):
     assert not ok
 
 
+def test_budget_gate_honors_daemon_verdict(monkeypatch):
+    # live /agent-status shape: verdict wins even when usd is under the limit
+    monkeypatch.setattr(sc_spawn.urllib.request, "urlopen",
+                        lambda *a, **k: _Resp(
+                            '{"usd_spent": 3.0, "usd_limit": 10.0, "status": "pause",'
+                            ' "recommended_action": "pause all agents"}'))
+    ok, why = check_agent_budget()
+    assert not ok and "pause" in why
+
+    monkeypatch.setattr(sc_spawn.urllib.request, "urlopen",
+                        lambda *a, **k: _Resp(
+                            '{"usd_spent": 3.0, "usd_limit": 10.0, "status": "warning"}'))
+    ok, _ = check_agent_budget()
+    assert ok
+
+    # observed live 2026-07-02: spent > limit but daemon verdict is "warning"
+    # (not pause) — the verdict must win over the raw usd comparison
+    monkeypatch.setattr(sc_spawn.urllib.request, "urlopen",
+                        lambda *a, **k: _Resp(
+                            '{"usd_spent": 839.28, "usd_limit": 600.0, "status": "warning"}'))
+    ok, why = check_agent_budget()
+    assert ok and "warning" in why
+
+
 def test_budget_gate_fail_open_vs_strict(monkeypatch):
     def boom(*a, **k):
         raise OSError("connection refused")

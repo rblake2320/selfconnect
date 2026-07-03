@@ -68,11 +68,13 @@ def check_agent_budget(url: str = DEFAULT_BUDGET_URL, strict: bool = False,
                        timeout: float = 2.0) -> tuple[bool, str]:
     """Ask the agent-status daemon whether another spawn fits the budget.
 
-    Understands ``allowed``/``blocked`` booleans or ``usd_spent``/``usd_limit``
-    pairs. Daemon unreachable -> allow (fail open) unless ``strict``.
+    Understands the agent-status ``/agent-status`` verdict (``status`` of
+    ``continue``/``warning``/``pause``), ``allowed``/``blocked`` booleans, or
+    ``usd_spent``/``usd_limit`` pairs. Daemon unreachable -> allow (fail open)
+    unless ``strict``.
     """
     try:
-        with urllib.request.urlopen(f"{url.rstrip('/')}/status", timeout=timeout) as resp:
+        with urllib.request.urlopen(f"{url.rstrip('/')}/agent-status", timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
         if strict:
@@ -81,6 +83,14 @@ def check_agent_budget(url: str = DEFAULT_BUDGET_URL, strict: bool = False,
     if data.get("blocked") is True or data.get("allowed") is False:
         return False, f"budget daemon denied spawn: {data}"
     spent, limit = data.get("usd_spent"), data.get("usd_limit")
+    verdict = data.get("status")
+    if verdict is not None:
+        # the daemon's verdict is authoritative — it applies its own policy to
+        # usd/burn-rate (live daemon reports warning even past usd_limit)
+        if verdict == "pause":
+            return False, (f"budget daemon verdict: pause — "
+                           f"{data.get('recommended_action') or data.get('reasons')}")
+        return True, f"budget daemon verdict: {verdict} ({spent}/{limit} USD)"
     if isinstance(spent, (int, float)) and isinstance(limit, (int, float)) and limit > 0:
         if spent >= limit:
             return False, f"budget exhausted: {spent} >= {limit} USD"
