@@ -25,7 +25,7 @@ import urllib.request
 import uuid
 from dataclasses import dataclass
 
-from sc_envelope import Envelope, EnvelopeError, load_or_create_mesh_key
+from sc_envelope import ENVELOPE_MAX_AGE_S, Envelope, EnvelopeError, load_or_create_mesh_key
 
 HUB = "http://192.168.12.132:8765"  # Spark-1 direct — reachable from both Windows and Spark-2
 ME = "cc-spark2"
@@ -122,8 +122,8 @@ class SC:
                 if raw.strip().startswith("{"):
                     try:
                         env = Envelope.from_json(raw)
-                        if not env.verify(MESH_KEY):
-                            print(f"[sc] WARN: invalid envelope sig from {self.transport.target} — skipping")
+                        if not env.verify(MESH_KEY, max_age_s=ENVELOPE_MAX_AGE_S):
+                            print(f"[sc] WARN: invalid/stale envelope from {self.transport.target} — skipping")
                             continue
                         content = env.payload.get("result", raw)
                         if tag in content or not tag:

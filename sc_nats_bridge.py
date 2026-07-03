@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from sc_envelope import Envelope
+from sc_envelope import ENVELOPE_MAX_AGE_S, Envelope
 
 __version__ = "0.12.0"
 
@@ -98,8 +98,8 @@ class MeshBus:
             except Exception:
                 await msg.term()  # malformed — never redeliver
                 return
-            if require_valid and not env.verify(key):
-                await msg.term()  # forged/unsigned — drop, don't retry
+            if require_valid and not env.verify(key, max_age_s=ENVELOPE_MAX_AGE_S):
+                await msg.term()  # forged/unsigned/stale — drop, don't retry
                 return
             await handler(env)
             await msg.ack()
@@ -115,8 +115,8 @@ class MeshBus:
                                      envelope.to_json().encode("utf-8"),
                                      timeout=timeout)
         reply = Envelope.from_json(msg.data.decode("utf-8"))
-        if not reply.verify(self.key):
-            raise NatsUnavailable("reply failed signature verification")
+        if not reply.verify(self.key, max_age_s=ENVELOPE_MAX_AGE_S):
+            raise NatsUnavailable("reply failed signature verification or is stale")
         return reply
 
 

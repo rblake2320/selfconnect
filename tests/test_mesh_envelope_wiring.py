@@ -13,7 +13,6 @@ layer and verify that:
 import json
 import sys
 import types
-import os
 from pathlib import Path
 
 import pytest
@@ -44,9 +43,9 @@ def _make_win32_stub():
 
 sys.modules.setdefault("self_connect", _make_win32_stub())
 
-import hub_relay
-import spark2_client
-from sc_envelope import Envelope, load_or_create_mesh_key
+import hub_relay  # noqa: E402
+import spark2_client  # noqa: E402
+from sc_envelope import Envelope, load_or_create_mesh_key  # noqa: E402
 
 
 @pytest.fixture
@@ -216,3 +215,57 @@ def test_sc_call_rejects_bad_sig(tmp_key, monkeypatch, tmp_path):
     sc = spark2_client.SC(timeout=0.1)
     with pytest.raises(TimeoutError):
         sc._call("MESH_STATUS")  # bad sig → skipped → timeout
+
+
+# ─── replay protection: stale envelopes are dropped ─────────────────────────
+
+def test_process_messages_drops_stale_envelope(tmp_key, monkeypatch):
+    """hub_relay must reject a validly-signed but replayed (old) envelope."""
+    import time as _time
+    env = Envelope(
+        sender="cc-spark2", recipient="windows-a",
+        kind="cmd", payload={"cmd": "CMD:MESH_STATUS"},
+    )
+    env.ts = _time.time() - 400  # older than ENVELOPE_MAX_AGE_S (300s)
+    env.sign(tmp_key)
+
+    results = []
+    monkeypatch.setattr(hub_relay, "reply_to_hub", lambda r, conv_id=None: results.append(r))
+
+    msgs = [{"from_agent": "cc-spark2", "content": env.to_json(), "conversation_id": None}]
+    hub_relay.process_messages(msgs)
+    assert not results  # stale → dropped, no reply
+
+
+def test_sc_call_drops_stale_reply(tmp_key, monkeypatch, tmp_path):
+    """spark2_client must reject a validly-signed but replayed (old) reply."""
+    import time as _time
+    call_count = [0]
+
+    class FakeResp:
+        def __init__(self, data):
+            self._data = data
+        def read(self):
+            return self._data
+
+    def fake_urlopen(req, timeout=10):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return FakeResp(json.dumps({"ok": True}).encode())
+        # Reply signed with correct key but timestamp 400s in the past
+        env = Envelope(
+            sender="windows-a", recipient="cc-spark2",
+            kind="reply", payload={"result": "MESH_OK\nTAG:RPC-deadbeef"},
+        )
+        env.ts = _time.time() - 400
+        env.sign(tmp_key)
+        msgs = {"messages": [{"from_agent": "windows-a", "content": env.to_json()}]}
+        return FakeResp(json.dumps(msgs).encode())
+
+    monkeypatch.setattr(spark2_client.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(spark2_client, "POLL_INTERVAL", 0)
+    monkeypatch.setattr(spark2_client, "REPLY_TIMEOUT", 0.2)
+
+    sc = spark2_client.SC(timeout=0.2)
+    with pytest.raises(TimeoutError):
+        sc._call("MESH_STATUS")  # stale reply → skipped → timeout

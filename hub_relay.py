@@ -31,6 +31,7 @@ from pathlib import Path
 # Allow running from any cwd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sc_envelope import (
+    ENVELOPE_MAX_AGE_S,
     AgentCard,
     Envelope,
     EnvelopeError,
@@ -270,8 +271,8 @@ def process_messages(messages):
         if raw_content.strip().startswith("{"):
             try:
                 env = Envelope.from_json(raw_content)
-                if not env.verify(MESH_KEY):
-                    print(f"[relay] WARN: invalid envelope sig from {from_a} — dropping")
+                if not env.verify(MESH_KEY, max_age_s=ENVELOPE_MAX_AGE_S):
+                    print(f"[relay] WARN: invalid/stale envelope from {from_a} — dropping")
                     continue
                 content = env.payload.get("cmd", raw_content)
                 conv_id = conv_id or (env.correlation_id or None) or conv_id

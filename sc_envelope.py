@@ -27,6 +27,7 @@ __version__ = "0.12.0"
 
 DEFAULT_KEY_PATH = Path.home() / ".selfconnect" / "mesh.key"
 SIG_ALG = "hmac-sha256"
+ENVELOPE_MAX_AGE_S = 300.0  # replayed signed messages older than this are rejected
 
 
 class EnvelopeError(RuntimeError):
@@ -164,6 +165,7 @@ def load_cards(directory: Path | str, key: Optional[bytes] = None,
 
 __all__ = [
     "DEFAULT_KEY_PATH",
+    "ENVELOPE_MAX_AGE_S",
     "SIG_ALG",
     "AgentCard",
     "Envelope",
