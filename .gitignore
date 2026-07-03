@@ -14,6 +14,10 @@ macros/
 
 # Agent proof screenshots (session artifacts, not source)
 proofs/
+SC_LIVE_PROOF.txt
+
+# Live E2E run evidence (task board, event chain, briefings)
+.sc_live_test/
 
 # Agent briefing files (ephemeral session state)
 briefing_*.md

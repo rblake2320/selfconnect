@@ -2,6 +2,63 @@
 
 All notable changes to SelfConnect are documented here.
 
+## [0.12.0] — 2026-07-02
+
+### Added — Orchestration layer (additive; `self_connect.py` unchanged)
+
+Turns the mesh from fire-and-forget into an evented, acknowledged, governed
+request/response system. Closes every gap found in the July 2026 market review
+(vs Claude Code Agent Teams, Gas Town, Google A2A, NATS). See
+`docs/ORCHESTRATION.md`.
+
+- **`sc_tasks.py`** — file-backed task board with A2A lifecycle states
+  (`submitted / working / input-required / completed / failed / canceled /
+  rejected`), validated transitions (fail closed), cross-process `FileLock`
+  claiming (Agent Teams pattern — no double-claims), dependency gating,
+  retry + dead-letter escalation, hash-chained `events.jsonl`, and
+  `wait_for_state` (state waits replace blind sleeps).
+- **`sc_transcript.py`** — lossless result reading via Claude Code session
+  JSONL tailing (replaces PrintWindow/OCR/console scraping). Project-dir
+  encoding, incremental offset tailing with partial-line tolerance,
+  `wait_for_assistant_reply`.
+- **`sc_hooks.py` / `sc_hook_emit.py`** — installs UserPromptSubmit / Notification
+  / Stop hooks into a spawned agent's project-local settings (idempotent,
+  preserves existing hooks). Emitter advances the task: ack→working,
+  notification→input-required, stop→turn-ended. Always exits 0 (never blocks
+  the agent's turn).
+- **`sc_done.py`** — explicit completion verb (Gas Town `gt done` analog);
+  completion is a signal the agent emits, not an inference from the screen.
+- **`sc_envelope.py`** — HMAC-signed message envelopes with correlation IDs +
+  signed agent cards (A2A pattern); constant-time verify, replay window,
+  fail-closed card loading.
+- **`sc_spawn.py`** — evented spawn wrapper: agent-status budget gate → optional
+  git worktree → task create → briefing file → hook install → TUI readiness
+  check → doorbell injection → ack wait → retry-once → dead-letter. Win32 is
+  isolated behind `_sc()` for testability.
+- **`sc_nats_bridge.py`** — optional signed-envelope transport over the existing
+  NATS :4222 container (JetStream at-least-once, request/reply correlation).
+  Import-guarded; injection stays the last hop, billing untouched.
+
+### Fixed
+- `sc_spawn._launch` (conhost path): `cd /d "..."` inside a list-form `Popen`
+  gets its quotes backslash-escaped by `list2cmdline`, which cmd.exe rejects on
+  paths with spaces — `claude` never launched. Now passes `cwd=` to `Popen`
+  directly. Caught by the live desktop run.
+
+### Tests
+- 46 new unit tests (`test_sc_tasks`, `test_sc_transcript`, `test_sc_hooks`,
+  `test_sc_envelope`, `test_sc_spawn`) — all Win32 faked, run on any platform.
+- Full suite: 549 passed, 9 skipped (Win32-only), ruff clean.
+- Cross-process integration proof: task driven submitted→working→input-required
+  →completed via real subprocess CLI calls, hash chain intact across 6 writes.
+- **LIVE E2E PASS (2026-07-02, real desktop)** — `_live_spawn_test.py`:
+  `spawn_agent()` opened a real interactive Claude Code window (subscription
+  path), doorbell-injected the briefing, agent's own UserPromptSubmit hook
+  acked on attempt 1 (submitted→working), agent created + verified
+  `SC_LIVE_PROOF.txt` and ran `sc_done.py` itself (working→completed), Stop
+  hook recorded turn end, hash chain verified over all 6 events. Evidence:
+  `.sc_live_test/` (task JSON, events.jsonl, briefing).
+
 ## [0.11.0] — 2026-07-01
 
 ### Added
