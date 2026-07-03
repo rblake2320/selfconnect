@@ -21,6 +21,7 @@ Win32 calls go through ``_sc()`` so tests can swap in a fake module.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 import urllib.request
@@ -39,6 +40,16 @@ __version__ = "0.12.0"
 DEFAULT_BUDGET_URL = "http://localhost:8089"
 DEFAULT_INBOX = Path(r"C:\Users\techai\PKA testing\Owner's Inbox")
 SDK_DIR = Path(__file__).resolve().parent
+
+# Test override: when set, a "pause"/denied budget verdict is recorded but does
+# NOT block the spawn. The gate still runs and its verdict is logged — only the
+# hard stop is lifted. Env var SC_BUDGET_OVERRIDE=1 (or the spawn_agent
+# budget_override= arg) enables it. Leave OFF in production.
+BUDGET_OVERRIDE_ENV = "SC_BUDGET_OVERRIDE"
+
+
+def _env_budget_override() -> bool:
+    return os.environ.get(BUDGET_OVERRIDE_ENV, "").strip().lower() in ("1", "true", "yes", "on")
 
 READY_PATTERNS = ("? for shortcuts", "❯", "shift+tab to cycle")  # noqa: RUF001
 BUSY_PATTERNS = ("esc to interrupt", "Cogitating", "✳")
@@ -64,22 +75,7 @@ def _sc():
 
 # ---------- budget gate ----------
 
-def check_agent_budget(url: str = DEFAULT_BUDGET_URL, strict: bool = False,
-                       timeout: float = 2.0) -> tuple[bool, str]:
-    """Ask the agent-status daemon whether another spawn fits the budget.
-
-    Understands the agent-status ``/agent-status`` verdict (``status`` of
-    ``continue``/``warning``/``pause``), ``allowed``/``blocked`` booleans, or
-    ``usd_spent``/``usd_limit`` pairs. Daemon unreachable -> allow (fail open)
-    unless ``strict``.
-    """
-    try:
-        with urllib.request.urlopen(f"{url.rstrip('/')}/agent-status", timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception as exc:
-        if strict:
-            return False, f"budget daemon unreachable ({exc}) and strict mode on"
-        return True, f"budget daemon unreachable ({exc}) — allowing (non-strict)"
+def _decide_budget(data: dict) -> tuple[bool, str]:
     if data.get("blocked") is True or data.get("allowed") is False:
         return False, f"budget daemon denied spawn: {data}"
     spent, limit = data.get("usd_spent"), data.get("usd_limit")
@@ -96,6 +92,44 @@ def check_agent_budget(url: str = DEFAULT_BUDGET_URL, strict: bool = False,
             return False, f"budget exhausted: {spent} >= {limit} USD"
         return True, f"budget ok: {spent}/{limit} USD"
     return True, "budget daemon reachable, no limit fields — allowing"
+
+
+def budget_snapshot(url: str = DEFAULT_BUDGET_URL, timeout: float = 2.0) -> dict:
+    """Return the accounting-relevant fields from the daemon (or an error dict).
+    Used to record what the budget looked like at spawn time, independent of
+    whether the gate allowed or was overridden."""
+    try:
+        with urllib.request.urlopen(f"{url.rstrip('/')}/agent-status", timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        return {"reachable": False, "error": str(exc)}
+    return {
+        "reachable": True,
+        "usd_spent": data.get("usd_spent"),
+        "usd_limit": data.get("usd_limit"),
+        "status": data.get("status"),
+        "recommended_action": data.get("recommended_action"),
+        "reasons": data.get("reasons"),
+    }
+
+
+def check_agent_budget(url: str = DEFAULT_BUDGET_URL, strict: bool = False,
+                       timeout: float = 2.0) -> tuple[bool, str]:
+    """Ask the agent-status daemon whether another spawn fits the budget.
+
+    Understands the agent-status ``/agent-status`` verdict (``status`` of
+    ``continue``/``warning``/``pause``), ``allowed``/``blocked`` booleans, or
+    ``usd_spent``/``usd_limit`` pairs. Daemon unreachable -> allow (fail open)
+    unless ``strict``.
+    """
+    try:
+        with urllib.request.urlopen(f"{url.rstrip('/')}/agent-status", timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        if strict:
+            return False, f"budget daemon unreachable ({exc}) and strict mode on"
+        return True, f"budget daemon unreachable ({exc}) — allowing (non-strict)"
+    return _decide_budget(data)
 
 
 # ---------- readiness ----------
@@ -256,6 +290,7 @@ def spawn_agent(
     briefing_extra: str = "",
     budget_url: str = DEFAULT_BUDGET_URL,
     budget_strict: bool = False,
+    budget_override: Optional[bool] = None,
     inbox_dir: Path | str = DEFAULT_INBOX,
     window_timeout: float = 45.0,
     ready_timeout: float = 90.0,
@@ -263,13 +298,22 @@ def spawn_agent(
     reader: Optional[Callable] = None,
 ) -> SpawnResult:
     """Spawn a peer Claude, brief it, and confirm delivery. Never hangs
-    silently: no ack -> one retry -> dead-letter in the Owner's Inbox."""
+    silently: no ack -> one retry -> dead-letter in the Owner's Inbox.
+
+    The budget gate always runs and its verdict is recorded on the task board.
+    ``budget_override`` (or env ``SC_BUDGET_OVERRIDE``) lifts only the hard stop
+    for testing — a denied verdict is logged but the spawn proceeds."""
     task_root = Path(task_root)
     board = TaskBoard(task_root)
 
+    override = _env_budget_override() if budget_override is None else budget_override
     allowed, why = check_agent_budget(budget_url, strict=budget_strict)
-    if not allowed:
+    if not allowed and not override:
         return SpawnResult(agent=name, task_id="", ok=False, detail=why)
+    snap = budget_snapshot(budget_url)
+    if not allowed:  # override is on — record it, warn, proceed
+        why = f"OVERRIDDEN (test): {why}"
+        print(f"[spawn] BUDGET OVERRIDE — gate said DENY, proceeding anyway: {snap}")
 
     if worktree_from is not None:
         cwd = create_worktree(worktree_from, name, task_root / "worktrees")
@@ -277,6 +321,10 @@ def spawn_agent(
 
     task = board.create(title=f"{name}: {prompt[:60]}", prompt=prompt, agent=name,
                         meta={"cwd": str(cwd)})
+    # Account for the budget at spawn time regardless of allow/override.
+    board.log_event("spawn.budget", task.task_id, name, {
+        "allowed": allowed, "overridden": bool(not allowed and override),
+        "verdict": why, "snapshot": snap})
     briefing = write_briefing(task_root, name, task, cwd, extra=briefing_extra)
     install_hooks(cwd, task_root, name)
 
@@ -322,6 +370,7 @@ __all__ = [
     "ReadyState",
     "SpawnError",
     "SpawnResult",
+    "budget_snapshot",
     "check_agent_budget",
     "create_worktree",
     "detect_tui_state",

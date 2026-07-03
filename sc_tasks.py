@@ -250,6 +250,36 @@ class TaskBoard:
                 prior = claimed
         return True, -1
 
+    def log_event(self, event_type: str, task_id: str = "", agent: str = "",
+                  detail: Optional[dict] = None) -> dict:
+        """Record a standalone event under the board lock — for callers that
+        append events outside a task mutation (keeps the hash chain intact
+        under concurrency)."""
+        with self._board_lock():
+            return self.record_event(event_type, task_id, agent, detail)
+
+    def read_events(self, event_type: str = "", task_id: str = "") -> list[dict]:
+        """Return recorded events, optionally filtered by type and/or task id.
+        Read-only view of the hash-chained log for accounting/inspection."""
+        out: list[dict] = []
+        if not self.events_path.exists():
+            return out
+        with self.events_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event_type and entry.get("event_type") != event_type:
+                    continue
+                if task_id and entry.get("task_id") != task_id:
+                    continue
+                out.append(entry)
+        return out
+
     # ---------- task persistence ----------
 
     def _task_path(self, task_id: str) -> Path:

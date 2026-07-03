@@ -99,6 +99,20 @@ chain, budget gate verified against real agent-status daemon on :8089.
 Still not live-proven: worktree spawn end-to-end, input-required→unstick with a real
 permission dialog (unit-tested only).
 
+**Budget gate + test override.** Every spawn queries the agent-status daemon (:8089)
+and records the verdict as a `spawn.budget` event on the task board (spent/limit/status),
+so the budget is always accounted for. A `pause` verdict normally blocks the spawn. For
+TESTING ONLY — when the reported spend isn't real — lift the hard stop without disabling
+the measurement:
+
+```python
+res = spawn_agent(..., budget_override=True)   # or set env SC_BUDGET_OVERRIDE=1
+```
+
+The gate still runs, the verdict is still recorded (with `overridden: true`), and a
+warning prints — only the block is skipped. Leave it OFF in production. Read the
+recorded verdicts back with `TaskBoard(task_root).read_events("spawn.budget")`.
+
 ### Legacy path (raw injection — fallback only, no delivery confirmation)
 
 ```python

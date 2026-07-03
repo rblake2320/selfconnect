@@ -160,6 +160,8 @@ def fake_sc(monkeypatch):
     monkeypatch.setattr(sc_spawn, "_sc", lambda: fake)
     # bypass network budget check by default
     monkeypatch.setattr(sc_spawn, "check_agent_budget", lambda *a, **k: (True, "test"))
+    monkeypatch.setattr(sc_spawn, "budget_snapshot",
+                        lambda *a, **k: {"reachable": True, "status": "test"})
     # don't actually launch a process
     monkeypatch.setattr(sc_spawn, "_launch", lambda cwd, cmd, launcher: fake.add_window())
     return fake
@@ -198,6 +200,7 @@ def test_spawn_no_window_dead_letters(tmp_path, monkeypatch):
     fake = FakeSC()
     monkeypatch.setattr(sc_spawn, "_sc", lambda: fake)
     monkeypatch.setattr(sc_spawn, "check_agent_budget", lambda *a, **k: (True, "t"))
+    monkeypatch.setattr(sc_spawn, "budget_snapshot", lambda *a, **k: {"reachable": True})
     monkeypatch.setattr(sc_spawn, "_launch", lambda *a: None)  # no new window ever
 
     inbox = tmp_path / "inbox"
@@ -233,3 +236,78 @@ def test_budget_denial_blocks_spawn(tmp_path, monkeypatch):
     assert not result.ok
     assert "exhausted" in result.detail
     assert result.task_id == ""  # never created a task
+
+
+# ---------- budget override (test-mode) ----------
+
+def test_budget_override_proceeds_despite_pause(tmp_path, fake_sc, monkeypatch):
+    """Gate says DENY (pause) but override lets the spawn proceed, and the
+    verdict is recorded on the task board so it's still accounted for."""
+    root = tmp_path / "mesh"
+    board = TaskBoard(root)
+    monkeypatch.setattr(sc_spawn, "check_agent_budget",
+                        lambda *a, **k: (False, "budget daemon verdict: pause"))
+    monkeypatch.setattr(sc_spawn, "budget_snapshot",
+                        lambda *a, **k: {"reachable": True, "usd_spent": 1321.0,
+                                         "usd_limit": 600.0, "status": "pause"})
+    monkeypatch.setattr(sc_spawn, "_ring_doorbell",
+                        lambda t, b, task: board.transition(task.task_id,
+                                                            TaskState.WORKING, agent="B"))
+
+    result = spawn_agent("B", "task", cwd=tmp_path / "proj", task_root=root,
+                         budget_override=True, window_timeout=5,
+                         ready_timeout=3, ack_timeout=3)
+    assert result.ok
+    assert "OVERRIDDEN" in result.detail
+    # the budget verdict is durably recorded on the hash-chained event log
+    events = board.read_events(event_type="spawn.budget")
+    assert events, "budget verdict must be recorded even when overridden"
+    detail = events[-1]["detail"]
+    assert detail["overridden"] is True
+    assert detail["snapshot"]["usd_spent"] == 1321.0
+    ok, bad = board.verify_chain()
+    assert ok and bad == -1
+
+
+def test_budget_override_via_env(tmp_path, fake_sc, monkeypatch):
+    root = tmp_path / "mesh"
+    board = TaskBoard(root)
+    monkeypatch.setattr(sc_spawn, "check_agent_budget", lambda *a, **k: (False, "pause"))
+    monkeypatch.setattr(sc_spawn, "budget_snapshot", lambda *a, **k: {"reachable": True})
+    monkeypatch.setenv(sc_spawn.BUDGET_OVERRIDE_ENV, "1")
+    monkeypatch.setattr(sc_spawn, "_ring_doorbell",
+                        lambda t, b, task: board.transition(task.task_id,
+                                                            TaskState.WORKING, agent="B"))
+    result = spawn_agent("B", "task", cwd=tmp_path / "proj", task_root=root,
+                         window_timeout=5, ready_timeout=3, ack_timeout=3)
+    assert result.ok and "OVERRIDDEN" in result.detail
+
+
+def test_budget_allowed_records_clean_verdict(tmp_path, fake_sc, monkeypatch):
+    """When allowed, the same accounting event fires with overridden=False."""
+    root = tmp_path / "mesh"
+    board = TaskBoard(root)
+    monkeypatch.setattr(sc_spawn, "_ring_doorbell",
+                        lambda t, b, task: board.transition(task.task_id,
+                                                            TaskState.WORKING, agent="B"))
+    result = spawn_agent("B", "task", cwd=tmp_path / "proj", task_root=root,
+                         window_timeout=5, ready_timeout=3, ack_timeout=3)
+    assert result.ok
+    events = board.read_events(event_type="spawn.budget")
+    assert events and events[-1]["detail"]["overridden"] is False
+
+
+def test_budget_snapshot_shape(monkeypatch):
+    monkeypatch.setattr(sc_spawn.urllib.request, "urlopen",
+                        lambda *a, **k: _Resp('{"usd_spent": 1321.9, "usd_limit": 600.0,'
+                                              ' "status": "pause", "reasons": ["over"]}'))
+    snap = sc_spawn.budget_snapshot()
+    assert snap["reachable"] is True
+    assert snap["usd_spent"] == 1321.9
+    assert snap["status"] == "pause"
+
+    def boom(*a, **k):
+        raise OSError("refused")
+    monkeypatch.setattr(sc_spawn.urllib.request, "urlopen", boom)
+    snap = sc_spawn.budget_snapshot()
+    assert snap["reachable"] is False and "refused" in snap["error"]
