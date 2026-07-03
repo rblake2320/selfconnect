@@ -5,7 +5,7 @@
 OS-native bridge between AI agents and Windows desktop apps. PostMessage(WM_CHAR) +
 PrintWindow + UIA accessibility, no browser, no API keys, no focus stealing.
 
-**v0.9.0 — 60 exports — 2551 lines — CI green (master)**
+**v0.12.0 — 60 exports + 7 orchestration modules — CI green (test/win32-hardening-v1)**
 
 Repo: https://github.com/rblake2320/selfconnect
 
@@ -69,6 +69,37 @@ python runbook_writer.py --title "What I did" --what "What it achieves" --step "
 ---
 
 ## How to Spawn Another Claude Code Terminal
+
+### Canonical path (v0.12.0+): evented spawn — USE THIS FIRST
+
+`sc_spawn.spawn_agent()` replaces "inject and hope" with budget gate → task board →
+hooks → readiness detection → doorbell → ack confirmation → dead-letter escalation.
+Full guide: `docs/ORCHESTRATION.md`.
+
+```python
+import sys; sys.path.insert(0, r'C:\Users\techai\PKA testing\selfconnect')
+from sc_spawn import spawn_agent, wait_for_completion
+
+res = spawn_agent(
+    name="AGENT-B",
+    prompt="Your task here. Be specific.",
+    cwd=r"C:\path\to\working\dir",          # or worktree_from=<repo> for isolation
+    task_root=r"C:\path\to\task\root",       # task board + briefings + events live here
+)
+# res.ok is True only after the agent ACKED the briefing (UserPromptSubmit hook fired).
+# No ack -> one automatic re-ring -> dead-letter lands in Owner's Inbox.
+
+task = wait_for_completion(task_root, res.task_id, timeout=3600)
+# Completion is EXPLICIT: the agent runs sc_done.py. "Turn ended" != "work done".
+# task.meta["transcript_path"] -> lossless result readback via sc_transcript.
+```
+
+Known-good live results (2026-07-02): submitted→working→completed with intact hash
+chain, budget gate verified against real agent-status daemon on :8089.
+Still not live-proven: worktree spawn end-to-end, input-required→unstick with a real
+permission dialog (unit-tested only).
+
+### Legacy path (raw injection — fallback only, no delivery confirmation)
 
 ```python
 import subprocess, sys, time
