@@ -235,27 +235,99 @@ class SpawnResult:
     task_id: str
     ok: bool
     hwnd: int = 0
-    pid: int = 0
+    pid: int = 0        # window owner PID — under Windows Terminal this is the
+                        # SHARED WindowsTerminal.exe host; never taskkill it
+    proc_pid: int = 0   # PID of the process we actually launched (cmd.exe) —
+                        # the only PID that is safe to kill
     briefing_path: str = ""
     cwd: str = ""
     detail: str = ""
     meta: dict = field(default_factory=dict)
 
 
-def _launch(cwd: Path, claude_cmd: str, launcher: str) -> None:
+def _launch(cwd: Path, claude_cmd: str, launcher: str) -> int:
+    """Launch the agent shell. Returns the PID of the launched process.
+
+    For the conhost path that is the cmd.exe hosting the agent — the safe
+    kill target. For the wt path it is wt.exe, which exits after handoff,
+    so 0 is returned (no safe kill target; use kill_agent's cwd fallback).
+    """
     if launcher == "wt":
         subprocess.Popen(
             ["wt.exe", "-w", "new", "--title", "SC-Agent", "-d", str(cwd),
              "cmd", "/k", claude_cmd],
         )
-    else:  # dedicated conhost: unique PID, readable console, proven billing path
-        # cwd= instead of `cd /d "..."`: list2cmdline backslash-escapes the
-        # inner quotes, which cmd.exe rejects on paths with spaces (live-caught).
-        subprocess.Popen(
-            ["cmd.exe", "/k", claude_cmd],
-            cwd=str(cwd),
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
-        )
+        return 0
+    # dedicated conhost: unique PID, readable console, proven billing path
+    # cwd= instead of `cd /d "..."`: list2cmdline backslash-escapes the
+    # inner quotes, which cmd.exe rejects on paths with spaces (live-caught).
+    proc = subprocess.Popen(
+        ["cmd.exe", "/k", claude_cmd],
+        cwd=str(cwd),
+        creationflags=subprocess.CREATE_NEW_CONSOLE,
+    )
+    return proc.pid
+
+
+# Killing any of these takes down every terminal window on the desktop, not
+# just the spawned agent (live-caught 2026-07-03: taskkill /T /F on the window
+# PID killed the shared WindowsTerminal.exe host and closed ALL terminals).
+NEVER_KILL = frozenset({"windowsterminal.exe", "openconsole.exe", "explorer.exe"})
+
+KILL_LOG = Path.home() / ".selfconnect" / "kill_log.jsonl"
+
+
+def _log_kill(action: str, res: SpawnResult, pid: int, name: str = "") -> None:
+    """Append an audit record for every kill attempt — killed or refused.
+
+    Process kills leave no OS trace by default; this is the paper trail that
+    would have identified the 2026-07-03 mass terminal close in one grep."""
+    try:
+        KILL_LOG.parent.mkdir(exist_ok=True)
+        with open(KILL_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "ts": time.time(), "action": action, "pid": pid, "proc_name": name,
+                "agent": res.agent, "task_id": res.task_id, "cwd": res.cwd,
+            }) + "\n")
+    except OSError:
+        pass  # auditing must never break the kill path itself
+
+
+def kill_agent(res: SpawnResult) -> bool:
+    """Kill ONLY the spawned agent's own process tree. Safe replacement for
+    ``taskkill /PID res.pid /T /F``.
+
+    res.pid is the window owner's PID. On Windows 11 every terminal window is
+    a tab of one shared WindowsTerminal.exe process, so killing that PID tree
+    closes every terminal on the desktop. This kills res.proc_pid (the cmd.exe
+    we launched) instead, and refuses to kill any process in NEVER_KILL.
+    """
+    import psutil
+
+    pid = res.proc_pid
+    if not pid and res.cwd:  # wt launcher: recover our cmd.exe by cwd match
+        for p in psutil.process_iter(["name", "cwd"]):
+            try:
+                if (p.info["name"] or "").lower() == "cmd.exe" \
+                        and p.info["cwd"] and Path(p.info["cwd"]) == Path(res.cwd):
+                    pid = p.pid
+                    break
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                continue
+    if not pid:
+        _log_kill("refused:no-target", res, 0)
+        return False
+    try:
+        name = psutil.Process(pid).name().lower()
+    except psutil.NoSuchProcess:
+        _log_kill("refused:already-gone", res, pid)
+        return False
+    if name in NEVER_KILL:
+        _log_kill("refused:shared-host", res, pid, name)
+        return False
+    _log_kill("killed", res, pid, name)
+    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+    return True
 
 
 def _wait_new_window(before_hwnds: set[int], timeout: float, poll: float = 1.0):
@@ -330,13 +402,14 @@ def spawn_agent(
 
     sc = _sc()
     before = {w.hwnd for w in sc.list_windows()}
-    _launch(cwd, claude_cmd, launcher)
+    proc_pid = _launch(cwd, claude_cmd, launcher)
 
     target = _wait_new_window(before, window_timeout)
     if target is None:
         board.transition(task.task_id, TaskState.FAILED, error="no window appeared")
         board.dead_letter(task.task_id, "spawn produced no terminal window", inbox_dir)
         return SpawnResult(agent=name, task_id=task.task_id, ok=False,
+                           proc_pid=proc_pid,
                            briefing_path=str(briefing), cwd=str(cwd),
                            detail="no window appeared")
 
@@ -350,13 +423,15 @@ def spawn_agent(
         if acked is not None:
             return SpawnResult(
                 agent=name, task_id=task.task_id, ok=True, hwnd=target.hwnd,
-                pid=target.pid, briefing_path=str(briefing), cwd=str(cwd),
+                pid=target.pid, proc_pid=proc_pid,
+                briefing_path=str(briefing), cwd=str(cwd),
                 detail=f"acked on attempt {attempt} (state={acked.state.value}); {why}",
             )
     board.transition(task.task_id, TaskState.FAILED, error="no ack after 2 doorbells")
     dl = board.dead_letter(task.task_id, "agent never acknowledged briefing", inbox_dir)
     return SpawnResult(agent=name, task_id=task.task_id, ok=False, hwnd=target.hwnd,
-                       pid=target.pid, briefing_path=str(briefing), cwd=str(cwd),
+                       pid=target.pid, proc_pid=proc_pid,
+                       briefing_path=str(briefing), cwd=str(cwd),
                        detail=f"no ack; escalated to {dl}")
 
 

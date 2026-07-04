@@ -94,10 +94,26 @@ task = wait_for_completion(task_root, res.task_id, timeout=3600)
 # task.meta["transcript_path"] -> lossless result readback via sc_transcript.
 ```
 
-Known-good live results (2026-07-02): submitted→working→completed with intact hash
-chain, budget gate verified against real agent-status daemon on :8089.
-Still not live-proven: worktree spawn end-to-end, input-required→unstick with a real
-permission dialog (unit-tested only).
+Known-good live results (2026-07-04): submitted→working→completed with intact hash
+chain, budget gate override verified against real agent-status daemon on :8089
+(3 consecutive agents, all hash chains ok).
+
+**input-required detection — two modes:**
+- *Background/non-interactive* (`claude -p`): Notification hook fires → board sets
+  `input-required`. Proven in unit tests.
+- *Interactive TUI* (`cmd.exe /k claude`): Notification hook does NOT fire for in-TUI
+  permission dialogs (those are handled inside the terminal). Visual fallback: run3
+  polls the TUI for `BLOCKED` state (patterns: "Do you want", "1. Yes", "y/n",
+  "Allow this") and drives the transition itself. Both paths feed the same approval
+  flow: inject "y" → transition back to working.
+
+**run3 live test (2026-07-04):** Spawn/ack/working/completed proven. input-required
+path not triggered — blocked by workspace having `"Bash"` wildcard in global allow
+(all bash commands auto-approved, no dialog appears). To prove end-to-end: either run
+in a workspace with restrictive bash permissions, or use a non-bash tool not in the
+allow list as the trigger command.
+
+Still not live-proven: worktree spawn end-to-end.
 
 **Budget gate + test override.** Every spawn queries the agent-status daemon (:8089)
 and records the verdict as a `spawn.budget` event on the task board (spent/limit/status),
