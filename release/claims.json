@@ -1,0 +1,277 @@
+{
+  "schema_version": 1,
+  "policy": {
+    "release_statuses": [
+      "proven"
+    ],
+    "non_release_statuses": [
+      "evidence-local-only",
+      "experiment",
+      "not-claimed",
+      "pending"
+    ]
+  },
+  "claims": [
+    {
+      "id": "terminal.os_native_actuation",
+      "statement": "SelfConnect can inject visible terminal input through the Win32 WM_CHAR path without requiring MCP, HTTP, or a cloud API for that actuation step.",
+      "status": "proven",
+      "release": true,
+      "scope": "Windows terminal surfaces accepted by the guarded package path.",
+      "boundary": "This does not claim universal application input or that the wider ecosystem never uses APIs, MCP, brokers, or networks.",
+      "verified_on": "2026-06-21",
+      "evidence": [
+        {
+          "path": "self_connect.py"
+        },
+        {
+          "path": "tests/test_package_adapters.py"
+        }
+      ]
+    },
+    {
+      "id": "terminal.uia_textchanged_echo_filter",
+      "statement": "A UIA TextChanged event was observed on the tested Windows Terminal ConPTY surface, and echo filtering separated injected echo from external output.",
+      "status": "proven",
+      "release": true,
+      "scope": "The recorded throwaway Windows Terminal surface and reusable echo-filter helper.",
+      "boundary": "This is not a claim of UIA event parity across every terminal, application, Windows build, or accessibility implementation.",
+      "verified_on": "2026-06-16",
+      "evidence": [
+        {
+          "path": "experiments/win32_probe/results/uia_echo_filter_PASS_redacted.json",
+          "sha256_text": "14aac521dd00564ffb6246228a339090393c112d881cfa040cf68d3c467ae2b8",
+          "assertions": [
+            {
+              "path": "verdict",
+              "equals": "PASS"
+            },
+            {
+              "path": "method",
+              "equals": "TextChanged_event"
+            },
+            {
+              "path": "event_supported",
+              "equals": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "browser.edge_local_fixture",
+      "statement": "SelfConnect read and controlled an owned local page in an isolated Microsoft Edge profile through UIA and stopped at a mock protected checkpoint.",
+      "status": "proven",
+      "release": true,
+      "scope": "Microsoft Edge against the recorded local owned fixture.",
+      "boundary": "This does not claim public-site, multi-tab, Chrome, Firefox, CAPTCHA bypass, anti-bot evasion, download, upload, passkey, or cross-browser parity.",
+      "verified_on": "2026-06-17",
+      "evidence": [
+        {
+          "path": "experiments/win32_probe/results/browser_local_proof_PASS_redacted.json",
+          "sha256_text": "8f37372f37ba5053f8958fa417adc71bf14f3e56050573438a50498408239ae2",
+          "assertions": [
+            {
+              "path": "verdict",
+              "equals": "PASS"
+            },
+            {
+              "path": "browser_kind",
+              "equals": "msedge"
+            },
+            {
+              "path": "route_isolated",
+              "equals": true
+            },
+            {
+              "path": "protected_detected",
+              "equals": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fabric_v2.service_benchmark",
+      "statement": "The recorded five-logical-agent Fabric V2 service-transport run measured transport/governance p99 of 1.049 ms, end-to-end p99 of 1.840 ms, audit p99 of 0.464 ms, and zero model calls for known tasks.",
+      "status": "proven",
+      "release": true,
+      "scope": "The exact recorded logical workload, machine, profiles, transport, and artifact.",
+      "boundary": "This is not real-model latency, a universal hardware result, an installed-service claim, or proof that Fabric V2 is the current default runtime.",
+      "verified_on": "2026-06-21",
+      "evidence": [
+        {
+          "path": "experiments/fabric_v2/results/SC_FABRIC_SERVICE_20260621_1135_redacted.json",
+          "sha256_text": "e42000d71e2922daaecff8f3bce4ecd6a92f0f60cd0f0ab2a19579f4ce006790",
+          "assertions": [
+            {
+              "path": "agent_count",
+              "equals": 5
+            },
+            {
+              "path": "transport",
+              "equals": "fabric_v2_service_transport"
+            },
+            {
+              "path": "aggregate.transport_governance_ms.p99",
+              "equals": 1.049
+            },
+            {
+              "path": "aggregate.end_to_end_task_ms.p99",
+              "equals": 1.84
+            },
+            {
+              "path": "aggregate.audit_lag_ms.p99",
+              "equals": 0.464
+            },
+            {
+              "path": "aggregate.model_calls_per_known_task",
+              "equals": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fabric_v2.user_mode_restart_recovery",
+      "statement": "The recorded Fabric V2 user-mode service-wrapper selftest passed roundtrip, restart, state-file, and watchdog checks.",
+      "status": "proven",
+      "release": true,
+      "scope": "The Python user-mode service-wrapper selftest using the Windows AF_PIPE path.",
+      "boundary": "This does not prove an installed, always-running Windows SCM service on every target machine or full governed daemon coverage.",
+      "verified_on": "2026-06-21",
+      "evidence": [
+        {
+          "path": "experiments/fabric_v2/results/fabric_v2_service_selftest_20260621_113419_redacted.json",
+          "sha256_text": "1078b32680641c64f9a16deda85b75b1652f7517258439a0bf7ba6bb6178d803",
+          "assertions": [
+            {
+              "path": "ok",
+              "equals": true
+            },
+            {
+              "path": "roundtrip_ok",
+              "equals": true
+            },
+            {
+              "path": "restart_ok",
+              "equals": true
+            },
+            {
+              "path": "watchdog_ok",
+              "equals": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "real_agent.twenty_agent_portable_release_evidence",
+      "statement": "A portable release claim for the twenty-real-agent ladder is not yet approved because the raw local evidence is intentionally ignored and no tracked redacted run artifact is attached to this ledger.",
+      "status": "evidence-local-only",
+      "release": false,
+      "scope": "Internal benchmark documentation only.",
+      "boundary": "Do not promote the twenty-real-agent result into portable release positioning until a reviewed redacted artifact is tracked and hashed.",
+      "verified_on": "2026-07-09",
+      "evidence": [
+        {
+          "path": "docs/FABRIC_V2_REAL_LADDER_RESULTS.md"
+        }
+      ]
+    },
+    {
+      "id": "identity.tpm_platform_attestation",
+      "statement": "TPM platform attestation is pending.",
+      "status": "pending",
+      "release": false,
+      "scope": "No production attestation claim.",
+      "boundary": "A TPM capability probe or TPM-backed signing must not be described as remote-verifiable platform attestation.",
+      "verified_on": "2026-07-09",
+      "evidence": [
+        {
+          "path": "experiments/win32_probe/CAPABILITY_BACKLOG.md"
+        }
+      ]
+    },
+    {
+      "id": "enterprise.security_test_posture",
+      "statement": "The local selfconnect-enterprise checkout did not have a zero-failure test result on 2026-07-09: 1,305 tests passed, 2 security gates failed, and 21 were skipped at commit 9d3f98d.",
+      "status": "pending",
+      "release": false,
+      "scope": "Local selfconnect-enterprise commit 9d3f98d and the installed dependency environment.",
+      "boundary": "Do not state 716 tests with zero failures, or any other zero-failure count, until the exact release commit and environment are rerun and their artifact is recorded. The local checkout was four commits behind origin/master.",
+      "verified_on": "2026-07-09",
+      "evidence": [
+        {
+          "path": "release/evidence/enterprise_test_20260709.json",
+          "sha256_text": "b78ebca10848c013272d9d7b043d247ac11885070b5568773c7331b065f179e6",
+          "assertions": [
+            {
+              "path": "result.passed",
+              "equals": 1305
+            },
+            {
+              "path": "result.failed",
+              "equals": 2
+            },
+            {
+              "path": "result.skipped",
+              "equals": 21
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "approval.telegram_governed_roundtrip",
+      "statement": "A governed end-to-end ApprovalRelay-to-Telegram-to-target-guard roundtrip is not yet proven in the release evidence set.",
+      "status": "experiment",
+      "release": false,
+      "scope": "Existing local approval and Telegram bridge prototypes.",
+      "boundary": "The current scripts must not be described as one integrated governed primitive: the escalation file is not consumed by approval_telegram.py, the bridge selects a broadly matching terminal, and reply injection does not use the full package target guard.",
+      "verified_on": "2026-07-09",
+      "evidence": [
+        {
+          "path": "approval_partner.py"
+        },
+        {
+          "path": "approval_telegram.py"
+        },
+        {
+          "path": "self_connect.py"
+        }
+      ]
+    },
+    {
+      "id": "legal.prior_art_exclusivity",
+      "statement": "SelfConnect does not make a release claim that no prior art replicates its architecture or that a specific method is patentable.",
+      "status": "not-claimed",
+      "release": false,
+      "scope": "Release and product documentation.",
+      "boundary": "Novelty, non-obviousness, claim scope, and patentability require a documented prior-art search and patent-counsel review. Technical differentiation may be described only as a scoped engineering comparison.",
+      "verified_on": "2026-07-09",
+      "evidence": [
+        {
+          "path": "docs/PATENT_EVIDENCE_FREEZE_2026-06-20.md"
+        },
+        {
+          "path": "docs/SELFCONNECT_PRODUCT_BOUNDARIES.md"
+        }
+      ]
+    },
+    {
+      "id": "transport.fabric_v2_default_runtime",
+      "statement": "Fabric V2 is not yet the default SelfConnect runtime data plane.",
+      "status": "pending",
+      "release": false,
+      "scope": "Optional proven transport/service path only.",
+      "boundary": "Do not claim default deployment or always-on operation until installation, startup, watchdog, rollback, and live workload gates pass on the release candidate.",
+      "verified_on": "2026-07-09",
+      "evidence": [
+        {
+          "path": "docs/FABRIC_V2_BUILD_TARGETS.md"
+        }
+      ]
+    }
+  ]
+}

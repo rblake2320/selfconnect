@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "product_thesis": "OS-native Windows AI peer mesh with optional adapters and evidence-backed claims",
+  "required_wheel_modules": [
+    "_win32_abi.py",
+    "approval_partner.py",
+    "approval_telegram.py",
+    "self_connect.py",
+    "sc_cli.py",
+    "sc_done.py",
+    "sc_echo_filter.py",
+    "sc_envelope.py",
+    "sc_fabric_benchmark.py",
+    "sc_fabric_host.py",
+    "sc_fabric_router.py",
+    "sc_fabric_service.py",
+    "sc_fabric_v2.py",
+    "sc_fabric_windows_svc.py",
+    "sc_firewall.py",
+    "sc_fleet_guard.py",
+    "sc_hook_emit.py",
+    "sc_hooks.py",
+    "sc_identity.py",
+    "sc_local_model_role.py",
+    "sc_mcp.py",
+    "sc_mesh_lease.py",
+    "sc_mesh_registry.py",
+    "sc_nats_bridge.py",
+    "sc_pq.py",
+    "sc_reliability.py",
+    "sc_resume.py",
+    "sc_shell.py",
+    "sc_spawn.py",
+    "sc_tasks.py",
+    "sc_transcript.py"
+  ],
+  "core_dependencies": [
+    "Pillow",
+    "psutil"
+  ],
+  "optional_dependencies": {
+    "claudego": [
+      "pystray",
+      "winotify"
+    ],
+    "mcp": [
+      "mcp"
+    ],
+    "service": [
+      "pywin32"
+    ]
+  },
+  "core_network_forbidden_modules": [
+    "http",
+    "mcp",
+    "requests",
+    "socket",
+    "urllib",
+    "uvicorn"
+  ],
+  "core_network_free_files": [
+    "self_connect.py",
+    "sc_cli.py"
+  ],
+  "release_claim_files": [
+    "README.md"
+  ],
+  "prohibited_release_phrases": [
+    "no prior art",
+    "patentable method",
+    "zero api calls"
+  ],
+  "guarded_input": {
+    "file": "sc_cli.py",
+    "function": "send_text_to_window",
+    "required_parameters": [
+      "allow_input",
+      "expected_pid",
+      "expected_exe",
+      "expected_class",
+      "expected_title",
+      "confirm_current_target",
+      "require_terminal"
+    ]
+  }
+}
