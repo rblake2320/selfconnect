@@ -1,4 +1,4 @@
-# SelfConnect SDK v0.10.4
+# SelfConnect SDK v0.12.0
 
 **OS-native bridge between AI agents and Windows desktop apps.**  
 SelfConnect started with `PostMessage(WM_CHAR)` and `PrintWindow`; it now also
@@ -424,7 +424,10 @@ All proved live in multi-session tests (see `proofs/` and `docs/`):
 5. **Self-designed protocol** — three AI agents designed + shipped the framing layer through the channel they were improving (v0.5.0 → v0.5.2 in 90 minutes)
 6. **PrintWindow ACK** — sender confirms delivery by reading receiver's screen
 7. **Claude ↔ Gemini via Win32** — Claude Code injected a message into Antigravity
-   (Google's standalone Electron IDE) and Gemini 3.1 Pro replied. Zero API calls. Zero clipboard. Zero foreground window.
+   (Google's standalone Electron IDE) and Gemini 3.1 Pro replied. The recorded
+   SelfConnect actuation/readback leg used no agent-to-agent API, clipboard, or
+   foreground-window transfer; model-provider connectivity was outside the
+   measured transport boundary.
 
    ```
    Claude:  "Hello from Claude Agent-A. What model are you?"
@@ -503,4 +506,4 @@ python antigravity_controller.py --model
 
 ## License
 
-MIT — see `LICENSE`
+Apache License 2.0 — see `LICENSE`.
