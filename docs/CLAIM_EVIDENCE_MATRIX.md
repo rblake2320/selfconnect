@@ -31,7 +31,7 @@ not been live-tested or committed as a probe, it is marked as pending.
 | TPM/CNG key use | Proven in experiment/enterprise lane | `experiments/win32_probe/CAPABILITY_BACKLOG.md`; full attestation pending |
 | TPM platform attestation | Pending | `NCryptCreateClaim` descriptor fix still required |
 | ETW provider smoke | Proven as isolated probe | `experiments/win32_probe/etw_provider.py`, `CAPABILITY_BACKLOG.md` |
-| Service SID daemon posture | Productized as Windows SCM service | `sc_fabric_windows_svc.py`, `tests/test_fabric_windows_svc.py`; SelfConnectFabricV2 service name, pywin32 ServiceFramework, install/remove/start/stop/query CLI in `sc_fabric_service.py` |
+| Windows SCM service wrapper | Implemented and test-covered; live installation evidence pending | `sc_fabric_windows_svc.py`, `tests/test_fabric_windows_svc.py`; SelfConnectFabricV2 service name and install/remove/start/stop/query code exist. Boundary: this is not evidence that the service is installed, running, or production-ready on a release machine. |
 | Job Object containment | Proven in experiment/enterprise lane | `CAPABILITY_BACKLOG.md`; runtime adapter pending |
 | MCP/package distribution | Proven as optional adapter | `sc_mcp.py`, `pyproject.toml`, package tests, built wheel inspection. Boundary: MCP is not required for the proven WM_CHAR terminal path, UIA browser path, echo-filtered readback, target guard, or lease-gate model |
 | Fabric V0 logical scale harness | Proven as benchmark/evidence harness | `sc_fabric_benchmark.py`, `docs/FABRIC_V2_BENCHMARK_RESULTS.md`; 5/10/15/20 logical agents passed with flat sub-ms transport/governance p99 and `0.0` model calls per known task |
@@ -60,7 +60,10 @@ The current non-claims are:
 - production TPM attestation;
 - production named-pipe control-plane replacement for terminal-visible routing.
 
-Note: Windows SCM service daemonization is now proven (`sc_fabric_windows_svc.py`, `sc_fabric_service.py`); the remaining non-claim is full governed daemon coverage beyond the Fabric V2 scope.
+Note: the Windows SCM wrapper is implemented and test-covered
+(`sc_fabric_windows_svc.py`, `sc_fabric_service.py`). Live installation,
+startup/restart behavior under SCM, and full governed daemon coverage remain
+release evidence gaps.
 
 ## Next Highest-Value Evidence
 
@@ -69,7 +72,7 @@ Note: Windows SCM service daemonization is now proven (`sc_fabric_windows_svc.py
    as an opt-in gate. Runtime OS owner SID lookup is proven via
    `OpenProcessToken` -> `GetTokenInformation(TokenUser)` ->
    `ConvertSidToStringSidW`.
-2. Done: installed OS service-mode daemonization for Fabric V2 (`sc_fabric_windows_svc.py`, `sc_fabric_service.py`).
+2. Capture live installed-service evidence for the existing Fabric V2 SCM wrapper.
 3. Finish TPM platform attestation with correct `NCryptBufferDesc`.
 4. Add browser multi-tab/stale-tab proof.
 5. Add governed audit event for protected checkpoint pause.

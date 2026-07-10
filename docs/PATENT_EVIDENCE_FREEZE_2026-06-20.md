@@ -154,5 +154,6 @@ Fabric V2 boundary:
 - Direct overlapped named-pipe read/write associated with IOCP is reduced to
   practice in this packet.
 - Router replay-state restart recovery is reduced to practice in this packet.
-- Queued mailbox payload recovery after restart is not yet reduced to practice
-  in this packet.
+- Queued mailbox payload recovery after restart is reduced to practice in the
+  recorded user-mode service-wrapper selftest. This does not establish that a
+  Windows SCM service was installed or running on the release machine.
