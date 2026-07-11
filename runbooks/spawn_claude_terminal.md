@@ -1,4 +1,10 @@
 # Runbook: Spawn a New Claude Code Terminal
+<!-- selfconnect-runbook: {"status":"superseded","since":"2026-07-05","replacement":"first_wake_selfconnect.md","entrypoint":false} -->
+
+> Superseded for first-wake launch/contact work as of 2026-07-05.
+> Start with `first_wake_selfconnect.md` and `agent_launch_registry.md`.
+> This file is retained as historical evidence of the older raw Windows Terminal
+> spawn and WM_CHAR briefing flow.
 
 ## What
 Open a new Windows Terminal tab running Claude Code in the selfconnect working directory,

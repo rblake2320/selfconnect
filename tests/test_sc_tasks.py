@@ -7,6 +7,7 @@ import time
 import pytest
 from sc_tasks import (
     GENESIS_HASH,
+    LockTimeout,
     TaskBoard,
     TaskState,
     TransitionError,
@@ -56,7 +57,10 @@ def test_claim_is_exclusive_across_threads(board):
 
     def worker(agent):
         while True:
-            task = board.claim(agent)
+            try:
+                task = board.claim(agent)
+            except LockTimeout:
+                continue  # another thread holds the lock; retry
             if task is None:
                 return
             with lock:

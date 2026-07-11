@@ -1,4 +1,5 @@
 # Runbook: Check Peer Terminal for Approval Prompt
+<!-- selfconnect-runbook: {"status":"current","since":"2026-05-05","replacement":null,"entrypoint":false,"kind":"specialized"} -->
 
 ## What
 Read a peer Claude Code terminal's screen, detect if it's waiting for tool approval,

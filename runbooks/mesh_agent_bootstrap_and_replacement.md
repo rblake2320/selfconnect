@@ -1,4 +1,5 @@
 # Mesh Agent Bootstrap And Replacement
+<!-- selfconnect-runbook: {"status":"current","since":"2026-06-18","replacement":null,"entrypoint":false,"kind":"specialized"} -->
 
 Last updated: 2026-06-18
 

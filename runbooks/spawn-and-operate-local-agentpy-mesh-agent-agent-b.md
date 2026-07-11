@@ -1,4 +1,14 @@
 # Runbook: Spawn and operate local_agent.py mesh agent (Agent-B)
+<!-- selfconnect-runbook: {"status":"historical","since":"2026-07-05","replacement":"first_wake_selfconnect.md","entrypoint":false,"kind":"parked"} -->
+
+> Parked historical reference as of 2026-07-05. Prefer
+> `first_wake_selfconnect.md` for first-wake launch/contact work and
+> `agent_launch_registry.md` for current target-specific launch recipes.
+<!-- selfconnect-runbook: {"status":"historical","since":"2026-07-05","replacement":"first_wake_selfconnect.md","entrypoint":false,"kind":"one-off"} -->
+
+> Historical reference as of 2026-07-05. Prefer `first_wake_selfconnect.md`
+> for first-wake launch/contact work and `agent_launch_registry.md` for current
+> target-specific launch recipes.
 
 ## What
 Run a local Ollama model (qwen3.6:27b) as a full mesh peer with bash/file/window tools via Ollama HTTP API tool calling

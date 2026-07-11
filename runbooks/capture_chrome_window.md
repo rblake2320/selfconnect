@@ -1,4 +1,5 @@
 # Runbook: Capture Chrome/Edge/Electron Window
+<!-- selfconnect-runbook: {"status":"current","since":"2026-05-05","replacement":null,"entrypoint":false,"kind":"specialized"} -->
 
 ## What
 Capture the visible content of a Chrome, Edge, or Electron window as a PIL Image for OCR,
