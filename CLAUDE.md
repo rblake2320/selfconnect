@@ -52,8 +52,10 @@ python runbook_writer.py --title "What I did" --what "What it achieves" --step "
    - Physical click position = UIA_coord / 1.25
    - PIL image pixel = (UIA_coord - window_origin_logical)
 
-5. **Codex / GPT terminal** needs `codex --full-auto` or `codex -a never` to bypass
-   interactive [Y/n] permission prompts. Without this, Codex freezes waiting for keyboard input.
+5. **Codex / GPT terminal** needs `codex -a never` to bypass interactive [Y/n] permission
+   prompts (`--full-auto` was REMOVED in codex-cli 0.142.5 — errors and drops to bare cmd,
+   verified 2026-07-05). Without this, Codex freezes waiting for keyboard input.
+   Canonical launch recipes for ALL CLI targets: `runbooks/agent_launch_registry.md`.
 
 6. **Claude Code mesh packets must be one physical line unless using a handoff file.**
    Newlines submit separate prompts and can interleave with Ron's typing or queued tool

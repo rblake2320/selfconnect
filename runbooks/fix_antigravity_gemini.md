@@ -1,4 +1,5 @@
 # Runbook: Fix Gemini Not Working in Antigravity
+<!-- selfconnect-runbook: {"status":"current","since":"2026-05-06","replacement":null,"entrypoint":false,"kind":"specialized"} -->
 
 ## What
 Restore Gemini chat and code completion in Antigravity when it silently fails to load —

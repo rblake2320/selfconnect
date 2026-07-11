@@ -1,4 +1,5 @@
 # Runbook: Inject Text into WebView2 Chat (Gemini / Antigravity / VS Code)
+<!-- selfconnect-runbook: {"status":"current","since":"2026-05-05","replacement":null,"entrypoint":false,"kind":"specialized"} -->
 
 ## What
 Type text into a WebView2-hosted chat interface — Gemini in Antigravity, VS Code extension

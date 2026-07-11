@@ -1,4 +1,5 @@
 # Runbook: Fabric V2 Windows Service — Install, Operate, and Remove
+<!-- selfconnect-runbook: {"status":"current","since":"2026-06-21","replacement":null,"entrypoint":false,"kind":"specialized"} -->
 
 ## What This Achieves
 

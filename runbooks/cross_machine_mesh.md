@@ -1,4 +1,5 @@
 # Runbook: Start Cross-Machine AI Mesh (Windows ↔ Spark-1 ↔ Spark-2)
+<!-- selfconnect-runbook: {"status":"current","since":"2026-05-05","replacement":null,"entrypoint":false,"kind":"specialized"} -->
 
 ## What
 Establish the multi-machine agent mesh so Windows PC, Spark-1 (GB10, 192.168.12.132),
