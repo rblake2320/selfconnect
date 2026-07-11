@@ -1,26 +1,25 @@
 """
 test_schemas.py — Unit tests for Pydantic schema validation.
 """
+import os
+import sys
+
 import pytest
 from pydantic import ValidationError
 
-import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vision_server.models.schemas import (
-    WindowInfo,
+    ActionRequest,
     Detection,
-    VLDescription,
-    QueueItem,
+    HealthStatus,
     LogEntry,
     MacroStep,
-    HealthStatus,
-    ActionRequest,
-    CommandRequest,
-    AttachRequest,
+    QueueItem,
+    VLDescription,
+    WindowInfo,
     WSMessage,
 )
-
 
 # ── WindowInfo ─────────────────────────────────────────────────────────────────
 

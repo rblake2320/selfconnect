@@ -1,5 +1,7 @@
 """Screenshot VS Code properly — maximize first."""
-import ctypes, time
+import ctypes
+import time
+
 from PIL import ImageGrab
 
 user32 = ctypes.windll.user32

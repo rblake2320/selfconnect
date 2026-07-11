@@ -14,13 +14,12 @@ Usage:
     python proof_benchmark.py --proof 3 # run single proof by number
 """
 
-import sys
-import os
-import json
-import time
-import subprocess
-import platform
 import argparse
+import json
+import platform
+import subprocess
+import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -29,16 +28,26 @@ if sys.platform != "win32":
     sys.exit(0)
 
 from self_connect import (
+    WindowPool,
+    WindowTarget,
     __version__,
-    WindowTarget, WindowPool,
-    list_windows, find_target, wait_for_window,
-    focus_window, get_window_rect,
-    move_window, resize_window,
-    minimize_window, maximize_window, restore_window,
-    send_string, send_keys,
-    capture_window, crop_to_client, save_capture,
-    read_clipboard, write_clipboard,
-    get_window_text, get_child_texts,
+    capture_window,
+    crop_to_client,
+    find_target,
+    get_child_texts,
+    get_window_rect,
+    get_window_text,
+    list_windows,
+    maximize_window,
+    minimize_window,
+    move_window,
+    read_clipboard,
+    resize_window,
+    restore_window,
+    send_keys,
+    send_string,
+    wait_for_window,
+    write_clipboard,
 )
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
@@ -126,7 +135,6 @@ def teardown():
             pass
     time.sleep(0.5)
     # Force-close any save dialogs by sending Alt+N (Don't Save)
-    import ctypes
     for w in list_windows():
         if "Notepad" in w.title and "save" in w.title.lower():
             send_keys("alt", "n")
@@ -180,7 +188,7 @@ def proof_2_postmessage_input() -> dict:
 
     img = capture_window(_notepad1.hwnd)
     cropped = crop_to_client(_notepad1.hwnd, img) if img else None
-    path = _save_img(cropped or img, "proof_2_input_after.png")
+    _save_img(cropped or img, "proof_2_input_after.png")
 
     # Validate by reading child text (zero-inference — no OCR needed)
     children = get_child_texts(_notepad1.hwnd)
@@ -297,7 +305,7 @@ def proof_5_clipboard_bridge() -> dict:
     """
     token = f"CLIPBOARD-{int(time.time() * 1000)}"
 
-    ok = write_clipboard(token)
+    write_clipboard(token)
     time.sleep(0.15)
     result = read_clipboard()
 
@@ -305,7 +313,7 @@ def proof_5_clipboard_bridge() -> dict:
 
     # Also test unicode
     unicode_str = "SelfConnect™ — AI→Windows bridge ∞"
-    ok2 = write_clipboard(unicode_str)
+    write_clipboard(unicode_str)
     time.sleep(0.15)
     result2 = read_clipboard()
     unicode_ok = result2 == unicode_str

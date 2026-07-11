@@ -40,8 +40,10 @@ import ctypes
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
+
+import _win32_abi as _abi
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -49,7 +51,12 @@ ctypes.windll.shcore.SetProcessDpiAwareness(2)
 
 user32 = ctypes.windll.user32
 WM_CHAR = 0x0102
-WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+# Reuse the SDK's pointer-sized callback type. `ctypes.windll.user32` is a
+# process-wide singleton, so self_connect's configure_win32_prototypes() pins
+# EnumWindows.argtypes to _win32_abi.WNDENUMPROC. A locally-defined WINFUNCTYPE
+# would be a different class and get rejected once self_connect is imported in
+# the same process ("expected WinFunctionType instance instead of WinFunctionType").
+WNDENUMPROC = _abi.WNDENUMPROC
 
 __all__ = [
     "AntigravityMonitor",

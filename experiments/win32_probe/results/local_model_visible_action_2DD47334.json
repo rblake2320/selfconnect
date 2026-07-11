@@ -1,0 +1,21 @@
+{
+  "actor": {
+    "cmd_pid": 40360,
+    "hwnd": 56036634,
+    "title": "LOCAL-OLLAMA-1_VISIBLE_2DD47334"
+  },
+  "control_path": "visible actor terminal -> Ollama localhost JSON action -> guarded SelfConnect send -> visible receiver terminal",
+  "elapsed_ms": 8848.9,
+  "failure": "",
+  "model": "gemma3:latest",
+  "nonce": "SC_VISIBLE_LOCAL_2DD47334",
+  "receiver": {
+    "cmd_pid": 67996,
+    "hwnd": 367334900,
+    "title": "SC_VISIBLE_RECEIVER_2DD47334"
+  },
+  "receiver_log_hash": "67a7ff59493e29af9466f51ac6b069708a93f6e6c4e574f2439c127aee640c2d",
+  "redacted": true,
+  "verdict": "PASS",
+  "windows_left_open": true
+}

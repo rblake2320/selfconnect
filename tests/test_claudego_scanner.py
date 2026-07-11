@@ -6,8 +6,8 @@ No Win32 desktop needed — all Win32/approval_partner calls are mocked.
 from __future__ import annotations
 
 import sys
-import types
 import time
+import types
 from unittest.mock import MagicMock
 
 import pytest
@@ -30,26 +30,25 @@ sys.modules.setdefault("self_connect", _mock_sc)
 
 # Mock approval_partner if not already importable from root
 import importlib
+
 try:
     importlib.import_module("approval_partner")
 except ImportError:
-    import sys as _sys
     import pathlib as _pl
+    import sys as _sys
     _ROOT = _pl.Path(__file__).parent.parent
     if str(_ROOT) not in _sys.path:
         _sys.path.insert(0, str(_ROOT))
 
+from approval_partner import PartnerConfig  # type: ignore[import]
 from claudego.scanner import (  # noqa: E402
-    Scanner,
-    ScanEvent,
-    EVENT_TERMINAL_DISCOVERED,
     EVENT_AUTO_APPROVED,
-    EVENT_AUTO_DENIED,
     EVENT_MANUAL_APPROVED,
     EVENT_MANUAL_DENIED,
+    EVENT_TERMINAL_DISCOVERED,
+    ScanEvent,
+    Scanner,
 )
-from approval_partner import PartnerConfig  # type: ignore[import]
-
 
 # ── PartnerConfig ─────────────────────────────────────────────────────────────
 

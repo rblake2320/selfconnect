@@ -30,19 +30,22 @@ Run as a script to list all visible windows:
   python self_connect.py
 """
 
-__version__ = "0.10.0"
+__version__ = "0.12.0"
 __all__ = [  # noqa: RUF022  # grouped by version/category, not alphabetical
     # Core types
-    "WindowTarget", "WindowPool",
+    "WindowTarget", "WindowPool", "capabilities",
     # Window discovery
     "list_windows", "find_target", "find_child_by_class",
-    "get_own_terminal_pid", "wait_for_window",
+    "get_own_terminal_pid", "get_own_hwnd", "wait_for_window",
     # Focus & management
     "focus_window", "move_window", "resize_window",
     "minimize_window", "maximize_window", "restore_window", "submit_claude_input",
     "get_window_rect",
     # Input: text
     "send_string", "send_keys",
+    # Console I/O fast path (v0.11.0) — batch inject, direct buffer read
+    "read_console_fast",
+    "_resolve_console_pid", "_write_console_input", "_read_console_output",
     # Input: mouse
     "click_at", "click_window", "scroll_window",
     # Clipboard
@@ -87,6 +90,26 @@ import time
 import uuid as _uuid
 from dataclasses import asdict, dataclass, field
 from typing import Optional
+
+import _win32_abi as _abi
+
+_DWORD_PTR = _abi.DWORD_PTR
+_WNDENUMPROC = _abi.WNDENUMPROC
+_configure_win32_prototypes = _abi.configure_win32_prototypes
+_handle_value = _abi.handle_value
+
+_WIN32_TYPES = {
+    "HWND": _abi.HWND,
+    "HDC": _abi.HDC,
+    "BOOL": _abi.BOOL,
+    "UINT": _abi.UINT,
+    "DWORD": _abi.DWORD,
+    "WPARAM": _abi.WPARAM,
+    "LPARAM": _abi.LPARAM,
+    "LRESULT": _abi.LRESULT,
+    "DWORD_PTR": _abi.DWORD_PTR,
+    "WNDENUMPROC": _abi.WNDENUMPROC,
+}
 
 # ── Win32 constants ───────────────────────────────────────────────────────────
 INPUT_KEYBOARD       = 1
@@ -170,10 +193,147 @@ user32   = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 gdi32    = ctypes.windll.gdi32
 
+_configure_win32_prototypes(user32, kernel32, gdi32)
+
+
+def _probe_uia_text() -> bool:
+    try:
+        import comtypes.client as _cc  # type: ignore
+        import comtypes.gen.UIAutomationClient as _uia  # type: ignore
+
+        auto = _cc.CreateObject(
+            "{ff48dba4-60ef-4201-aa87-54103eef594e}",
+            interface=_uia.IUIAutomation,
+        )
+        hwnd = kernel32.GetConsoleWindow()
+        if hwnd:
+            return auto.ElementFromHandle(hwnd) is not None
+        return auto is not None
+    except Exception:
+        return False
+
+
+def _probe_uia_events() -> bool:
+    try:
+        import comtypes.client as _cc  # type: ignore
+        import comtypes.gen.UIAutomationClient as _uia  # type: ignore
+
+        auto = _cc.CreateObject(
+            "{ff48dba4-60ef-4201-aa87-54103eef594e}",
+            interface=_uia.IUIAutomation,
+        )
+        hwnd = kernel32.GetConsoleWindow()
+        elem = auto.ElementFromHandle(hwnd) if hwnd else None
+        return bool(elem and hasattr(auto, "AddAutomationEventHandler"))
+    except Exception:
+        return False
+
+
+def _probe_printwindow() -> bool:
+    def _try(hwnd: int) -> bool:
+        if not hwnd:
+            return False
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return False
+        width = rect.right - rect.left
+        height = rect.bottom - rect.top
+        if width <= 0 or height <= 0:
+            return False
+        hdc_screen = user32.GetDC(0)
+        hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+        hbmp = gdi32.CreateCompatibleBitmap(hdc_screen, width, height)
+        gdi32.SelectObject(hdc_mem, hbmp)
+        try:
+            return bool(user32.PrintWindow(hwnd, hdc_mem, PW_RENDERFULLCONTENT))
+        except Exception:
+            return False
+        finally:
+            gdi32.DeleteObject(hbmp)
+            gdi32.DeleteDC(hdc_mem)
+            user32.ReleaseDC(0, hdc_screen)
+
+    candidates = [kernel32.GetConsoleWindow(), user32.GetForegroundWindow()]
+
+    def _cb(hwnd, _):
+        hwnd = _handle_value(hwnd)
+        if user32.IsWindowVisible(hwnd):
+            candidates.append(hwnd)
+        return len(candidates) < 24
+
+    try:
+        user32.EnumWindows(_WNDENUMPROC(_cb), 0)
+    except Exception:
+        pass
+    seen = set()
+    for hwnd in candidates:
+        hwnd = _handle_value(hwnd)
+        if hwnd in seen:
+            continue
+        seen.add(hwnd)
+        if _try(hwnd):
+            return True
+    return False
+
+
+def _probe_named_pipe_impersonation() -> bool:
+    try:
+        advapi32 = ctypes.windll.advapi32
+        return (
+            hasattr(kernel32, "CreateNamedPipeW")
+            and hasattr(kernel32, "ConnectNamedPipe")
+            and hasattr(advapi32, "ImpersonateNamedPipeClient")
+            and hasattr(advapi32, "RevertToSelf")
+        )
+    except Exception:
+        return False
+
+
+def _probe_tpm_identity() -> bool:
+    try:
+        ncrypt = ctypes.WinDLL("ncrypt.dll")
+        provider = ctypes.c_void_p()
+        ncrypt.NCryptOpenStorageProvider.argtypes = [
+            ctypes.POINTER(ctypes.c_void_p),
+            wintypes.LPCWSTR,
+            _abi.DWORD,
+        ]
+        ncrypt.NCryptOpenStorageProvider.restype = ctypes.c_long
+        ncrypt.NCryptFreeObject.argtypes = [ctypes.c_void_p]
+        ncrypt.NCryptFreeObject.restype = ctypes.c_long
+        status = ncrypt.NCryptOpenStorageProvider(
+            ctypes.byref(provider),
+            "Microsoft Platform Crypto Provider",
+            0,
+        )
+        if status != 0 or not provider.value:
+            return False
+        ncrypt.NCryptFreeObject(provider)
+        return True
+    except Exception:
+        return False
+
+
+def _probe_capabilities() -> dict[str, bool]:
+    return {
+        "win32": True,
+        "uia_text": _probe_uia_text(),
+        "uia_events": _probe_uia_events(),
+        "printwindow": _probe_printwindow(),
+        "named_pipe_impersonation": _probe_named_pipe_impersonation(),
+        "tpm_identity": _probe_tpm_identity(),
+    }
+
+
+# Platform capability probes. A True value means the local OS/dependencies appear
+# to support that primitive; it does not guarantee the production SDK adapter is
+# enabled for every capability.
+capabilities = _probe_capabilities()
+
 
 # ── ctypes structures ─────────────────────────────────────────────────────────
 class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [
+    _fields_ = [  # noqa: RUF012
         ("wVk",         ctypes.c_ushort),
         ("wScan",       ctypes.c_ushort),
         ("dwFlags",     ctypes.c_ulong),
@@ -185,10 +345,10 @@ class _INPUT_UNION(ctypes.Union):
     _fields_ = [("ki", KEYBDINPUT), ("_pad", ctypes.c_byte * 24)]  # noqa: RUF012
 
 class INPUT(ctypes.Structure):
-    _fields_ = [("type", ctypes.c_ulong), ("u", _INPUT_UNION)]
+    _fields_ = [("type", ctypes.c_ulong), ("u", _INPUT_UNION)]  # noqa: RUF012
 
 class BITMAPINFOHEADER(ctypes.Structure):
-    _fields_ = [
+    _fields_ = [  # noqa: RUF012
         ("biSize",          ctypes.c_uint32),
         ("biWidth",         ctypes.c_int32),
         ("biHeight",        ctypes.c_int32),
@@ -201,6 +361,262 @@ class BITMAPINFOHEADER(ctypes.Structure):
         ("biClrUsed",       ctypes.c_uint32),
         ("biClrImportant",  ctypes.c_uint32),
     ]
+
+
+# ── Console I/O fast path — WriteConsoleInput / ReadConsoleOutput (v0.11.0) ───
+#
+# The original send_string() PostMessages one WM_CHAR per character with a
+# time.sleep(char_delay) between each — so a 500-char briefing costs ~10-25s of
+# pure sleeping regardless of machine speed. WriteConsoleInputW writes the entire
+# string to the target's console input buffer in a single syscall (milliseconds),
+# and ReadConsoleOutputW reads the console screen buffer directly without walking
+# the UIA accessibility tree. Both are background-safe.
+#
+# CAVEAT: these AttachConsole to the target's console host, which requires the
+# caller to FreeConsole() its own console for the duration (serialized by
+# _console_lock, restored to the parent console afterward). This is contained to
+# the short-lived injector process in the normal `python -c "..."` usage pattern.
+# send_string(mode="auto") tries this path first and falls back to PostMessage on
+# any failure, so it can never hard-fail relative to the legacy behavior.
+
+_console_lock = threading.Lock()
+
+ATTACH_PARENT_PROCESS_CONST = 0xFFFFFFFF
+KEY_EVENT_TYPE = 0x0001
+
+# Explicit prototypes so 64-bit console handles are not truncated (the upstream
+# fork relied on ctypes int defaults; these make the marshalling correct).
+kernel32.CreateFileW.restype = wintypes.HANDLE
+kernel32.CreateFileW.argtypes = [
+    wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+    wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+]
+kernel32.AttachConsole.restype = wintypes.BOOL
+kernel32.AttachConsole.argtypes = [wintypes.DWORD]
+kernel32.FreeConsole.restype = wintypes.BOOL
+kernel32.CloseHandle.restype = wintypes.BOOL
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+
+class _KEY_EVENT_RECORD_UCHAR(ctypes.Union):
+    _fields_ = [("UnicodeChar", ctypes.c_wchar), ("AsciiChar", ctypes.c_char)]  # noqa: RUF012
+
+
+class _KEY_EVENT_RECORD(ctypes.Structure):
+    _fields_ = [  # noqa: RUF012
+        ("bKeyDown",          wintypes.BOOL),
+        ("wRepeatCount",      wintypes.WORD),
+        ("wVirtualKeyCode",   wintypes.WORD),
+        ("wVirtualScanCode",  wintypes.WORD),
+        ("uChar",             _KEY_EVENT_RECORD_UCHAR),
+        ("dwControlKeyState", wintypes.DWORD),
+    ]
+
+
+class _INPUT_RECORD_EVENT(ctypes.Union):
+    _fields_ = [("KeyEvent", _KEY_EVENT_RECORD)]  # noqa: RUF012
+
+
+class _INPUT_RECORD(ctypes.Structure):
+    _fields_ = [("EventType", wintypes.WORD), ("Event", _INPUT_RECORD_EVENT)]  # noqa: RUF012
+
+
+class _SMALL_RECT(ctypes.Structure):
+    _fields_ = [  # noqa: RUF012
+        ("Left", wintypes.SHORT), ("Top", wintypes.SHORT),
+        ("Right", wintypes.SHORT), ("Bottom", wintypes.SHORT),
+    ]
+
+
+class _COORD(ctypes.Structure):
+    _fields_ = [("X", wintypes.SHORT), ("Y", wintypes.SHORT)]  # noqa: RUF012
+
+
+class _CONSOLE_SCREEN_BUFFER_INFO(ctypes.Structure):
+    _fields_ = [  # noqa: RUF012
+        ("dwSize",              _COORD),
+        ("dwCursorPosition",    _COORD),
+        ("wAttributes",         wintypes.WORD),
+        ("srWindow",            _SMALL_RECT),
+        ("dwMaximumWindowSize", _COORD),
+    ]
+
+
+class _CHAR_INFO_CHAR(ctypes.Union):
+    _fields_ = [("UnicodeChar", ctypes.c_wchar), ("AsciiChar", ctypes.c_char)]  # noqa: RUF012
+
+
+class _CHAR_INFO(ctypes.Structure):
+    _fields_ = [("Char", _CHAR_INFO_CHAR), ("Attributes", wintypes.WORD)]  # noqa: RUF012
+
+
+kernel32.WriteConsoleInputW.restype = wintypes.BOOL
+kernel32.WriteConsoleInputW.argtypes = [
+    wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+]
+kernel32.GetConsoleScreenBufferInfo.restype = wintypes.BOOL
+kernel32.GetConsoleScreenBufferInfo.argtypes = [
+    wintypes.HANDLE, ctypes.POINTER(_CONSOLE_SCREEN_BUFFER_INFO),
+]
+kernel32.ReadConsoleOutputW.restype = wintypes.BOOL
+kernel32.ReadConsoleOutputW.argtypes = [
+    wintypes.HANDLE, ctypes.c_void_p, _COORD, _COORD, ctypes.POINTER(_SMALL_RECT),
+]
+
+
+def _resolve_console_pid(target: "WindowTarget") -> int:
+    """Find the console host PID for a Windows Terminal target.
+
+    Windows Terminal hosts each tab via OpenConsole.exe (or conhost.exe).
+    AttachConsole needs the console host PID, not the WT window PID.
+    Falls back to the window PID if no console child is found.
+    """
+    try:
+        import psutil
+        proc = psutil.Process(target.pid)
+        for child in proc.children(recursive=True):
+            if child.name().lower() in ("openconsole.exe", "conhost.exe"):
+                return child.pid
+        parent = proc.parent()
+        if parent:
+            for sibling in parent.children():
+                if sibling.name().lower() in ("openconsole.exe", "conhost.exe"):
+                    return sibling.pid
+    except Exception:
+        pass
+    return target.pid
+
+
+def _write_console_input(target_pid: int, text: str) -> bool:
+    """Write text to a process's console input buffer via WriteConsoleInputW.
+
+    Background-safe. One syscall for the entire string — no per-character sleep.
+    Delivers real stdin key events (including Enter via VK_RETURN), so it also
+    submits in stdin-reading TUIs. Returns True on success, False on any failure
+    (caller falls back to PostMessage).
+    """
+    if not text:
+        return True
+
+    records = []
+    for ch in text:
+        vk = scan = 0
+        if ch in ("\r", "\n"):
+            vk, scan = VK_RETURN, 0x1C
+        for down in (True, False):
+            rec = _INPUT_RECORD()
+            rec.EventType = KEY_EVENT_TYPE
+            rec.Event.KeyEvent.bKeyDown = down
+            rec.Event.KeyEvent.wRepeatCount = 1
+            rec.Event.KeyEvent.wVirtualKeyCode = vk
+            rec.Event.KeyEvent.wVirtualScanCode = scan
+            rec.Event.KeyEvent.uChar.UnicodeChar = ch
+            rec.Event.KeyEvent.dwControlKeyState = 0
+            records.append(rec)
+
+    arr = (_INPUT_RECORD * len(records))(*records)
+    written = wintypes.DWORD(0)
+
+    with _console_lock:
+        kernel32.FreeConsole()
+        if not kernel32.AttachConsole(wintypes.DWORD(target_pid)):
+            kernel32.AttachConsole(wintypes.DWORD(ATTACH_PARENT_PROCESS_CONST))
+            return False
+        try:
+            # GetStdHandle is stale after AttachConsole — open CONIN$ directly.
+            GENERIC_READ  = 0x80000000
+            GENERIC_WRITE = 0x40000000
+            OPEN_EXISTING = 3
+            FILE_SHARE_READ_WRITE = 0x03
+            h_stdin = kernel32.CreateFileW(
+                "CONIN$", GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ_WRITE, None, OPEN_EXISTING, 0, None,
+            )
+            if not h_stdin or h_stdin == wintypes.HANDLE(-1).value:
+                return False
+            try:
+                ok = kernel32.WriteConsoleInputW(
+                    h_stdin, arr, len(records), ctypes.byref(written)
+                )
+                return bool(ok) and written.value > 0
+            finally:
+                kernel32.CloseHandle(h_stdin)
+        except Exception:
+            return False
+        finally:
+            kernel32.FreeConsole()
+            kernel32.AttachConsole(wintypes.DWORD(ATTACH_PARENT_PROCESS_CONST))
+
+
+def _read_console_output(target_pid: int) -> Optional[str]:
+    """Read the visible console screen buffer via ReadConsoleOutputW.
+
+    Background-safe and much faster than get_text_uia() for ConPTY windows
+    (no COM, no accessibility-tree walk). Returns the visible text grid, or
+    None on failure (caller falls back to UIA extraction).
+    """
+    with _console_lock:
+        kernel32.FreeConsole()
+        if not kernel32.AttachConsole(wintypes.DWORD(target_pid)):
+            kernel32.AttachConsole(wintypes.DWORD(ATTACH_PARENT_PROCESS_CONST))
+            return None
+        try:
+            GENERIC_READ  = 0x80000000
+            GENERIC_WRITE = 0x40000000
+            OPEN_EXISTING = 3
+            FILE_SHARE_READ_WRITE = 0x03
+            h_out = kernel32.CreateFileW(
+                "CONOUT$", GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ_WRITE, None, OPEN_EXISTING, 0, None,
+            )
+            if not h_out or h_out == wintypes.HANDLE(-1).value:
+                return None
+            try:
+                csbi = _CONSOLE_SCREEN_BUFFER_INFO()
+                if not kernel32.GetConsoleScreenBufferInfo(h_out, ctypes.byref(csbi)):
+                    return None
+                win = csbi.srWindow
+                width  = win.Right  - win.Left + 1
+                height = win.Bottom - win.Top  + 1
+                if width <= 0 or height <= 0:
+                    return None
+                buf_size  = _COORD(width, height)
+                buf_coord = _COORD(0, 0)
+                region    = _SMALL_RECT(win.Left, win.Top, win.Right, win.Bottom)
+                buf = (_CHAR_INFO * (width * height))()
+                if not kernel32.ReadConsoleOutputW(
+                    h_out, buf, buf_size, buf_coord, ctypes.byref(region)
+                ):
+                    return None
+                lines = []
+                for row in range(height):
+                    line = "".join(
+                        buf[row * width + col].Char.UnicodeChar for col in range(width)
+                    ).rstrip()
+                    lines.append(line)
+                while lines and not lines[-1]:
+                    lines.pop()
+                return "\n".join(lines)
+            finally:
+                kernel32.CloseHandle(h_out)
+        except Exception:
+            return None
+        finally:
+            kernel32.FreeConsole()
+            kernel32.AttachConsole(wintypes.DWORD(ATTACH_PARENT_PROCESS_CONST))
+
+
+def read_console_fast(target: "WindowTarget") -> Optional[str]:
+    """Fast console-buffer text read for a ConPTY WindowTarget.
+
+    Public wrapper over _read_console_output that resolves the console host PID.
+    Returns visible terminal text, or None if the fast path is unavailable
+    (caller should fall back to get_text_uia). Only meaningful for ConPTY windows.
+    """
+    try:
+        return _read_console_output(_resolve_console_pid(target))
+    except Exception:
+        return None
 
 
 # ── WindowTarget ──────────────────────────────────────────────────────────────
@@ -266,18 +682,80 @@ def _get_exe_name(pid: int) -> str:
         kernel32.CloseHandle(handle)
 
 
+def _is_windows_terminal_pid(pid: int) -> bool:
+    """True if *pid* belongs to a genuine WindowsTerminal.exe process.
+
+    Validates both the process name AND the executable path to resist simple
+    process-name spoofing (CHECK-3 / MEDIUM red-team finding).
+    """
+    try:
+        import psutil as _psutil
+        p = _psutil.Process(pid)
+        name = (p.name() or "").lower()
+        if "windowsterminal" not in name:
+            return False
+        exe = (p.exe() or "").replace("\\", "/").lower()
+        # Must live under a known Windows Terminal installation path
+        return any(fragment in exe for fragment in (
+            "windowsapps/microsoft.windowsterminal",
+            "windowsapps\\microsoft.windowsterminal",
+            "windowsterminal.exe",  # fallback for portable / dev builds
+        ))
+    except Exception:
+        return False
+
+
+def get_own_hwnd() -> int | None:
+    """HWND of the terminal tab hosting this script.
+
+    Works in both traditional console (GetConsoleWindow) and Windows Terminal
+    ConPTY environments (GetForegroundWindow + CASCADIA_HOSTING_WINDOW_CLASS).
+    Returns None only when no console or terminal window can be identified.
+
+    **TOCTOU note**: in ConPTY mode the result is focus-dependent —
+    GetForegroundWindow returns the window with keyboard focus at call time.
+    Call once at daemon/agent startup and *cache* the result; do not call
+    per-message in background loops where focus may have moved.
+    """
+    # Stage 1: traditional console (works outside ConPTY)
+    hwnd = kernel32.GetConsoleWindow()
+    if hwnd:
+        return _handle_value(hwnd)
+
+    # Stage 2: ConPTY / Windows Terminal — the active CASCADIA window owned by
+    # a verified WindowsTerminal.exe is the tab currently executing code.
+    try:
+        fg = user32.GetForegroundWindow()
+        if fg:
+            fg_hwnd = _handle_value(fg)
+            fg_pid = _get_pid(fg_hwnd)
+            if _is_windows_terminal_pid(fg_pid):
+                cls_buf = ctypes.create_unicode_buffer(128)
+                user32.GetClassNameW(fg_hwnd, cls_buf, 128)
+                if "CASCADIA" in cls_buf.value.upper():
+                    return fg_hwnd
+    except Exception:
+        pass
+
+    return None
+
+
 def get_own_terminal_pid() -> int:
-    """PID of the console window hosting this script (for self-exclusion)."""
-    own_hwnd = kernel32.GetConsoleWindow()
-    return _get_pid(own_hwnd) if own_hwnd else 0
+    """PID of the console window hosting this script (for self-exclusion).
+
+    Returns 0 when the PID cannot be determined (e.g. ConPTY without focus).
+    Prefer get_own_hwnd() for reliable hwnd-based identification.
+    """
+    hwnd = get_own_hwnd()
+    return _get_pid(hwnd) if hwnd else 0
 
 
 def list_windows() -> list[WindowTarget]:
     """Return all visible top-level windows as WindowTarget objects."""
     results: list[WindowTarget] = []
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
 
     def _cb(hwnd, _):
+        hwnd = _handle_value(hwnd)
         if user32.IsWindowVisible(hwnd):
             title = _get_window_title(hwnd)
             if title:
@@ -289,23 +767,23 @@ def list_windows() -> list[WindowTarget]:
                 ))
         return True
 
-    user32.EnumWindows(WNDENUMPROC(_cb), 0)
+    user32.EnumWindows(_WNDENUMPROC(_cb), 0)
     return results
 
 
 def find_child_by_class(parent_hwnd: int, target_class: str) -> int:
     """Return first child window matching target_class, or 0."""
-    found = ctypes.c_int(0)
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+    found = [0]
 
     def _cb(hwnd, _):
+        hwnd = _handle_value(hwnd)
         if _get_class_name(hwnd) == target_class:
-            found.value = hwnd
+            found[0] = hwnd
             return False
         return True
 
-    user32.EnumChildWindows(parent_hwnd, WNDENUMPROC(_cb), 0)
-    return found.value
+    user32.EnumChildWindows(parent_hwnd, _WNDENUMPROC(_cb), 0)
+    return found[0]
 
 
 def find_target(
@@ -394,22 +872,52 @@ def _send_char_sendinput(ch: str) -> None:
         user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
 
 
-def send_string(target: WindowTarget, text: str, char_delay: float = 0.05) -> None:
+def send_string(target: WindowTarget, text: str, char_delay: float = 0.05,
+                mode: str = "postmessage") -> None:
     """
-    Send text to the target window. Auto-selects delivery method:
+    Send text to the target window. Auto-selects delivery method.
 
+    Modes (default "postmessage" — the safe, per-hwnd-targeted legacy path):
+      - "postmessage": per-character PostMessage(WM_CHAR) / SendInput. Targets the
+                       exact window handle, so it always reaches the intended tab.
+                       Byte-for-byte the pre-v0.11.0 behavior. This is the correct
+                       default for the multi-agent mesh.
+      - "console":     WriteConsoleInput fast path — the entire string in one
+                       syscall, no per-character sleep (100x+ faster for long
+                       briefings), and delivers a real Enter that submits in
+                       stdin-reading TUIs. Falls back to PostMessage on failure.
+      - "auto":        same as "console" but always falls back to PostMessage.
+
+    ⚠️  CONSOLE-PATH TARGETING CAVEAT: the console path resolves a target by PID,
+    not window handle. On Windows 11, all Windows Terminal tabs share ONE
+    WindowsTerminal.exe PID, and _resolve_console_pid picks the first OpenConsole
+    child — which is NOT reliably the tab you meant when multiple tabs/windows are
+    open. Use "console"/"auto" only when the target has a single, unambiguous
+    console (e.g. a directly-spawned Codex/cmd with its own conhost). For the
+    general mesh, keep the default "postmessage".
+
+    Delivery details:
     - Windows Terminal (CASCADIA_HOSTING_WINDOW_CLASS): PostMessage(WM_CHAR) to
       the InputSite child, routed through ConPTY. Does NOT require foreground
       focus — the target window can be visible but NOT the active window.
       Include '\\r' in the text string to send Enter (wParam=0x0D via WM_CHAR,
       or WM_KEYDOWN/VK_RETURN — both work through ConPTY).
-
     - Classic Win32 windows: SendInput(KEYEVENTF_UNICODE). DOES require the
       target window to have foreground focus.
 
     Verified: one Claude session can inject text into another Claude session's
     terminal window without stealing foreground focus (2026-04-30 live proof).
     """
+    # Console fast path — direct WriteConsoleInput, no per-character delay.
+    if mode in ("auto", "console"):
+        try:
+            if _write_console_input(_resolve_console_pid(target), text):
+                return
+        except Exception:
+            pass
+        if mode == "console":
+            return  # console-only: no fallback
+
     if target.is_uwp_terminal():
         input_site = find_child_by_class(target.hwnd, WT_INPUT_CLASS)
         delivery = input_site if input_site else target.hwnd
@@ -500,16 +1008,16 @@ def get_child_texts(hwnd: int) -> "list[tuple[int, str, str]]":
     without taking a screenshot — zero inference cost.
     """
     results: list[tuple[int, str, str]] = []
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
 
     def _cb(child_hwnd, _):
+        child_hwnd = _handle_value(child_hwnd)
         cls = _get_class_name(child_hwnd)
         text = _get_window_title(child_hwnd)
         if text:
             results.append((child_hwnd, cls, text))
         return True
 
-    user32.EnumChildWindows(hwnd, WNDENUMPROC(_cb), 0)
+    user32.EnumChildWindows(hwnd, _WNDENUMPROC(_cb), 0)
     return results
 
 
@@ -660,14 +1168,14 @@ def submit_claude_input(hwnd: int) -> bool:
     _input_site: list[int] = []
 
     def _enum_cb(child: int, _: int) -> bool:
+        child = _handle_value(child)
         buf = ctypes.create_unicode_buffer(64)
         user32.GetClassNameW(child, buf, 64)
         if "InputSite" in buf.value:
             _input_site.append(child)
         return True
 
-    _cb_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
-    user32.EnumChildWindows(hwnd, _cb_type(_enum_cb), 0)
+    user32.EnumChildWindows(hwnd, _WNDENUMPROC(_enum_cb), 0)
 
     if _input_site:
         user32.PostMessageW(_input_site[0], WM_CHAR, 0x000D, lParam)
@@ -850,7 +1358,7 @@ def _smto(hwnd: int, msg: int, wparam: int, lparam: int,
     Returns the message result, or 0 on timeout/error.
     SMTO_ABORTIFHUNG: returns immediately if the target is not responding.
     """
-    result = ctypes.c_size_t(0)
+    result = _DWORD_PTR(0)
     user32.SendMessageTimeoutW(
         hwnd, msg, wparam, lparam,
         SMTO_ABORTIFHUNG, timeout_ms,
@@ -982,7 +1490,10 @@ def get_text(hwnd: int) -> str:
     if not length:
         return ""
     buf = ctypes.create_unicode_buffer(length + 2)
-    user32.SendMessageW(hwnd, WM_GETTEXT, length + 1, buf)
+    user32.SendMessageW(
+        hwnd, WM_GETTEXT, length + 1,
+        ctypes.cast(buf, ctypes.c_void_p).value or 0,
+    )
     return buf.value
 
 
@@ -1017,9 +1528,9 @@ def click_button(parent_hwnd: int, button_text: str = "",
     Returns True if a matching button was found and BM_CLICK was sent.
     """
     found = [False]
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
 
     def _cb(child_hwnd, _):
+        child_hwnd = _handle_value(child_hwnd)
         cls = _get_class_name(child_hwnd)
         if button_class.lower() not in cls.lower():
             return True
@@ -1031,7 +1542,7 @@ def click_button(parent_hwnd: int, button_text: str = "",
         found[0] = True
         return False  # stop enumeration
 
-    cb = WNDENUMPROC(_cb)
+    cb = _WNDENUMPROC(_cb)
     user32.EnumChildWindows(parent_hwnd, cb, 0)
     return found[0]
 
@@ -1093,9 +1604,9 @@ def list_child_controls(hwnd: int) -> list[dict]:
     Critical for discovering what controls exist before targeting them.
     """
     results: list[dict] = []
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
 
     def _cb(child_hwnd, _):
+        child_hwnd = _handle_value(child_hwnd)
         cls = _get_class_name(child_hwnd)
         text = _get_window_title(child_hwnd)
         r = wintypes.RECT()
@@ -1108,7 +1619,7 @@ def list_child_controls(hwnd: int) -> list[dict]:
         })
         return True
 
-    cb = WNDENUMPROC(_cb)
+    cb = _WNDENUMPROC(_cb)
     user32.EnumChildWindows(hwnd, cb, 0)
     return results
 
@@ -1120,10 +1631,10 @@ def find_child_by_text(hwnd: int, text: str, partial: bool = True) -> int:
     partial=False: exact match (case-insensitive).
     """
     found = [0]
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
     needle = text.lower()
 
     def _cb(child_hwnd, _):
+        child_hwnd = _handle_value(child_hwnd)
         title = _get_window_title(child_hwnd).lower()
         if partial and needle in title:
             found[0] = child_hwnd
@@ -1133,7 +1644,7 @@ def find_child_by_text(hwnd: int, text: str, partial: bool = True) -> int:
             return False
         return True
 
-    cb = WNDENUMPROC(_cb)
+    cb = _WNDENUMPROC(_cb)
     user32.EnumChildWindows(hwnd, cb, 0)
     return found[0]
 
@@ -1809,15 +2320,28 @@ class MessageListener:
 
     def _loop(self) -> None:
         """Poll loop — runs in daemon thread."""
-        import pythoncom  # type: ignore
         try:
-            pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
+            import pythoncom  # type: ignore
         except Exception:
-            pass
+            pythoncom = None  # type: ignore[assignment]
+        if pythoncom is not None:
+            try:
+                pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
+            except Exception:
+                pass
 
         while not self._stop_event.wait(self.poll):
             try:
-                text = get_text_uia(self.own_hwnd)
+                text = ""
+                try:
+                    text = get_text_uia(self.own_hwnd)
+                except Exception:
+                    pass
+                if not text:
+                    try:
+                        text = "\n".join(t for _, _, t in get_child_texts(self.own_hwnd))
+                    except Exception:
+                        pass
                 if not text:
                     continue
                 frames = parse_all_frames(text)
@@ -2270,9 +2794,21 @@ class Checkpoint:
     schema:     str   = "selfconnect-checkpoint-v1"
 
 
+def _checkpoint_digest(data: dict) -> str:
+    """SHA-256 of checkpoint content excluding the digest field itself."""
+    import hashlib as _hashlib
+    stable = {k: v for k, v in data.items() if k != "digest"}
+    canonical = _json.dumps(stable, sort_keys=True, separators=(",", ":"))
+    return _hashlib.sha256(canonical.encode()).hexdigest()
+
+
 def write_checkpoint(checkpoint: Checkpoint, path: str) -> str:
     """
-    Serialize a Checkpoint to a JSON file.
+    Serialize a Checkpoint to a JSON file with a content-integrity digest.
+
+    The ``digest`` field (SHA-256 of all other fields) lets ``read_checkpoint``
+    detect accidental corruption or casual tampering (CHECK-5 mitigation).
+    For secret-keyed HMAC use the TPM ECDSA path proved in session 9.
 
     Returns the resolved absolute path on success.
     Raises OSError if the directory is not writable.
@@ -2287,6 +2823,7 @@ def write_checkpoint(checkpoint: Checkpoint, path: str) -> str:
     abs_path = os.path.abspath(path)
     os.makedirs(os.path.dirname(abs_path) or ".", exist_ok=True)
     data = asdict(checkpoint)
+    data["digest"] = _checkpoint_digest(data)
     with open(abs_path, "w", encoding="utf-8") as f:
         _json.dump(data, f, indent=2)
     return abs_path
@@ -2296,7 +2833,9 @@ def read_checkpoint(path: str) -> Checkpoint:
     """
     Deserialize a Checkpoint from a JSON file.
 
-    Validates the schema field — raises ValueError if not a selfconnect checkpoint.
+    Validates the schema field and the content-integrity digest written by
+    ``write_checkpoint``.  Raises ValueError on schema mismatch or digest
+    failure so callers never silently consume a tampered checkpoint.
     Raises FileNotFoundError if path does not exist.
 
     Usage::
@@ -2308,6 +2847,14 @@ def read_checkpoint(path: str) -> Checkpoint:
         data = _json.load(f)
     if data.get("schema") != "selfconnect-checkpoint-v1":
         raise ValueError(f"Not a selfconnect checkpoint (schema={data.get('schema')!r})")
+    stored = data.get("digest")
+    if stored is not None:
+        expected = _checkpoint_digest(data)
+        if stored != expected:
+            raise ValueError(
+                f"Checkpoint digest mismatch — file may be tampered "
+                f"(stored={stored[:16]}… expected={expected[:16]}…)"
+            )
     return Checkpoint(
         role       = data["role"],
         own_hwnd   = data["own_hwnd"],
@@ -2515,10 +3062,8 @@ class MigrationCoordinator:
             f"Mesh peers at migration time:\n{peers_text}\n\n"
             f"FIRST ACTION — announce your hwnd to all peers so they update routing:\n"
             f"import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace')\n"
-            f"from self_connect import list_windows, send_string, get_own_terminal_pid\n"
-            f"import ctypes; hwnd = next(\n"
-            f"  w.hwnd for w in list_windows()\n"
-            f"  if w.pid == get_own_terminal_pid()), None)\n"
+            f"from self_connect import list_windows, send_string, get_own_hwnd\n"
+            f"hwnd = get_own_hwnd()  # works in both ConPTY and legacy console\n"
             f"# Then for each peer:\n"
             f"{peers_sc_lines}\n\n"
             f"THEN resume pending work: {_json.dumps(cp.pending)}\n\n"

@@ -7,8 +7,9 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable, Any
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,11 @@
+{
+  "agent_count": 5,
+  "artifact_path": "experiments\\fabric_v2\\results\\fabric_v2_5agent_baseline_redacted.json",
+  "model_calls_per_known_task": 0.0,
+  "schema_version": 1,
+  "source_run_id": "fabric_v2_5agent_baseline",
+  "transport": "fabric_v2_frame_mailbox",
+  "transport_governance_p50_ms": 0.138,
+  "transport_governance_p95_ms": 0.151,
+  "transport_governance_p99_ms": 0.152
+}

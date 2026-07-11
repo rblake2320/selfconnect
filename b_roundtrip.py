@@ -1,8 +1,12 @@
 """Clean B roundtrip: inject task → wait → read → extract → execute once."""
-import sys, os, time, subprocess
+import os
+import subprocess
+import sys
+import time
+
 sys.stdout.reconfigure(encoding='utf-8')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from self_connect import list_windows, send_string, get_text_uia
+from self_connect import get_text_uia, list_windows, send_string
 
 B_HWND = 0x01fa0d74
 A_HWND = 0x0ea80dfe

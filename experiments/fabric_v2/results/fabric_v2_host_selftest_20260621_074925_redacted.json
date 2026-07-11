@@ -1,0 +1,34 @@
+{
+  "artifact_path": "experiments\\fabric_v2\\results\\fabric_v2_host_selftest_20260621_074925_redacted.json",
+  "boundary": "IOCP dispatch is in the ACK path; direct overlapped named-pipe IO remains next hardening step.",
+  "completion_dispatch": "win32_iocp_post_get",
+  "created_at": 1782046165.1553705,
+  "elapsed_ms": 2.568,
+  "first_roundtrip": {
+    "ack_payload": "ACK:host-selftest-a:1",
+    "ack_sequence": 1,
+    "elapsed_ms": 0.494,
+    "ok": true,
+    "timeout_s": 5.0
+  },
+  "host_transport": "windows_named_pipe_af_pipe",
+  "ok": true,
+  "overlapped_pipe_io": false,
+  "raw_text_included": false,
+  "replay_rejected": true,
+  "schema_version": 1,
+  "stats": {
+    "address_hash": "6d74b9029542f89dc7986fab0599d7b61c31c1aa11a4b29d4c0e73b7b9cb664b",
+    "completion_count": 2,
+    "errors": [],
+    "mailboxes": {
+      "host-selftest-b": {
+        "depth": 2,
+        "max_depth": 10
+      }
+    },
+    "pending_count": 0,
+    "rejected_count": 1
+  },
+  "suite": "fabric_v2_host_selftest"
+}

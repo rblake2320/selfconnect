@@ -1,0 +1,24 @@
+{
+  "action_message_hash": "ce35934d1159e16118d8c7e9ca257cd6232c8ce43a21c1641cc6e9a2620de9eb",
+  "action_validated": true,
+  "chars_sent": 81,
+  "control_path": "Ollama localhost -> JSON action -> validated selfconnect_send -> guarded WM_CHAR submit to Codex-1",
+  "guard_ok": true,
+  "model": "gemma3:latest",
+  "model_output_hash": "68d9b7e847e2ae989157c491ac5cf3c0f5f0e8dba481abdc3476d4087c3b3086",
+  "nonce": "SC_LOCAL_TO_CODEX1_43832F35",
+  "redacted": true,
+  "readback_contains_nonce": true,
+  "readback_method": "uia_text",
+  "send_ok": true,
+  "submit_returned": null,
+  "target": {
+    "hwnd": 28443124,
+    "pid": 16680,
+    "role": "codex-1",
+    "title": "codex 1"
+  },
+  "timestamp": 1781833870.6368995,
+  "tool_requested": "selfconnect_send",
+  "verdict": "PASS"
+}

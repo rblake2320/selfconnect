@@ -2,7 +2,13 @@
 local_agent.py — Local Claude Code equivalent for SelfConnect mesh.
 Uses Ollama HTTP API with native tool calling. Runs as interactive REPL.
 """
-import sys, os, json, subprocess, re, requests
+import json
+import os
+import re
+import subprocess
+import sys
+
+import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 SC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,7 +45,7 @@ def tool_bash_exec(command: str) -> str:
 
 def tool_file_read(path: str) -> str:
     try:
-        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(path, encoding='utf-8', errors='replace') as f:
             content = f.read()
         if len(content) > MAX_OUTPUT:
             content = content[:MAX_OUTPUT] + "\n...[truncated]"
@@ -288,7 +294,7 @@ def prune_messages(messages: list, max_chars: int = 100000) -> list:
 def main():
     print(f"=== Local Agent — {MODEL} ===")
     print(f"Tools: {', '.join(TOOL_DISPATCH.keys())}")
-    print(f"Type /quit to exit, /reset to clear context\n")
+    print("Type /quit to exit, /reset to clear context\n")
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 

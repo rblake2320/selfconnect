@@ -3,6 +3,7 @@ routers/detections.py — UI element detections.
 ASSIGNED TO: Agent C
 """
 from fastapi import APIRouter
+
 from vision_server.models.schemas import Detection
 
 router = APIRouter()

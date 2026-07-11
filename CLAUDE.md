@@ -5,7 +5,7 @@
 OS-native bridge between AI agents and Windows desktop apps. PostMessage(WM_CHAR) +
 PrintWindow + UIA accessibility, no browser, no API keys, no focus stealing.
 
-**v0.9.0 — 60 exports — 2551 lines — CI green (master)**
+**v0.12.0 — 60 exports + 7 orchestration modules — CI green (test/win32-hardening-v1)**
 
 Repo: https://github.com/rblake2320/selfconnect
 
@@ -18,6 +18,12 @@ starting — it has working code, DPI notes, and known failures already document
 
 ```bash
 ls runbooks/   # see what's available
+```
+
+For mesh agent startup/replacement, read:
+
+```bash
+type runbooks\mesh_agent_bootstrap_and_replacement.md
 ```
 
 If you succeed at something after 3+ retry attempts, write it down:
@@ -46,19 +52,86 @@ python runbook_writer.py --title "What I did" --what "What it achieves" --step "
    - Physical click position = UIA_coord / 1.25
    - PIL image pixel = (UIA_coord - window_origin_logical)
 
-5. **Codex / GPT terminal** needs `codex --full-auto` or `codex -a never` to bypass
-   interactive [Y/n] permission prompts. Without this, Codex freezes waiting for keyboard input.
+5. **Codex / GPT terminal** needs `codex -a never` to bypass interactive [Y/n] permission
+   prompts (`--full-auto` was REMOVED in codex-cli 0.142.5 — errors and drops to bare cmd,
+   verified 2026-07-05). Without this, Codex freezes waiting for keyboard input.
+   Canonical launch recipes for ALL CLI targets: `runbooks/agent_launch_registry.md`.
 
-6. **UIA accessibility bridge for WebView2** (Antigravity, VS Code extensions):
+6. **Claude Code mesh packets must be one physical line unless using a handoff file.**
+   Newlines submit separate prompts and can interleave with Ron's typing or queued tool
+   output. For fresh/replacement agents, use `runbooks\mesh_agent_bootstrap_and_replacement.md`.
+
+7. **UIA accessibility bridge for WebView2** (Antigravity, VS Code extensions):
    Call `AccessibleObjectFromWindow(chrome_hwnd, OBJID_CLIENT, IID_IAccessible)` first to
    expand the UIA tree from ~2 nodes to ~268 nodes. Without this, the chat input is invisible.
 
-7. **`send_string()` vs `send_keys()`**: `send_string()` uses PostMessage(WM_CHAR) — background
+8. **`send_string()` vs `send_keys()`**: `send_string()` uses PostMessage(WM_CHAR) — background
    safe, works for ConPTY. `send_keys()` uses SendInput — requires foreground window.
 
 ---
 
 ## How to Spawn Another Claude Code Terminal
+
+### Canonical path (v0.12.0+): evented spawn — USE THIS FIRST
+
+`sc_spawn.spawn_agent()` replaces "inject and hope" with budget gate → task board →
+hooks → readiness detection → doorbell → ack confirmation → dead-letter escalation.
+Full guide: `docs/ORCHESTRATION.md`.
+
+```python
+import sys; sys.path.insert(0, r'C:\Users\techai\PKA testing\selfconnect')
+from sc_spawn import spawn_agent, wait_for_completion
+
+res = spawn_agent(
+    name="AGENT-B",
+    prompt="Your task here. Be specific.",
+    cwd=r"C:\path\to\working\dir",          # or worktree_from=<repo> for isolation
+    task_root=r"C:\path\to\task\root",       # task board + briefings + events live here
+)
+# res.ok is True only after the agent ACKED the briefing (UserPromptSubmit hook fired).
+# No ack -> one automatic re-ring -> dead-letter lands in Owner's Inbox.
+
+task = wait_for_completion(task_root, res.task_id, timeout=3600)
+# Completion is EXPLICIT: the agent runs sc_done.py. "Turn ended" != "work done".
+# task.meta["transcript_path"] -> lossless result readback via sc_transcript.
+```
+
+Known-good live results (2026-07-04): submitted→working→completed with intact hash
+chain, budget gate override verified against real agent-status daemon on :8089
+(3 consecutive agents, all hash chains ok).
+
+**input-required detection — two modes:**
+- *Background/non-interactive* (`claude -p`): Notification hook fires → board sets
+  `input-required`. Proven in unit tests.
+- *Interactive TUI* (`cmd.exe /k claude`): Notification hook does NOT fire for in-TUI
+  permission dialogs (those are handled inside the terminal). Visual fallback: run3
+  polls the TUI for `BLOCKED` state (patterns: "Do you want", "1. Yes", "y/n",
+  "Allow this") and drives the transition itself. Both paths feed the same approval
+  flow: inject "y" → transition back to working.
+
+**run3 live test (2026-07-04):** Spawn/ack/working/completed proven. input-required
+path not triggered — blocked by workspace having `"Bash"` wildcard in global allow
+(all bash commands auto-approved, no dialog appears). To prove end-to-end: either run
+in a workspace with restrictive bash permissions, or use a non-bash tool not in the
+allow list as the trigger command.
+
+Still not live-proven: worktree spawn end-to-end.
+
+**Budget gate + test override.** Every spawn queries the agent-status daemon (:8089)
+and records the verdict as a `spawn.budget` event on the task board (spent/limit/status),
+so the budget is always accounted for. A `pause` verdict normally blocks the spawn. For
+TESTING ONLY — when the reported spend isn't real — lift the hard stop without disabling
+the measurement:
+
+```python
+res = spawn_agent(..., budget_override=True)   # or set env SC_BUDGET_OVERRIDE=1
+```
+
+The gate still runs, the verdict is still recorded (with `overridden: true`), and a
+warning prints — only the block is skipped. Leave it OFF in production. Read the
+recorded verdicts back with `TaskBoard(task_root).read_events("spawn.budget")`.
+
+### Legacy path (raw injection — fallback only, no delivery confirmation)
 
 ```python
 import subprocess, sys, time

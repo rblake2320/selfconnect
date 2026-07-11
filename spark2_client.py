@@ -20,17 +20,20 @@ Hub URL: http://10.0.0.2:8765  (Spark-2 can hit this directly)
 
 import json
 import time
-import uuid
-import urllib.request
 import urllib.error
+import urllib.request
+import uuid
 from dataclasses import dataclass
-from typing import Optional
+
+from sc_envelope import ENVELOPE_MAX_AGE_S, Envelope, EnvelopeError, load_or_create_mesh_key
 
 HUB = "http://192.168.12.132:8765"  # Spark-1 direct — reachable from both Windows and Spark-2
 ME = "cc-spark2"
 TARGET = "windows-a"
 REPLY_TIMEOUT = 45   # seconds to wait for Windows-A reply
 POLL_INTERVAL = 2    # seconds between polls
+
+MESH_KEY = load_or_create_mesh_key()
 
 
 # ── Data classes that mirror self_connect.py ──────────────────────────────────
@@ -67,7 +70,14 @@ class HubTransport:
         return json.loads(r.read())
 
     def send(self, content, conversation_id=None):
-        payload = {"from_agent": self.me, "to_agent": self.target, "content": content}
+        env = Envelope(
+            sender=self.me,
+            recipient=self.target,
+            kind="cmd",
+            payload={"cmd": content},
+            correlation_id=str(conversation_id or ""),
+        ).sign(MESH_KEY)
+        payload = {"from_agent": self.me, "to_agent": self.target, "content": env.to_json()}
         if conversation_id:
             payload["conversation_id"] = conversation_id
         return self._post("/messages/send_direct", payload)
@@ -96,7 +106,7 @@ class SC:
     # ── internal RPC ─────────────────────────────────────────────────────────
 
     def _call(self, cmd_str):
-        """Send a CMD: to Windows-A, wait for reply, return reply content."""
+        """Send a CMD: to Windows-A, wait for signed reply, return payload."""
         tag = f"RPC-{uuid.uuid4().hex[:8]}"
         self.transport.send(f"CMD:{cmd_str} TAG:{tag}")
 
@@ -105,10 +115,25 @@ class SC:
             time.sleep(POLL_INTERVAL)
             msgs = self.transport.poll_inbox()
             for m in msgs:
-                if m.get("from_agent") == self.transport.target:
-                    content = m.get("content", "")
-                    if tag in content or not tag:
-                        return content
+                if m.get("from_agent") != self.transport.target:
+                    continue
+                raw = m.get("content", "")
+                # Prefer signed envelope; fall back to legacy plain text.
+                if raw.strip().startswith("{"):
+                    try:
+                        env = Envelope.from_json(raw)
+                        if not env.verify(MESH_KEY, max_age_s=ENVELOPE_MAX_AGE_S):
+                            print(f"[sc] WARN: invalid/stale envelope from {self.transport.target} — skipping")
+                            continue
+                        content = env.payload.get("result", raw)
+                        if tag in content or not tag:
+                            return content
+                        continue
+                    except EnvelopeError:
+                        pass
+                # Legacy plain text reply
+                if tag in raw or not tag:
+                    return raw
         raise TimeoutError(f"No reply from {self.transport.target} within {self.timeout}s")
 
     def _call_json(self, cmd_str):

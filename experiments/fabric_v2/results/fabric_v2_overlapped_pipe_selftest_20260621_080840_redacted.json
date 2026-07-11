@@ -1,0 +1,44 @@
+{
+  "artifact_path": "experiments\\fabric_v2\\results\\fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json",
+  "client_overlapped_io": true,
+  "completion_dispatch": "win32_iocp_overlapped_read_write",
+  "created_at": 1782047320.6608129,
+  "first_roundtrip": {
+    "address_hash": "f792888f6af3419f3cd8ebcc6eb2696a2b3f897370e93df9863a750944341d58",
+    "client": {
+      "ack_payload": "ACK:overlapped-a:1",
+      "ack_sequence": 1,
+      "ok": true
+    },
+    "client_overlapped_io": true,
+    "completion_dispatch": "win32_iocp_overlapped_read_write",
+    "elapsed_ms": 0.781,
+    "ok": true,
+    "overlapped_pipe_io": true,
+    "raw_text_included": false,
+    "server": {
+      "mailbox_depth": 1,
+      "ok": true,
+      "overlapped_read_write": true,
+      "payload_hash": "e04a4fd1fe7d76acf78d601ee588b1f25d31780eb643f11c33ee615e53ccae8b",
+      "read_completed_ms": 0.516,
+      "verified_receiver": "overlapped-b",
+      "verified_sender": "overlapped-a",
+      "verified_sequence": 1
+    },
+    "server_overlapped_read": true,
+    "server_overlapped_write": true,
+    "transport": "windows_named_pipe_overlapped"
+  },
+  "host_transport": "windows_named_pipe_overlapped",
+  "ok": true,
+  "overlapped_pipe_io": true,
+  "raw_text_included": false,
+  "replay_first_ok": true,
+  "replay_rejected": true,
+  "replay_rejection_error": "ReplayRejectedError",
+  "schema_version": 1,
+  "server_overlapped_read": true,
+  "server_overlapped_write": true,
+  "suite": "fabric_v2_overlapped_pipe_selftest"
+}

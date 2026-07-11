@@ -1,0 +1,28 @@
+{
+  "verdict": "PASS",
+  "method": "TextChanged_event",
+  "sent_hash": "3f76471d13c1bc0008e3dd95b5ac1f7b76a79b565b1ba753ae6bee189c2d55b7",
+  "observed_hash": "df767aad98c3c544437703350ec3019e7e958264e747406033f941bd74abe142",
+  "classification": "echo_filtered_external_output_detected",
+  "latency_ms": 2112.1,
+  "target_kind": "throwaway_wt_tab_cmd_k",
+  "uia_available": true,
+  "event_supported": true,
+  "echo_text": "SC_ECHO_A3095F8A",
+  "output_text_sample": "'<nonce>' is not recognized as an internal or external command",
+  "hwnd": "<redacted>",
+  "pid": "<redacted>",
+  "raw_delta": "<redacted — contained terminal scrollback with local paths>",
+  "redacted": true,
+  "probe_version": "experiments/win32_probe/uia_echo_filter_probe.py",
+  "branch": "test/win32-hardening-v1",
+  "notes": [
+    "UIA TextChanged event fired on TermControl (CASCADIA_HOSTING_WINDOW_CLASS) via ComtypesQI path.",
+    "Nonce injected via PostMessage(WM_CHAR) with carriage return; ConPTY echoed to scrollback.",
+    "EchoFilter.classify_delta correctly separated echo (nonce) from output (cmd error message).",
+    "TextPattern baseline: 3 elements with IsTextPatternAvailable=True; TermControl selected by longest buffer.",
+    "GetCurrentPattern(10014).QueryInterface(IUIAutomationTextPattern) required — raw IUnknown lacks DocumentRange.",
+    "send_string() sends each char via WM_CHAR; \\r required to flush ConPTY readline buffer to scrollback.",
+    "event_supported=true confirms UIA TextChanged is available on this Windows Terminal ConPTY surface."
+  ]
+}

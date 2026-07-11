@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "selfconnect"
-version = "0.10.0"
+version = "0.12.0"
 description = "OS-native Win32 bridge for AI agent orchestration — PostMessage, PrintWindow, UIA, cross-machine mesh, Telegram approvals, ClaudeGo dashboard."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -14,7 +14,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Win32 (MS Windows)",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -31,6 +31,20 @@ dependencies = [
 [project.optional-dependencies]
 uia = [
     "pywinauto>=0.6.8",
+    "comtypes>=1.4.0",
+]
+trust = [
+    "cryptography>=42.0.0",
+]
+pq = [
+    "cryptography>=42.0.0",
+    "dilithium-py>=1.0.0",
+]
+shell = [
+    "cryptography>=42.0.0",
+]
+mcp = [
+    "mcp>=1.0.0",
 ]
 telegram = [
     "python-dotenv>=1.0.0",
@@ -43,6 +57,11 @@ claudego = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "pywinauto>=0.6.8",
+    "pystray>=0.19.5",
+    "winotify>=1.1.0",
+]
+service = [
+    "pywin32>=306",
 ]
 full = [
     "pywinauto>=0.6.8",
@@ -52,6 +71,12 @@ full = [
     "python-telegram-bot>=22.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
+    "pystray>=0.19.5",
+    "winotify>=1.1.0",
+    "cryptography>=42.0.0",
+    "dilithium-py>=1.0.0",
+    "mcp>=1.0.0",
+    "pywin32>=306",
 ]
 
 [project.urls]
@@ -59,8 +84,130 @@ Homepage = "https://github.com/rblake2320/selfconnect"
 Repository = "https://github.com/rblake2320/selfconnect"
 
 [tool.hatch.build.targets.wheel]
-include = ["self_connect.py", "claudego/**"]
+artifacts = [
+    "experiments/fabric_v2/results/baseline_5agent_fabric_v2_service_transport.json",
+    "experiments/fabric_v2/results/SC_FABRIC_SERVICE_20260621_1135_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_service_selftest_20260621_113419_redacted.json",
+    "experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json",
+    "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_router_restart_selftest_20260621_081434_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_router_state_20260621_081434_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json",
+    "experiments/win32_probe/results/runtime_sid_probe_PASS_redacted.json",
+]
+include = [
+    "_win32_abi.py",
+    "approval_partner.py",
+    "approval_telegram.py",
+    "self_connect.py",
+    "sc_cli.py",
+    "sc_done.py",
+    "sc_envelope.py",
+    "sc_mcp.py",
+    "sc_mesh_registry.py",
+    "sc_mesh_lease.py",
+    "sc_fleet_guard.py",
+    "sc_fabric_benchmark.py",
+    "sc_fabric_host.py",
+    "sc_fabric_router.py",
+    "sc_fabric_service.py",
+    "sc_fabric_v2.py",
+    "sc_fabric_windows_svc.py",
+    "sc_hook_emit.py",
+    "sc_hooks.py",
+    "sc_local_model_role.py",
+    "sc_echo_filter.py",
+    "sc_identity.py",
+    "sc_firewall.py",
+    "sc_reliability.py",
+    "sc_pq.py",
+    "sc_shell.py",
+    "sc_resume.py",
+    "sc_nats_bridge.py",
+    "sc_spawn.py",
+    "sc_tasks.py",
+    "sc_transcript.py",
+    "claudego/**",
+    "experiments/win32_probe/CAPABILITY_BACKLOG.md",
+    "experiments/win32_probe/SERVICE_SID_DAEMON.md",
+    "experiments/win32_probe/channel_router_composition_probe.py",
+    "experiments/win32_probe/chained_channel.py",
+    "experiments/win32_probe/browser_local_proof.py",
+    "experiments/win32_probe/etw_provider.py",
+    "experiments/win32_probe/pipe_role_lease_probe.py",
+    "experiments/win32_probe/runtime_sid_probe.py",
+    "experiments/win32_probe/service_sid_probe.py",
+    "experiments/win32_probe/uia_echo_filter_probe.py",
+    "experiments/win32_probe/results/browser_local_proof_PASS_redacted.json",
+    "experiments/win32_probe/results/channel_router_composition_LIVE_PASS_redacted.json",
+    "experiments/win32_probe/results/channel_router_composition_PASS_redacted.json",
+    "experiments/win32_probe/results/pipe_role_lease_PASS_redacted.json",
+    "experiments/win32_probe/results/runtime_sid_probe_PASS_redacted.json",
+    "experiments/win32_probe/results/uia_echo_filter_PASS_redacted.json",
+    "experiments/fabric_v2/results/baseline_5agent_fabric_v2_service_transport.json",
+    "experiments/fabric_v2/results/SC_FABRIC_SERVICE_20260621_1135_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_service_selftest_20260621_113419_redacted.json",
+    "experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json",
+    "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_router_restart_selftest_20260621_081434_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_router_state_20260621_081434_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json",
+    "docs/BROWSER_LOCAL_PROOF.md",
+    "docs/CHANNEL_ROUTER_COMPOSITION_PROOF.md",
+    "docs/CLAIM_EVIDENCE_MATRIX.md",
+    "docs/LANCELOT_UAB_COMPETITIVE_DEFENSE.md",
+    "docs/AWS_AI_TO_AI_EVIDENCE_INDEX.md",
+    "docs/PATENT_DESIGN_AROUND_DEFENSE.md",
+    "docs/ARCHITECTURE_AUDIT_2026-06-20.md",
+    "docs/ARCHITECTURE_CONSENSUS_2026-06-20.md",
+    "docs/FABRIC_V0_BENCHMARK_SPEC.md",
+    "docs/FABRIC_V2_BENCHMARK_RESULTS.md",
+    "docs/FABRIC_V2_BUILD_TARGETS.md",
+    "docs/FABRIC_V2_REAL_LADDER_PROTOCOL.md",
+    "docs/FABRIC_V2_STRESS_PROTOCOL.md",
+    "docs/FLEET_AUTO_HALT_PROTOCOL.md",
+    "docs/OPEN_DEFENSE_BUILD_TARGETS.md",
+    "docs/PATENT_EVIDENCE_FREEZE_2026-06-20.md",
+    "docs/PATENT_PRIOR_ART_SNAPSHOT.md",
+    "docs/PIPE_ROLE_LEASE_PROOF.md",
+    "docs/UIA_ECHO_FILTER_TERMCONTROL.md",
+    "docs/PROVEN_VS_UNTESTED.md",
+    "docs/SELFCONNECT_PRODUCT_BOUNDARIES.md",
+    "skills/selfconnect-win32/**",
+]
+
+[tool.hatch.build.targets.sdist]
+artifacts = [
+    "experiments/fabric_v2/results/baseline_5agent_fabric_v2_service_transport.json",
+    "experiments/fabric_v2/results/SC_FABRIC_SERVICE_20260621_1135_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_service_selftest_20260621_113419_redacted.json",
+    "experiments/fabric_v2/results/baseline_5agent_fabric_v2_frame_mailbox.json",
+    "experiments/fabric_v2/results/fabric_v2_5agent_baseline_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_host_selftest_20260621_074925_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_overlapped_pipe_selftest_20260621_080840_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_router_restart_selftest_20260621_081434_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_router_state_20260621_081434_redacted.json",
+    "experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json",
+    "experiments/win32_probe/results/runtime_sid_probe_PASS_redacted.json",
+]
+
+[project.scripts]
+selfconnect = "sc_cli:main"
+selfconnect-mcp = "sc_mcp:main"
+selfconnect-mesh = "sc_mesh_registry:main"
+selfconnect-fleet = "sc_fleet_guard:main"
+selfconnect-bench = "sc_fabric_benchmark:main"
+selfconnect-fabric = "sc_fabric_v2:main"
+selfconnect-fabric-host = "sc_fabric_host:main"
+selfconnect-fabric-router = "sc_fabric_router:main"
+selfconnect-fabric-service = "sc_fabric_service:main"
+selfconnect-local-model = "sc_local_model_role:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "test_self_connect.py"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

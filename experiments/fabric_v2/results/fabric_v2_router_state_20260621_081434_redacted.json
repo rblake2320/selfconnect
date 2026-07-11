@@ -1,0 +1,61 @@
+{
+  "accepted_sequences": [
+    {
+      "receiver": "router-b",
+      "sender": "router-a",
+      "sequence": 1,
+      "tuple_hash": "e9736871f70559e671e8a4f5d3fbc044907f3f60e28329d0592f37596c6b6c7f"
+    },
+    {
+      "receiver": "router-a",
+      "sender": "router-b",
+      "sequence": 1,
+      "tuple_hash": "5c9dbd5194398d7fbc09993cc1c78e76bedbcd0d8fc9695734436c6362cfdc99"
+    }
+  ],
+  "agents": [
+    {
+      "birth_id": "router-a",
+      "role": "router-a",
+      "status": "active"
+    },
+    {
+      "birth_id": "router-b",
+      "role": "router-b",
+      "status": "active"
+    },
+    {
+      "birth_id": "router-c",
+      "role": "router-c",
+      "status": "active"
+    }
+  ],
+  "events": [
+    {
+      "created_at": 1782047674.544945,
+      "frame_hash": "90ea763c0e729abf95ec69b1f22188c37cbcaab68dc2b3267da15cebf8207d57",
+      "payload_hash": "1d87dcf08f9c3bb068cd10fa85e7cf2e94d642dfa9cd7972268b2cb0954a5bc9",
+      "receiver": "router-b",
+      "sender": "router-a",
+      "sequence": 1
+    }
+  ],
+  "mailboxes": {
+    "router-a": {
+      "depth": 0,
+      "max_depth": 10
+    },
+    "router-b": {
+      "depth": 1,
+      "max_depth": 10
+    },
+    "router-c": {
+      "depth": 0,
+      "max_depth": 10
+    }
+  },
+  "raw_text_included": false,
+  "router_id": "router-472bfc60",
+  "schema_version": 1,
+  "session_id": "sfv2-router-136f0553"
+}

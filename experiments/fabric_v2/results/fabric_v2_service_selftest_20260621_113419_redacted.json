@@ -1,0 +1,13 @@
+{
+  "artifact_path": "experiments\\fabric_v2\\results\\fabric_v2_service_selftest_20260621_113419_redacted.json",
+  "created_at": 1782059659.429742,
+  "ok": true,
+  "raw_text_included": false,
+  "restart_ok": true,
+  "roundtrip_ok": true,
+  "schema_version": 1,
+  "state_file_written": true,
+  "suite": "fabric_v2_service_selftest",
+  "transport": "windows_named_pipe_af_pipe",
+  "watchdog_ok": true
+}

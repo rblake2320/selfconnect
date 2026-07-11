@@ -1,9 +1,12 @@
 """Capture screenshots of Agent-B and Agent-C terminals using PIL."""
-import sys, os, ctypes, time
+import ctypes
+import os
+import sys
+import time
+
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from PIL import ImageGrab
-import ctypes
 
 user32 = ctypes.windll.user32
 

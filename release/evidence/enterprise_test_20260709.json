@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "observed_on": "2026-07-09",
+  "repository": "C:/Users/techai/PKA testing/selfconnect-enterprise",
+  "branch": "master",
+  "commit": "9d3f98d",
+  "upstream_state": "behind origin/master by 4 commits",
+  "command": "python -m pytest -q",
+  "result": {
+    "passed": 1305,
+    "failed": 2,
+    "skipped": 21,
+    "warnings": 2,
+    "duration_seconds": 43.2
+  },
+  "failed_gates": [
+    {
+      "test": "TestCryptographyVersion.test_cryptography_at_minimum_safe_version",
+      "reason": "installed cryptography 44.0.3 is below repository minimum 46.0.6"
+    },
+    {
+      "test": "TestDependencyAudit.test_direct_deps_no_known_cves",
+      "reason": "pip-audit reported known vulnerabilities for installed cryptography 44.0.3"
+    }
+  ],
+  "claim_boundary": "This observation applies only to the named local commit and environment. It disproves a current zero-failure statement for this machine; it does not describe the four unseen upstream commits."
+}

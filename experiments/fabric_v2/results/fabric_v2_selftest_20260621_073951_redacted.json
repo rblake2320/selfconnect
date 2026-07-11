@@ -1,0 +1,24 @@
+{
+  "artifact_path": "experiments\\fabric_v2\\results\\fabric_v2_selftest_20260621_073951_redacted.json",
+  "created_at": 1782045591.7593622,
+  "frame_payload_hash": "5c7b49d7c5d2e3bfd2ae7ccab9b3479426da7dfbb8c248aac1ce38ea7dbb2bca",
+  "ok": true,
+  "pipe": {
+    "ack_payload": "ACK:selftest-a:1",
+    "ack_sequence": 1,
+    "address_hash": "9841c0f7a141abf2cebe9289169f8bee17af8f2ac49b087985b315c952f4da31",
+    "elapsed_ms": 0.797,
+    "ok": true,
+    "payload_hash": "9fcb75a02bf7fadf55a3b56d97a5ce15d3d01a28d687e5ffef700db7b79c98b7",
+    "raw_text_included": false,
+    "receiver": "selftest-b",
+    "request_sequence": 1,
+    "sender": "selftest-a",
+    "transport": "windows_named_pipe"
+  },
+  "raw_text_included": false,
+  "replay_rejected": true,
+  "schema_version": 1,
+  "session_id_hash": "92309f7e19203a1168737ee05e476798c7a96995ce27abd90da834edd3a384a6",
+  "suite": "fabric_v2_selftest"
+}

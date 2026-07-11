@@ -3,6 +3,7 @@ routers/vl.py — Vision-Language description via Ollama llava.
 ASSIGNED TO: Agent B (Phase 4)
 """
 from fastapi import APIRouter
+
 from vision_server.models.schemas import VLDescription
 
 router = APIRouter()

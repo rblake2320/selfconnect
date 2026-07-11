@@ -1,0 +1,34 @@
+{
+  "action_json_hash": "bcede0f4d789f41f2e4f71b864772a4bdde9a0de89fde0e38d2dd3557dbb0844",
+  "action_validated": true,
+  "airgap_scope": "Local model action side is airgap-capable after model download; Claude Code side is not airgapped.",
+  "claude_reply_observed": false,
+  "claude_role": "B",
+  "claude_target": {
+    "birth_id": "b-efa50512",
+    "hwnd": 779557140,
+    "role": "B",
+    "title_hash": "bdd3f1a2340d829d122e3ade02780333894e9165e6721f1299f8432d11cdbca4"
+  },
+  "control_path": "local model JSON action -> SelfConnect send into Claude terminal -> Claude executes SelfConnect reply -> local receiver log verification",
+  "elapsed_ms": 194223.2,
+  "failure": "text not observed in receiver log: SC_LOCAL_CLAUDE_B7C5FFDF",
+  "observed_blocker": "Claude role B received the prompt but refused to execute the peer-issued sc_cli send as a prompt-injection risk without direct human confirmation.",
+  "local_action_side": "Ollama localhost + validated JSON tool action + SelfConnect send",
+  "model": "gemma3:latest",
+  "model_output_hash": "01b72baaa0ff5fed0e8ceb232dcdcc75653b131b465f9b486abd458dcc40f8cc",
+  "nonce": "SC_LOCAL_CLAUDE_B7C5FFDF",
+  "receiver": {
+    "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+    "hwnd": 66525872,
+    "pid": 16680,
+    "process_pid": 38928,
+    "title_hash": "40862d79574381a2699c729f5a3a18c7571499eb99b7fc106e1ac81dcb42fe4e"
+  },
+  "receiver_log_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "redacted": true,
+  "reply_timeout_s": 180.0,
+  "send_to_claude_ok": true,
+  "tool_requested": "ask_claude_ack",
+  "verdict": "FAIL"
+}

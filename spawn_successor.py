@@ -8,21 +8,28 @@ Usage:
 
 Run this NOW while Agent-A still has context, so the handoff knowledge is baked in.
 """
-import sys, os, re, time, subprocess, ctypes
+import ctypes
+import os
+import re
+import subprocess
+import sys
+import time
+
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from self_connect import list_windows, send_string, get_text_uia, submit_claude_input
+from self_connect import get_text_uia, list_windows, send_string, submit_claude_input
 
 SC_DIR   = os.path.dirname(os.path.abspath(__file__))
 mc_path  = os.path.join(SC_DIR, 'mesh_config.py')
 user32   = ctypes.windll.user32
 
 # ── Step 1: Read current mesh state ──────────────────────────────────────────
-with open(mc_path, 'r') as fh:
+with open(mc_path) as fh:
     mc_src = fh.read()
 
 import importlib.util
+
 spec = importlib.util.spec_from_file_location('mesh_config', mc_path)
 mcfg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mcfg)
@@ -335,7 +342,7 @@ for attempt in range(10):
         print(f'  Activity detected after {(attempt+1)*2}s (text grew {len(text)-baseline_len} chars)')
         break
     if attempt == 9:
-        print(f'  Warning: no text change detected. F may need manual check.')
+        print('  Warning: no text change detected. F may need manual check.')
 
 # ── Step 10: Summary ──────────────────────────────────────────────────────────
 hwnd_str = f'0x{F_HWND:x}'

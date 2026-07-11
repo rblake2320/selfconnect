@@ -1,10 +1,11 @@
 """
 test_event_bus.py — Unit tests for the in-process pub/sub event bus.
 """
-import asyncio
+import os
+import sys
+
 import pytest
 
-import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vision_server.services import event_bus

@@ -1,5 +1,7 @@
 """Send mesh update to Agent-B."""
-import sys, os, time
+import os
+import sys
+
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from self_connect import list_windows, send_string

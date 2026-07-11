@@ -1,0 +1,4 @@
+interface:
+  display_name: "SelfConnect Win32"
+  short_description: "Operate and test SelfConnect Win32 package, MCP, and probes."
+  default_prompt: "Use SelfConnect Win32 to inspect package capabilities and choose safe adapters for local Windows agent control."

@@ -1,0 +1,631 @@
+{
+  "action": "continue",
+  "agent_count": 5,
+  "aggregate": {
+    "audit_lag_ms": {
+      "avg": 0.421,
+      "count": 9,
+      "max": 0.464,
+      "min": 0.386,
+      "p50": 0.408,
+      "p95": 0.462,
+      "p99": 0.464
+    },
+    "end_to_end_task_ms": {
+      "avg": 1.448,
+      "count": 9,
+      "max": 1.855,
+      "min": 1.219,
+      "p50": 1.468,
+      "p95": 1.781,
+      "p99": 1.84
+    },
+    "model_calls": 0,
+    "model_calls_per_known_task": 0.0,
+    "readback_latency_ms": {
+      "avg": 0.705,
+      "count": 9,
+      "max": 1.068,
+      "min": 0.489,
+      "p50": 0.756,
+      "p95": 0.972,
+      "p99": 1.049
+    },
+    "transport_governance_ms": {
+      "avg": 0.705,
+      "count": 9,
+      "max": 1.068,
+      "min": 0.489,
+      "p50": 0.756,
+      "p95": 0.972,
+      "p99": 1.049
+    }
+  },
+  "artifact_path": "experiments\\fabric_v2\\results\\SC_FABRIC_SERVICE_20260621_1135_redacted.json",
+  "baseline": {
+    "loaded": false,
+    "path": "",
+    "required_for_scale_comparison": false,
+    "written": true,
+    "written_path": "experiments\\fabric_v2\\results\\baseline_5agent_fabric_v2_service_transport.json"
+  },
+  "created_at": 1782059669.5787053,
+  "event_log_path": "experiments\\fabric_v2\\results\\SC_FABRIC_SERVICE_20260621_1135_events.jsonl",
+  "fleet_guard": {
+    "action": "continue",
+    "agent_reports": [
+      {
+        "capture": false,
+        "name": "normal-agent-1",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "normal-agent-2",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "normal-agent-3",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "normal-agent-4",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "normal-agent-5",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "enterprise-agent-1",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "enterprise-agent-2",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "enterprise-agent-3",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "enterprise-agent-4",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "enterprise-agent-5",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "government-agent-1",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "government-agent-2",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "government-agent-3",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "government-agent-4",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      },
+      {
+        "capture": false,
+        "name": "government-agent-5",
+        "reasons": [],
+        "risk": "green",
+        "status": "active"
+      }
+    ],
+    "blocked_count": 0,
+    "capture_triggers": [],
+    "created_at": 1782059669.5787053,
+    "halt_reasons": [],
+    "hard_reasons": [],
+    "ok": true,
+    "resources": {
+      "gpu": {
+        "power_watts": 60.52,
+        "temperature_c": 33.0,
+        "utilization_percent": 5.0,
+        "vram_free_mb": 29103.0,
+        "vram_total_mb": 32607.0,
+        "vram_used_mb": 3504.0
+      },
+      "ram_free_mb": 70559.203,
+      "ram_total_mb": 128628.969
+    },
+    "thresholds": {
+      "ack_block_threshold": 2,
+      "approval_block_seconds": 90,
+      "blocked_agent_hard_stop": 3,
+      "local_narration_hard_stop": 2,
+      "p99_latency_multiplier": 5.0,
+      "queue_depth_limit": null,
+      "ram_free_mb_floor": 25600,
+      "vram_free_mb_floor": 6144
+    },
+    "verdict": "pass"
+  },
+  "freeze": {
+    "missing_docs": [],
+    "missing_markers": [],
+    "ok": true,
+    "required_docs": [
+      "docs/PATENT_EVIDENCE_FREEZE_2026-06-20.md",
+      "docs/CLAIM_EVIDENCE_MATRIX.md",
+      "docs/PATENT_DESIGN_AROUND_DEFENSE.md",
+      "docs/PATENT_PRIOR_ART_SNAPSHOT.md"
+    ],
+    "required_markers": [
+      "composition claim",
+      "durable virtual",
+      "execution hierarchy",
+      "mcp/http competitor contrast"
+    ]
+  },
+  "live_agent_count": 0,
+  "logical_agent_count": 5,
+  "logical_message_count": 45,
+  "messages_per_agent": 3,
+  "ok": true,
+  "profile_names": [
+    "normal",
+    "enterprise",
+    "government"
+  ],
+  "profiles": [
+    {
+      "agent_count": 5,
+      "agents": [
+        {
+          "birth_id": "normal-agent-1-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "normal-agent-1",
+          "p99_latency_ms": 1.068,
+          "queue_depth": 0,
+          "role": "normal-agent-1",
+          "status": "active"
+        },
+        {
+          "birth_id": "normal-agent-2-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "normal-agent-2",
+          "p99_latency_ms": 1.068,
+          "queue_depth": 0,
+          "role": "normal-agent-2",
+          "status": "active"
+        },
+        {
+          "birth_id": "normal-agent-3-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "normal-agent-3",
+          "p99_latency_ms": 1.068,
+          "queue_depth": 0,
+          "role": "normal-agent-3",
+          "status": "active"
+        },
+        {
+          "birth_id": "normal-agent-4-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "normal-agent-4",
+          "p99_latency_ms": 1.068,
+          "queue_depth": 0,
+          "role": "normal-agent-4",
+          "status": "active"
+        },
+        {
+          "birth_id": "normal-agent-5-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "normal-agent-5",
+          "p99_latency_ms": 1.068,
+          "queue_depth": 0,
+          "role": "normal-agent-5",
+          "status": "active"
+        }
+      ],
+      "audit_lag_ms": {
+        "avg": 0.398,
+        "count": 15,
+        "max": 0.462,
+        "min": 0.349,
+        "p50": 0.391,
+        "p95": 0.446,
+        "p99": 0.458
+      },
+      "config": {
+        "audit_required": true,
+        "echo_filter": true,
+        "label": "Normal",
+        "lease_gate": false,
+        "model_calls_per_known_task_target": 0,
+        "target_guard": true,
+        "tpm_required": false,
+        "worm_required": false
+      },
+      "echo_false_negatives": 0,
+      "echo_false_positives": 0,
+      "end_to_end_task_ms": {
+        "avg": 1.312,
+        "count": 15,
+        "max": 1.901,
+        "min": 1.112,
+        "p50": 1.245,
+        "p95": 1.67,
+        "p99": 1.855
+      },
+      "fabric_v2": {
+        "enabled": false,
+        "mac_failures": 0,
+        "mailbox_backpressure_events": 0,
+        "session_id_hash": ""
+      },
+      "live_window_count": 0,
+      "logical_message_count": 15,
+      "message_hash_sample": [
+        "ef29acfb879d4168cfff031e9d829d1870928623406c8c5ecb9eef3429255477",
+        "dd4232ba97b2b21f137a166023082b11ca1f939a4d4ef041b6f1ff0ad8f7b445",
+        "d934f6a6b25377f8fd7172fb9284a55d7243e455ea9f516a275df663a869c44a"
+      ],
+      "model_calls": 0,
+      "model_calls_per_known_task": 0.0,
+      "profile": "normal",
+      "readback_latency_ms": {
+        "avg": 0.561,
+        "count": 15,
+        "max": 1.142,
+        "min": 0.448,
+        "p50": 0.517,
+        "p95": 0.772,
+        "p99": 1.068
+      },
+      "replay_attempts": {
+        "accepted": 0,
+        "rejected": 1
+      },
+      "service_errors": [],
+      "stale_lease_attempts": {
+        "accepted": 0,
+        "rejected": 0
+      },
+      "transport": "fabric_v2_service_transport",
+      "transport_governance_ms": {
+        "avg": 0.561,
+        "count": 15,
+        "max": 1.142,
+        "min": 0.448,
+        "p50": 0.517,
+        "p95": 0.772,
+        "p99": 1.068
+      }
+    },
+    {
+      "agent_count": 5,
+      "agents": [
+        {
+          "birth_id": "enterprise-agent-1-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "enterprise-agent-1",
+          "p99_latency_ms": 0.828,
+          "queue_depth": 0,
+          "role": "enterprise-agent-1",
+          "status": "active"
+        },
+        {
+          "birth_id": "enterprise-agent-2-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "enterprise-agent-2",
+          "p99_latency_ms": 0.828,
+          "queue_depth": 0,
+          "role": "enterprise-agent-2",
+          "status": "active"
+        },
+        {
+          "birth_id": "enterprise-agent-3-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "enterprise-agent-3",
+          "p99_latency_ms": 0.828,
+          "queue_depth": 0,
+          "role": "enterprise-agent-3",
+          "status": "active"
+        },
+        {
+          "birth_id": "enterprise-agent-4-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "enterprise-agent-4",
+          "p99_latency_ms": 0.828,
+          "queue_depth": 0,
+          "role": "enterprise-agent-4",
+          "status": "active"
+        },
+        {
+          "birth_id": "enterprise-agent-5-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "enterprise-agent-5",
+          "p99_latency_ms": 0.828,
+          "queue_depth": 0,
+          "role": "enterprise-agent-5",
+          "status": "active"
+        }
+      ],
+      "audit_lag_ms": {
+        "avg": 0.395,
+        "count": 15,
+        "max": 0.469,
+        "min": 0.369,
+        "p50": 0.387,
+        "p95": 0.447,
+        "p99": 0.464
+      },
+      "config": {
+        "audit_required": true,
+        "echo_filter": true,
+        "label": "Enterprise",
+        "lease_gate": true,
+        "model_calls_per_known_task_target": 0,
+        "target_guard": true,
+        "tpm_required": "optional",
+        "worm_required": false
+      },
+      "echo_false_negatives": 0,
+      "echo_false_positives": 0,
+      "end_to_end_task_ms": {
+        "avg": 1.272,
+        "count": 15,
+        "max": 1.505,
+        "min": 1.159,
+        "p50": 1.219,
+        "p95": 1.497,
+        "p99": 1.504
+      },
+      "fabric_v2": {
+        "enabled": false,
+        "mac_failures": 0,
+        "mailbox_backpressure_events": 0,
+        "session_id_hash": ""
+      },
+      "live_window_count": 0,
+      "logical_message_count": 15,
+      "message_hash_sample": [
+        "835442096c56c36112026e38cf9f46e973c7fe42a56aff7140b72826aa45c5bc",
+        "94b1d05af03d80eb0ffd66aa35763524f0b7ee24e5e18d6af5af81bd3c3accb8",
+        "addf11ef43c5c021e1098a319e452a6ccb7d2dbb13499cc32f3b1d2e6e215884"
+      ],
+      "model_calls": 0,
+      "model_calls_per_known_task": 0.0,
+      "profile": "enterprise",
+      "readback_latency_ms": {
+        "avg": 0.555,
+        "count": 15,
+        "max": 0.835,
+        "min": 0.458,
+        "p50": 0.494,
+        "p95": 0.802,
+        "p99": 0.828
+      },
+      "replay_attempts": {
+        "accepted": 0,
+        "rejected": 1
+      },
+      "service_errors": [],
+      "stale_lease_attempts": {
+        "accepted": 0,
+        "rejected": 1
+      },
+      "transport": "fabric_v2_service_transport",
+      "transport_governance_ms": {
+        "avg": 0.555,
+        "count": 15,
+        "max": 0.835,
+        "min": 0.458,
+        "p50": 0.494,
+        "p95": 0.802,
+        "p99": 0.828
+      }
+    },
+    {
+      "agent_count": 5,
+      "agents": [
+        {
+          "birth_id": "government-agent-1-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "government-agent-1",
+          "p99_latency_ms": 0.756,
+          "queue_depth": 0,
+          "role": "government-agent-1",
+          "status": "active"
+        },
+        {
+          "birth_id": "government-agent-2-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "government-agent-2",
+          "p99_latency_ms": 0.756,
+          "queue_depth": 0,
+          "role": "government-agent-2",
+          "status": "active"
+        },
+        {
+          "birth_id": "government-agent-3-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "government-agent-3",
+          "p99_latency_ms": 0.756,
+          "queue_depth": 0,
+          "role": "government-agent-3",
+          "status": "active"
+        },
+        {
+          "birth_id": "government-agent-4-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "government-agent-4",
+          "p99_latency_ms": 0.756,
+          "queue_depth": 0,
+          "role": "government-agent-4",
+          "status": "active"
+        },
+        {
+          "birth_id": "government-agent-5-logical",
+          "generation": 1,
+          "missed_acks": 0,
+          "name": "government-agent-5",
+          "p99_latency_ms": 0.756,
+          "queue_depth": 0,
+          "role": "government-agent-5",
+          "status": "active"
+        }
+      ],
+      "audit_lag_ms": {
+        "avg": 0.384,
+        "count": 15,
+        "max": 0.409,
+        "min": 0.343,
+        "p50": 0.386,
+        "p95": 0.403,
+        "p99": 0.408
+      },
+      "config": {
+        "audit_required": true,
+        "echo_filter": true,
+        "label": "Government",
+        "lease_gate": true,
+        "model_calls_per_known_task_target": 0,
+        "target_guard": true,
+        "tpm_required": "attestation_or_na_record",
+        "worm_required": true
+      },
+      "echo_false_negatives": 0,
+      "echo_false_positives": 0,
+      "end_to_end_task_ms": {
+        "avg": 1.226,
+        "count": 15,
+        "max": 1.499,
+        "min": 1.131,
+        "p50": 1.225,
+        "p95": 1.346,
+        "p99": 1.468
+      },
+      "fabric_v2": {
+        "enabled": false,
+        "mac_failures": 0,
+        "mailbox_backpressure_events": 0,
+        "session_id_hash": ""
+      },
+      "live_window_count": 0,
+      "logical_message_count": 15,
+      "message_hash_sample": [
+        "696ef96ce9b280f7ec76e3bd1cb93044d6933e5453a240f03fdea28fc70ab61f",
+        "8ea56962340227579e8b05aa339ae3493e2ff085561462db405bfa9ba634728c",
+        "fccc8b58fb1afb5b32db0f89d7e7fef4de06c7e508308dbcdf805e56f0a6525e"
+      ],
+      "model_calls": 0,
+      "model_calls_per_known_task": 0.0,
+      "profile": "government",
+      "readback_latency_ms": {
+        "avg": 0.513,
+        "count": 15,
+        "max": 0.79,
+        "min": 0.435,
+        "p50": 0.489,
+        "p95": 0.62,
+        "p99": 0.756
+      },
+      "replay_attempts": {
+        "accepted": 0,
+        "rejected": 1
+      },
+      "service_errors": [],
+      "stale_lease_attempts": {
+        "accepted": 0,
+        "rejected": 1
+      },
+      "transport": "fabric_v2_service_transport",
+      "transport_governance_ms": {
+        "avg": 0.513,
+        "count": 15,
+        "max": 0.79,
+        "min": 0.435,
+        "p50": 0.489,
+        "p95": 0.62,
+        "p99": 0.756
+      }
+    }
+  ],
+  "raw_text_included": false,
+  "repo": {
+    "ahead": 0,
+    "behind": 0,
+    "branch": "test/win32-hardening-v1",
+    "dirty": true,
+    "dirty_count": 2,
+    "head": "5355ade1a548373fb0aed51ecb02b9306aef60c2",
+    "head_short": "5355ade",
+    "ok": true,
+    "repo_path": "C:\\Users\\techai\\PKA testing\\selfconnect",
+    "status_sample": [
+      "?? B_peer_capture.png",
+      "?? claude1_peer_capture.png"
+    ],
+    "upstream": "origin/test/win32-hardening-v1"
+  },
+  "run_id": "SC_FABRIC_SERVICE_20260621_1135",
+  "schema_version": 1,
+  "stage": "production",
+  "transport": "fabric_v2_service_transport",
+  "verdict": "pass"
+}

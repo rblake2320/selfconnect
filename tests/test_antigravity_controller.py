@@ -7,6 +7,7 @@ Integration tests: skipped automatically if Antigravity is not found.
 
 import sys
 import time
+
 import pytest
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
@@ -16,7 +17,6 @@ from antigravity_controller import (
     AntigravitySession,
     _is_antigravity_title,
 )
-
 
 # ─── Unit Tests ───────────────────────────────────────────────────────────────
 

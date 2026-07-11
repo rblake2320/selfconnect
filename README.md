@@ -1,7 +1,9 @@
-# SelfConnect SDK v0.10.0
+# SelfConnect SDK v0.12.0
 
 **OS-native bridge between AI agents and Windows desktop apps.**  
-PostMessage + PrintWindow. No browser. No accessibility layer. No API between agents.
+SelfConnect started with `PostMessage(WM_CHAR)` and `PrintWindow`; it now also
+uses target-guarded sends, UIA readback, echo filtering, mesh birth IDs, and
+optional governed adapters when the deployment needs them.
 
 ```python
 from self_connect import list_windows, send_string, save_capture
@@ -39,7 +41,12 @@ AI Agent A                         AI Agent B
     └─ PrintWindow(hwnd_A) <──────────  ┘  B reads A's screen
 ```
 
-Zero API calls between agents. Zero network traffic. Two functions from `user32.dll`.
+The core terminal path still needs no API between agents and no network traffic.
+Modern SelfConnect keeps that fast path, then adds optional adapters around it
+instead of forcing every user into the heaviest governance mode.
+
+For the current product boundary, read
+`docs/SELFCONNECT_PRODUCT_BOUNDARIES.md`.
 
 ---
 
@@ -48,10 +55,157 @@ Zero API calls between agents. Zero network traffic. Two functions from `user32.
 ```bash
 pip install selfconnect                  # core (Pillow + psutil)
 pip install selfconnect[uia]             # + UIA text extraction
+pip install selfconnect[mcp]             # + MCP server adapter
 pip install selfconnect[full]            # + UIA + comtypes
 pip install selfconnect[telegram]        # + Telegram approval bridge
 pip install selfconnect[claudego]        # + ClaudeGo web dashboard
 ```
+
+From this GitHub branch for cross-machine testing:
+
+```bash
+pip install "selfconnect[full,mcp] @ git+https://github.com/rblake2320/selfconnect.git@test/win32-hardening-v1"
+```
+
+---
+
+## Package Probes
+
+The package installs a `selfconnect` command for repeatable testing on other
+Windows systems:
+
+```bash
+selfconnect doctor --json
+selfconnect doctor --windows
+selfconnect windows --query "Claude"
+selfconnect guard --hwnd 0x123456 --expect-pid 1234 --expect-class CASCADIA_HOSTING_WINDOW_CLASS
+selfconnect read --hwnd 0x123456
+selfconnect capture --hwnd 0x123456 --path proof.png
+selfconnect-mesh scan --query Claude
+selfconnect-mesh register --role codex-1 --hwnd 0x123456 --profile explore --task "package guard" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
+```
+
+Input delivery is intentionally gated:
+
+```bash
+selfconnect send --hwnd 0x123456 --text "hello" --submit --allow-input --expect-pid 1234 --expect-class CASCADIA_HOSTING_WINDOW_CLASS
+# or set SELFCONNECT_ALLOW_INPUT=1
+```
+
+The send path has two gates:
+
+- `--allow-input` proves the caller is allowed to type.
+- `--expect-*` proves the HWND still points at the intended target.
+- Terminal classes are required by default to prevent accidental writes into
+  windows such as Notepad.
+
+If you intentionally inspected the current target and want to send without an
+expected PID/exe/class/title, pass `--confirm-current-target`.
+If you intentionally need a non-terminal target, pass `--allow-non-terminal`.
+
+---
+
+## MCP Server
+
+Install the optional MCP dependency and run:
+
+```bash
+pip install "selfconnect[mcp] @ git+https://github.com/rblake2320/selfconnect.git@test/win32-hardening-v1"
+selfconnect-mcp
+```
+
+The MCP server exposes:
+
+- `doctor`
+- `list_windows`
+- `read_window`
+- `capture_window`
+- `verify_target`
+- `send_text`
+
+The `send_text` tool is disabled unless explicitly enabled:
+
+```bash
+set SELFCONNECT_MCP_ALLOW_INPUT=1
+selfconnect-mcp
+```
+
+The MCP `send_text` tool also requires target verification fields, or
+`confirm_current_target=true` after the caller has inspected the target. It
+requires a terminal class by default unless `require_terminal=false`.
+
+`doctor` reports platform capability probes. Some probes, such as
+`tpm_identity` and `named_pipe_impersonation`, indicate local OS support and
+experiment/enterprise adapter availability; they are not claims that every
+adapter is enabled in the core SDK path.
+
+The branch also carries a repo-local Codex skill at
+`skills/selfconnect-win32/` and the composed Win32 proof at
+`experiments/win32_probe/chained_channel.py`; both are included in the built
+wheel for traceability.
+
+---
+
+## Product Profiles
+
+SelfConnect has three operating profiles:
+
+- `explore`: normal personal use and capability testing. Fast by default, with
+  target verification still enabled so the wrong window does not get typed into.
+- `governed`: enterprise validation. The same capabilities can be wrapped with
+  leases, identity checks, service mode, ETW, audit, and MCP adapter policy.
+- government/high-assurance: fail-closed deployment posture with WORM, TPM/CNG,
+  job sandboxing, service SID, off-host evidence, and ATO documentation where
+  required.
+
+The design rule is: capabilities stay reusable; policy wrappers change by
+profile. Normal SelfConnect should not become hard to use just because the
+government lane exists.
+
+---
+
+## Mesh Registry
+
+Use `selfconnect-mesh` to track which terminals are part of the active mesh.
+Do not infer mesh membership from every open terminal.
+
+```bash
+selfconnect-mesh scan --query Claude
+selfconnect-mesh register --role claude-1 --hwnd 0x123456 --profile governed --task "TPM attestation" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
+selfconnect-mesh update --role claude-1 --status compacting --task "auto-compact pause"
+selfconnect-mesh heartbeat --role claude-1
+selfconnect-mesh list
+selfconnect-mesh repo
+selfconnect-mesh event --type task_assigned --role claude-1 --summary "TPM attestation fix"
+selfconnect-mesh events --role claude-1 --limit 20
+selfconnect-mesh verify-events
+```
+
+Roles should be unique. If a role migrates to a new HWND, use `--replace` so the
+registry shows that the old route was intentionally superseded.
+
+The registry is only current state. The durable history is
+`mesh_events.jsonl`, an append-only hash-chained event log written beside the
+registry by default. Register, update, heartbeat, handoff, and remove actions
+write events automatically. Use `selfconnect-mesh event` for manual spawn/task
+notes, `selfconnect-mesh events` to audit by role, birth ID, or event type, and
+`selfconnect-mesh verify-events` to detect edits, inserted rows, broken links,
+or corrupted records. For stronger tamper resistance, anchor the reported
+`head_hash` to WORM/off-host storage.
+
+Every new event also records a git snapshot from the current repo: branch, HEAD
+commit, upstream, ahead/behind counts, dirty flag, dirty file count, and a small
+status sample. Use `selfconnect-mesh repo` before assigning or closing work when
+you need a quick source-control check without reading raw git output.
+
+Profiles make the product split explicit without forking the code:
+
+- `explore` is for everyday capability testing. Input is still target-guarded
+  so SelfConnect does not type into the wrong window, but heavy enterprise
+  controls are optional.
+- `governed` is for enterprise/government validation, where TPM identity, DACL
+  pipes, impersonation, sandboxing, ETW, and approval/audit controls can be
+  required around the same capabilities.
 
 ---
 
@@ -250,8 +404,9 @@ Full export list and signatures: see `CLAUDE.md` → Key Files section.
 | `SendInput` from background | NO | Always goes to foreground |
 | Separate `PostMessage(WM_CHAR, 13)` for Enter | NO | Ignored by Windows Terminal |
 | `WM_KEYDOWN/WM_KEYUP` for VK_RETURN | NO | Ignored by Windows Terminal |
-| `PostMessage(WM_CHAR)` to Chrome_RenderWidgetHostHWND | YES | WebView2/Electron chat injection — requires UIA `set_focus()` first |
-| `SendInput` to WebView2 (OSR mode) | NO | Offscreen rendering blocks all external input |
+| `PostMessage(WM_CHAR)` to Chrome/Chromium browser surfaces | MIXED/NO | Current browser proof shows Chromium page surfaces need UIA Value/Invoke rather than terminal-style `WM_CHAR` |
+| UIA `ValuePattern` / `InvokePattern` to browser surfaces | YES | Proven for controlled browser UI/form actions without CDP/WebDriver/extension |
+| `SendInput` to WebView2/Chromium surfaces | MIXED/NO | Synthetic keyboard is unreliable; synthetic mouse can work in some cases |
 | Clipboard paste into WebView2 | NO | Claude Code subprocess is sandboxed from clipboard |
 | UIA `set_focus()` without Win32 foreground | YES | Transfers Blink focus internally — works behind lock screen |
 | UIA `invoke()` on WebView2 buttons | YES | Submits chat, dismisses popups — no click events needed |
@@ -269,7 +424,10 @@ All proved live in multi-session tests (see `proofs/` and `docs/`):
 5. **Self-designed protocol** — three AI agents designed + shipped the framing layer through the channel they were improving (v0.5.0 → v0.5.2 in 90 minutes)
 6. **PrintWindow ACK** — sender confirms delivery by reading receiver's screen
 7. **Claude ↔ Gemini via Win32** — Claude Code injected a message into Antigravity
-   (Google's standalone Electron IDE) and Gemini 3.1 Pro replied. Zero API calls. Zero clipboard. Zero foreground window.
+   (Google's standalone Electron IDE) and Gemini 3.1 Pro replied. The recorded
+   SelfConnect actuation/readback leg used no agent-to-agent API, clipboard, or
+   foreground-window transfer; model-provider connectivity was outside the
+   measured transport boundary.
 
    ```
    Claude:  "Hello from Claude Agent-A. What model are you?"
@@ -278,23 +436,27 @@ All proved live in multi-session tests (see `proofs/` and `docs/`):
 
    Full chain: `Claude Code → Python Win32 UIA+WM_CHAR → Antigravity Electron → Gemini 3.1 Pro`
 
-8. **Browser automation — zero external dependencies** (Session 10) —
-   Full live test against Perplexity AI using only Win32 primitives. No Playwright,
-   no Selenium, no browser extension, no MCP, no WebDriver, no API calls.
-   CAPTCHA result: **100% correct** — `PIL.ImageGrab` as the only viable capture path
-   for GPU-composited browser windows.
+8. **Browser control boundary** —
+   Controlled browser proofs show that browser/Electron surfaces are not the
+   same as terminal surfaces. The reliable browser write path is UIA
+   `ValuePattern` / `InvokePattern`, not terminal-style `WM_CHAR`. SelfConnect
+   should detect protected checkpoints such as CAPTCHA and pause for human or
+   official test-flow handling; it should not be positioned as a CAPTCHA bypass
+   tool.
 
 ---
 
 ## Why This Is Novel
 
-Every existing AI-to-AI protocol (A2A, MCP, ACP, ANP, AutoGen, LangChain) requires:
+Most app-layer AI-to-AI protocols (A2A, MCP, ACP, ANP, AutoGen, LangChain) use:
 - An HTTP/WebSocket/JSON-RPC transport layer
 - An API key on at least one end
 - A broker or orchestrator
 
 SelfConnect uses `PostMessage(WM_CHAR)` → ConPTY input buffer → process stdin.  
-Transport = Win32 thread message queue. No API. No broker. No network.
+For the core terminal path, transport = Win32 thread message queue. No API,
+broker, or network is required for that actuation path. The broader ecosystem
+can still expose MCP, SSH, S3, or installer/governance adapters around the core.
 
 ---
 
@@ -344,4 +506,4 @@ python antigravity_controller.py --model
 
 ## License
 
-MIT — see `LICENSE`
+Apache License 2.0 — see `LICENSE`.

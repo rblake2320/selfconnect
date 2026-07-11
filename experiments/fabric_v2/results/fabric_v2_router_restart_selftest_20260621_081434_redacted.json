@@ -1,0 +1,23 @@
+{
+  "accepted_sequence_count": 4,
+  "agent_count": 3,
+  "artifact_path": "experiments\\fabric_v2\\results\\fabric_v2_router_restart_selftest_20260621_081434_redacted.json",
+  "created_at": 1782047674.5469806,
+  "first_ack_payload": "ACK:router-a:1",
+  "mailbox_depths": {
+    "router-a": 0,
+    "router-b": 0,
+    "router-c": 1
+  },
+  "mailbox_payload_recovery": false,
+  "ok": true,
+  "raw_text_included": false,
+  "recovered_replay_state": true,
+  "replay_rejected_after_restart": true,
+  "router_id_hash": "d5a4f7b42d1478e52808c3a9f129ca4e699b14565f03df9617db18568616147c",
+  "schema_version": 1,
+  "second_ack_payload": "ACK:router-a:2",
+  "session_id_hash": "d0584430e1dc34acb0e78a18aa803ac09dc3fa3006e93b849d6f07944f8be2b8",
+  "state_path": "experiments\\fabric_v2\\results\\fabric_v2_router_state_20260621_081434_redacted.json",
+  "suite": "fabric_v2_router_restart_selftest"
+}

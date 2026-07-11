@@ -1,0 +1,11 @@
+{
+  "agent_count": 5,
+  "artifact_path": "experiments\\fabric_v2\\results\\SC_FABRIC_SERVICE_20260621_1135_redacted.json",
+  "model_calls_per_known_task": 0.0,
+  "schema_version": 1,
+  "source_run_id": "SC_FABRIC_SERVICE_20260621_1135",
+  "transport": "fabric_v2_service_transport",
+  "transport_governance_p50_ms": 0.756,
+  "transport_governance_p95_ms": 0.972,
+  "transport_governance_p99_ms": 1.049
+}

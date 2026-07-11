@@ -1,5 +1,9 @@
 """Send path correction to Gemini."""
-import sys, os, time, ctypes
+import ctypes
+import os
+import sys
+import time
+
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from self_connect import list_windows, send_string

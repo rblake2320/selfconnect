@@ -1,5 +1,8 @@
 """Read B's terminal output, extract the python -c line, execute it so B replies to A."""
-import sys, os, time, subprocess
+import os
+import subprocess
+import sys
+
 sys.stdout.reconfigure(encoding='utf-8')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from self_connect import get_text_uia

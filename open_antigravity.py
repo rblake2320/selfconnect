@@ -1,5 +1,7 @@
 """Open Antigravity panel in VS Code and inject a task from Claude."""
-import ctypes, time
+import ctypes
+import time
+
 from PIL import ImageGrab
 
 user32 = ctypes.windll.user32
@@ -19,14 +21,14 @@ VK_CONTROL = 0x11
 VK_SHIFT = 0x10
 VK_P = 0x50
 
-class KEYBDINPUT(ctypes.Structure):  # noqa: RUF012
+class KEYBDINPUT(ctypes.Structure):
     _fields_ = [  # noqa: RUF012
         ('wVk', ctypes.c_ushort), ('wScan', ctypes.c_ushort),
         ('dwFlags', ctypes.c_ulong), ('time', ctypes.c_ulong),
         ('dwExtraInfo', ctypes.POINTER(ctypes.c_ulong))
     ]
 
-class INPUT(ctypes.Structure):  # noqa: RUF012
+class INPUT(ctypes.Structure):
     _fields_ = [('type', ctypes.c_ulong), ('ki', KEYBDINPUT), ('padding', ctypes.c_ubyte * 8)]  # noqa: RUF012
 
 def key_down(vk):

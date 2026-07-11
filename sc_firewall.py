@@ -64,10 +64,10 @@ import re
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Optional
-
+from typing import Any, ClassVar, Optional
 
 # ---------------------------------------------------------------------------
 # InputProvenance
@@ -129,7 +129,7 @@ class InputProvenanceTagger:
     """
 
     # Heuristic patterns that strongly suggest untrusted/injected content
-    _INJECTION_PATTERNS: list[re.Pattern] = [
+    _INJECTION_PATTERNS: ClassVar[list[re.Pattern]] = [
         re.compile(r"ignore\s+(previous|all|prior)\s+instructions?", re.I),
         re.compile(r"you\s+are\s+now\s+(?:a|an)\s+\w+", re.I),
         re.compile(r"system\s*prompt\s*[:=]", re.I),
@@ -227,7 +227,7 @@ class FirewallPolicy:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "FirewallPolicy":
+    def from_dict(cls, d: dict) -> FirewallPolicy:
         return cls(
             allow_tools=set(d.get("allow_tools", [])),
             block_on_untrusted=d.get("block_on_untrusted", True),
@@ -244,7 +244,7 @@ class FirewallPolicy:
             json.dump(self.to_dict(), f, indent=2)
 
     @classmethod
-    def load(cls, path: str) -> "FirewallPolicy":
+    def load(cls, path: str) -> FirewallPolicy:
         with open(path, encoding="utf-8") as f:
             return cls.from_dict(json.load(f))
 
@@ -324,7 +324,7 @@ class DecisionFirewall:
     """
 
     # Exfiltration heuristics: patterns that suggest data exfiltration in HID output
-    _EXFIL_PATTERNS: list[re.Pattern] = [
+    _EXFIL_PATTERNS: ClassVar[list[re.Pattern]] = [
         # Long base64 blobs (>40 chars of base64 chars)
         re.compile(r"[A-Za-z0-9+/]{40,}={0,2}"),
         # URLs with query strings (potential exfil endpoint)
@@ -341,7 +341,7 @@ class DecisionFirewall:
     def __init__(
         self,
         policy: Optional[FirewallPolicy] = None,
-        kill_switch: Optional["KillSwitch"] = None,  # type: ignore[name-defined]
+        kill_switch: Optional[KillSwitch] = None,  # type: ignore[name-defined]
     ) -> None:
         self.policy = policy or FirewallPolicy()
         self._kill_switch = kill_switch
@@ -351,7 +351,7 @@ class DecisionFirewall:
 
     # ── registration ──────────────────────────────────────────────────────
 
-    def on_block(self, handler: Callable[[FirewallDecision], None]) -> "DecisionFirewall":
+    def on_block(self, handler: Callable[[FirewallDecision], None]) -> DecisionFirewall:
         """Register a callback invoked when a decision is BLOCK or ESCALATE."""
         self._block_handlers.append(handler)
         return self
@@ -534,7 +534,7 @@ class DecisionFirewall:
         with self._lock:
             self.policy = policy
 
-    def set_kill_switch(self, ks: "KillSwitch") -> None:  # type: ignore[name-defined]
+    def set_kill_switch(self, ks: KillSwitch) -> None:  # type: ignore[name-defined]
         self._kill_switch = ks
 
 
@@ -629,11 +629,11 @@ class KillSwitch:
 
     # ── callbacks ─────────────────────────────────────────────────────────
 
-    def on_engage(self, handler: Callable[[str], None]) -> "KillSwitch":
+    def on_engage(self, handler: Callable[[str], None]) -> KillSwitch:
         self._engage_handlers.append(handler)
         return self
 
-    def on_release(self, handler: Callable[[str], None]) -> "KillSwitch":
+    def on_release(self, handler: Callable[[str], None]) -> KillSwitch:
         self._release_handlers.append(handler)
         return self
 

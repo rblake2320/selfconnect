@@ -19,26 +19,34 @@ CMD Protocol:
 """
 
 import json
+import os
+import re
 import sys
 import time
 import traceback
-import urllib.request
 import urllib.error
-import os
-import re
+import urllib.request
+from pathlib import Path
 
 # Allow running from any cwd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from self_connect import (
-    list_windows, get_window_text, send_string, send_frame,
-    capture_window, save_capture, find_target, WindowTarget,
-    build_frame, parse_frame
+from sc_envelope import (
+    ENVELOPE_MAX_AGE_S,
+    AgentCard,
+    Envelope,
+    EnvelopeError,
+    load_or_create_mesh_key,
+    publish_card,
 )
+from self_connect import get_window_text, list_windows, save_capture, send_frame, send_string
 
 HUB = "http://192.168.12.132:8765"  # Spark-1 direct — no tunnel needed
 FROM_AGENT = "windows-a"
 REMOTE_AGENT = "cc-spark2"
 POLL_INTERVAL = 30  # seconds
+
+MESH_KEY = load_or_create_mesh_key()
+CARDS_DIR = Path.home() / ".selfconnect" / "cards"
 
 # HWND label map — update as session progresses
 LABEL_MAP = {
@@ -89,17 +97,24 @@ def poll_inbox():
 
 
 def reply_to_hub(result_text, conversation_id=None):
-    """Post a reply back to cc-spark2."""
+    """Post a signed-envelope reply back to cc-spark2."""
+    env = Envelope(
+        sender=FROM_AGENT,
+        recipient=REMOTE_AGENT,
+        kind="reply",
+        payload={"result": result_text},
+        correlation_id=str(conversation_id or ""),
+    ).sign(MESH_KEY)
     payload = {
         "from_agent": FROM_AGENT,
         "to_agent": REMOTE_AGENT,
-        "content": result_text,
+        "content": env.to_json(),
     }
     if conversation_id:
         payload["conversation_id"] = conversation_id
     try:
         r = hub_post("/messages/send_direct", payload)
-        print(f"[relay] replied: {str(r)[:60]}")
+        print(f"[relay] replied (env {env.env_id[:8]}): {str(r)[:60]}")
     except Exception as e:
         print(f"[relay] reply error: {e}")
 
@@ -121,7 +136,7 @@ def cmd_mesh_status():
     for w in extras:
         t = w.title.encode("ascii", "replace").decode("ascii")
         lines.append(f"  ?  hwnd={w.hwnd} ONLINE  title={t[:50]}")
-    lines.append(f"SDK: v0.9.0 | relay: windows-a | remote: {REMOTE_AGENT}")
+    lines.append(f"SDK: v0.12.0 | relay: windows-a | remote: {REMOTE_AGENT}")
     return "\n".join(lines)
 
 
@@ -245,11 +260,25 @@ def execute_cmd(content, conversation_id=None):
 def process_messages(messages):
     for msg in messages:
         from_a = msg.get("from_agent", "")
-        content = msg.get("content", "")
+        raw_content = msg.get("content", "")
         conv_id = msg.get("conversation_id")
 
         if from_a != REMOTE_AGENT:
             continue
+
+        # Try to verify as a signed envelope; fall back to legacy plain text.
+        content = raw_content
+        if raw_content.strip().startswith("{"):
+            try:
+                env = Envelope.from_json(raw_content)
+                if not env.verify(MESH_KEY, max_age_s=ENVELOPE_MAX_AGE_S):
+                    print(f"[relay] WARN: invalid/stale envelope from {from_a} — dropping")
+                    continue
+                content = env.payload.get("cmd", raw_content)
+                conv_id = conv_id or (env.correlation_id or None) or conv_id
+                print(f"[relay] verified env {env.env_id[:8]} kind={env.kind} from={from_a}")
+            except EnvelopeError:
+                pass  # not an envelope — process as legacy plain text
 
         print(f"[relay] from={from_a} conv={str(conv_id)[:8] if conv_id else '?'} content={content[:80]!r}")
 
@@ -266,12 +295,25 @@ def main():
     print(f"[relay] Windows-A Hub relay starting. Hub={HUB} poll={POLL_INTERVAL}s")
     print(f"[relay] Listening for CMD: messages from {REMOTE_AGENT}")
 
+    # Publish signed agent card so hub can verify windows-a identity.
+    try:
+        card = AgentCard(
+            name=FROM_AGENT,
+            node=FROM_AGENT,
+            capabilities=["inject", "capture", "mesh_relay", "cmd_exec"],
+            endpoints={"hub": HUB},
+        ).sign(MESH_KEY)
+        card_path = publish_card(card, CARDS_DIR)
+        print(f"[relay] agent card published: {card_path}")
+    except Exception as e:
+        print(f"[relay] card publish error (non-fatal): {e}")
+
     # Send an online notification
     try:
         reply_to_hub(
-            f"[windows-a] Relay loop active. hwnd=6756828. "
-            f"Mesh: D(4854222)=READY E(12585234)=READY B(3546648)=STALLED C(6624714)=STALLED. "
-            f"Send CMD:MESH_STATUS to start."
+            "[windows-a] Relay loop active. hwnd=6756828. "
+            "Mesh: D(4854222)=READY E(12585234)=READY B(3546648)=STALLED C(6624714)=STALLED. "
+            "Send CMD:MESH_STATUS to start."
         )
     except Exception as e:
         print(f"[relay] startup notify error: {e}")

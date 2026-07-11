@@ -1,5 +1,11 @@
 """Save Notepad windows — auto-name from content, target RichEditD2DPT."""
-import sys, os, time, ctypes, ctypes.wintypes, re
+import ctypes
+import ctypes.wintypes
+import os
+import re
+import sys
+import time
+
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 from self_connect import list_windows, restore_window
@@ -121,7 +127,7 @@ print(f"Saved:   {saved}")
 print(f"Skipped: {skipped}")
 print(f"Files in folder: {len(files_in_dir)}")
 print(f"Match: {'YES' if saved == len(files_in_dir) else 'NO'}")
-print(f"\nFiles:")
+print("\nFiles:")
 for f in sorted(files_in_dir):
     sz = os.path.getsize(os.path.join(SAVE_DIR, f))
     print(f"  {f} ({sz} bytes)")

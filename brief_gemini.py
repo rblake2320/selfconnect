@@ -1,8 +1,12 @@
 """Brief Gemini (Agent-C) on the SelfConnect mesh."""
-import sys, os, time, ctypes
+import ctypes
+import os
+import sys
+import time
+
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from self_connect import list_windows, send_string, focus_window
+from self_connect import list_windows, send_string
 
 wins = list_windows()
 gemini_hwnd = 0x2602034

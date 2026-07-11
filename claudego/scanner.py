@@ -16,8 +16,9 @@ from __future__ import annotations
 import pathlib
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Optional
 
 _ROOT = pathlib.Path(__file__).parent.parent
 if str(_ROOT) not in sys.path:

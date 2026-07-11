@@ -4,9 +4,15 @@ Runs from A's terminal. Every 60s: captures game, nudges F2 agent.
 RULES enforced: no taskkill, no restart, only click_at + save_capture.
 Lockfile: C:/Users/techai/tmp/watchdog.lock — prevents duplicate instances.
 """
-import sys, os, time, atexit, ctypes, ctypes.wintypes
+import atexit
+import ctypes
+import ctypes.wintypes
+import os
+import sys
+import time
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from self_connect import list_windows, send_string, save_capture, get_window_text
+from self_connect import list_windows, save_capture, send_string
 
 BS_HWND    = 220337560   # BlueStacks
 AGENT_HWND = 378079626   # F2 agent terminal

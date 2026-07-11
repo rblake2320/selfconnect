@@ -1,4 +1,5 @@
 # Runbook: Submit Text / Press Enter in Claude Code TUI
+<!-- selfconnect-runbook: {"status":"current","since":"2026-05-04","replacement":null,"entrypoint":false,"kind":"specialized"} -->
 
 ## What
 Send text AND submit it (press Enter) in the Claude Code terminal UI. This requires two

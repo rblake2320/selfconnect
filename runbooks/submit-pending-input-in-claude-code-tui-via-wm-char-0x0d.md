@@ -1,4 +1,9 @@
 # Runbook: Submit pending input in Claude Code TUI via WM_CHAR 0x0D
+<!-- selfconnect-runbook: {"status":"historical","since":"2026-07-05","replacement":"enter_claude_tui.md","entrypoint":false} -->
+
+> Historical reference as of 2026-07-05. Prefer `enter_claude_tui.md` for the
+> current Claude Code submit procedure and `first_wake_selfconnect.md` for
+> first-contact work.
 
 ## What
 Submit text sitting in a Claude Code input bar when SetForegroundWindow+SendInput fails

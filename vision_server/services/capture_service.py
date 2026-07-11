@@ -21,8 +21,7 @@ import io
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-from typing import Callable
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +64,8 @@ def _capture_one(hwnd: int) -> bytes | None:
       1. Try SDK capture_window() (PrintWindow)
       2. If result is all-black (GPU compositing), fall back to PIL.ImageGrab
     """
-    import sys, os
+    import os
+    import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
     from vision_server import config
@@ -88,6 +88,7 @@ def _capture_one(hwnd: int) -> bytes | None:
     try:
         import ctypes
         import ctypes.wintypes
+
         from PIL import ImageGrab
 
         user32 = ctypes.windll.user32

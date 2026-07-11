@@ -1,0 +1,162 @@
+"""Optional MCP server for SelfConnect.
+
+Run with:
+
+    selfconnect-mcp
+
+Input delivery is disabled by default. Set ``SELFCONNECT_MCP_ALLOW_INPUT=1`` to
+enable the ``send_text`` tool. The send tool still requires target verification
+or an explicit current-target confirmation.
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Any
+
+import sc_cli
+
+
+def _mcp_input_allowed() -> bool:
+    return os.environ.get("SELFCONNECT_MCP_ALLOW_INPUT", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def build_server():
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
+        raise RuntimeError(
+            "The MCP server requires the optional dependency: "
+            "pip install selfconnect[mcp]"
+        ) from exc
+
+    server = FastMCP("SelfConnect")
+
+    @server.tool()
+    def doctor(include_windows: bool = False, query: str = "", limit: int = 20) -> dict[str, Any]:
+        """Return SelfConnect version, Win32 capability probes, and optional windows."""
+        return sc_cli.doctor_report(include_windows, query, limit)
+
+    @server.tool()
+    def list_windows(query: str = "", limit: int = 100) -> list[dict[str, Any]]:
+        """List visible windows, optionally filtered by title, exe, or class."""
+        return sc_cli.list_window_records(query, limit)
+
+    @server.tool()
+    def read_window(
+        hwnd: int,
+        prefer_uia: bool = True,
+        profile: str = "explore",
+        role: str = "",
+        generation: int = 0,
+        mesh: str = "default",
+        birth_id: str = "",
+    ) -> dict[str, Any]:
+        """Read text from a window using UIA first, then child-window text fallback.
+
+        Optional governed enforcement: pass ``profile="governed"`` or explicit
+        ``role``/``generation`` to require a current role lease before reading.
+        """
+        return sc_cli.read_window(
+            hwnd,
+            prefer_uia=prefer_uia,
+            profile=profile,
+            role=role or None,
+            generation=generation or None,
+            mesh=mesh,
+            birth_id=birth_id or None,
+        )
+
+    @server.tool()
+    def capture_window(hwnd: int, path: str = "", crop: bool = True) -> dict[str, Any]:
+        """Capture a window to PNG. Returns the saved path."""
+        return sc_cli.capture_window(hwnd, path=path, crop=crop)
+
+    @server.tool()
+    def verify_target(
+        hwnd: int,
+        expected_pid: int = 0,
+        expected_exe: str = "",
+        expected_class: str = "",
+        expected_title: str = "",
+        confirm_current_target: bool = False,
+        require_terminal: bool = True,
+        own_pid: int = 0,
+    ) -> dict[str, Any]:
+        """Verify an HWND still points at the expected PID/exe/class/title."""
+        return sc_cli.verify_target(
+            hwnd,
+            expected_pid=expected_pid or None,
+            expected_exe=expected_exe,
+            expected_class=expected_class,
+            expected_title=expected_title,
+            require_terminal=require_terminal,
+            require_expectation=not confirm_current_target,
+            own_pid=own_pid or None,
+        )
+
+    @server.tool()
+    def send_text(
+        hwnd: int,
+        text: str,
+        submit: bool = False,
+        char_delay: float = 0.05,
+        expected_pid: int = 0,
+        expected_exe: str = "",
+        expected_class: str = "",
+        expected_title: str = "",
+        confirm_current_target: bool = False,
+        require_terminal: bool = True,
+        own_pid: int = 0,
+        profile: str = "explore",
+        role: str = "",
+        generation: int = 0,
+        mesh: str = "default",
+        birth_id: str = "",
+    ) -> dict[str, Any]:
+        """Type text into a verified window. Also requires SELFCONNECT_MCP_ALLOW_INPUT=1.
+
+        Optional governed enforcement: pass ``profile="governed"`` or explicit
+        ``role``/``generation`` to require a current role lease (role +
+        birth_id + generation + hwnd + owner SID hash) before the send. The
+        owner SID is not yet resolved at runtime, so governed sends fail closed
+        until a SID is injected via the CLI path (documented next step).
+        """
+        return sc_cli.send_text_to_window(
+            hwnd,
+            text,
+            submit=submit,
+            char_delay=char_delay,
+            allow_input=_mcp_input_allowed(),
+            env_name="SELFCONNECT_MCP_ALLOW_INPUT",
+            expected_pid=expected_pid or None,
+            expected_exe=expected_exe,
+            expected_class=expected_class,
+            expected_title=expected_title,
+            confirm_current_target=confirm_current_target,
+            require_terminal=require_terminal,
+            own_pid=own_pid or None,
+            profile=profile,
+            role=role or None,
+            generation=generation or None,
+            mesh=mesh,
+            birth_id=birth_id or None,
+        )
+
+    return server
+
+
+def main() -> int:
+    try:
+        server = build_server()
+    except RuntimeError as exc:
+        print(f"selfconnect-mcp: {exc}")
+        return 1
+    server.run()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

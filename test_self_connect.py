@@ -15,22 +15,27 @@ if sys.platform != "win32":
     sys.exit(0)
 
 from self_connect import (
-    __version__, WindowTarget, WindowPool,
-    list_windows, find_target, find_child_by_class,
-    get_own_terminal_pid, wait_for_window,
-    focus_window, get_window_rect,
-    move_window, resize_window,
-    minimize_window, maximize_window, restore_window,
-    send_string, send_keys,
-    click_at, click_window, scroll_window,
-    read_clipboard, write_clipboard,
-    capture_window, crop_to_client, save_capture,
-    get_window_text, get_child_texts, get_text_uia,
-    wait_for_title_change,
-    # v0.8.0
-    PeerState, PeerRecord, AgentRegistry, WatchdogLoop, ApprovalRelay,
-    # v0.9.0
-    Checkpoint, write_checkpoint, read_checkpoint, MigrationCoordinator,
+    AgentRegistry,
+    Checkpoint,
+    MigrationCoordinator,
+    WindowPool,
+    __version__,
+    capture_window,
+    crop_to_client,
+    find_target,
+    get_child_texts,
+    get_own_hwnd,
+    get_own_terminal_pid,
+    get_text_uia,
+    get_window_rect,
+    get_window_text,
+    list_windows,
+    read_checkpoint,
+    read_clipboard,
+    save_capture,
+    wait_for_window,
+    write_checkpoint,
+    write_clipboard,
 )
 
 PASS = 0
@@ -61,7 +66,7 @@ def test_version():
     check("version not empty", len(__version__) > 0)
     import self_connect
     check("__all__ defined", hasattr(self_connect, "__all__"))
-    check("__all__ has 61 exports", len(self_connect.__all__) == 61,
+    check("__all__ has 63 exports", len(self_connect.__all__) == 63,
           f"got {len(self_connect.__all__)}")
 
 
@@ -82,6 +87,12 @@ def test_window_discovery():
 
     own = get_own_terminal_pid()
     check("get_own_terminal_pid >= 0", own >= 0, f"got {own}")
+    own_hwnd = get_own_hwnd()
+    check(
+        "get_own_hwnd returns int or None",
+        own_hwnd is None or isinstance(own_hwnd, int),
+        f"got {own_hwnd}",
+    )
 
 
 def test_find_target():
@@ -149,6 +160,7 @@ def test_clipboard():
     time.sleep(0.1)
     text2 = f"Timestamp test {time.time()}"
     ok2 = write_clipboard(text2)
+    check("second write_clipboard returns True", ok2)
     time.sleep(0.05)
     result2 = read_clipboard()
     check("clipboard second write", result2 == text2, f"got {result2!r}")
@@ -167,7 +179,8 @@ def test_capture():
               f"size={img.size}")
         cropped = crop_to_client(w.hwnd, img)
         check("crop_to_client returns image", cropped is not None)
-        import os, tempfile
+        import os
+        import tempfile
         path = os.path.join(tempfile.gettempdir(), "sc_test.png")
         saved = save_capture(w.hwnd, path=path)
         check("save_capture returns path", saved == path)
@@ -223,7 +236,8 @@ def test_wait_for_window():
 
 def test_layer4_continuity():
     """Layer 4 Continuity — Checkpoint, write_checkpoint, read_checkpoint, MigrationCoordinator."""
-    import os, tempfile
+    import os
+    import tempfile
     print("\n-- Layer 4 Continuity (v0.9.0) --")
 
     # Checkpoint dataclass
