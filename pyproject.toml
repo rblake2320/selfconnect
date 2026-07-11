@@ -14,7 +14,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Win32 (MS Windows)",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -57,6 +57,11 @@ claudego = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "pywinauto>=0.6.8",
+    "pystray>=0.19.5",
+    "winotify>=1.1.0",
+]
+service = [
+    "pywin32>=306",
 ]
 full = [
     "pywinauto>=0.6.8",
@@ -66,9 +71,12 @@ full = [
     "python-telegram-bot>=22.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
+    "pystray>=0.19.5",
+    "winotify>=1.1.0",
     "cryptography>=42.0.0",
     "dilithium-py>=1.0.0",
     "mcp>=1.0.0",
+    "pywin32>=306",
 ]
 
 [project.urls]
@@ -91,8 +99,12 @@ artifacts = [
 ]
 include = [
     "_win32_abi.py",
+    "approval_partner.py",
+    "approval_telegram.py",
     "self_connect.py",
     "sc_cli.py",
+    "sc_done.py",
+    "sc_envelope.py",
     "sc_mcp.py",
     "sc_mesh_registry.py",
     "sc_mesh_lease.py",
@@ -102,6 +114,9 @@ include = [
     "sc_fabric_router.py",
     "sc_fabric_service.py",
     "sc_fabric_v2.py",
+    "sc_fabric_windows_svc.py",
+    "sc_hook_emit.py",
+    "sc_hooks.py",
     "sc_local_model_role.py",
     "sc_echo_filter.py",
     "sc_identity.py",
@@ -110,6 +125,10 @@ include = [
     "sc_pq.py",
     "sc_shell.py",
     "sc_resume.py",
+    "sc_nats_bridge.py",
+    "sc_spawn.py",
+    "sc_tasks.py",
+    "sc_transcript.py",
     "claudego/**",
     "experiments/win32_probe/CAPABILITY_BACKLOG.md",
     "experiments/win32_probe/SERVICE_SID_DAEMON.md",
@@ -191,3 +210,4 @@ selfconnect-local-model = "sc_local_model_role:main"
 [tool.pytest.ini_options]
 testpaths = ["tests", "test_self_connect.py"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

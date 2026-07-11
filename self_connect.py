@@ -30,7 +30,7 @@ Run as a script to list all visible windows:
   python self_connect.py
 """
 
-__version__ = "0.11.0"
+__version__ = "0.12.0"
 __all__ = [  # noqa: RUF022  # grouped by version/category, not alphabetical
     # Core types
     "WindowTarget", "WindowPool", "capabilities",
