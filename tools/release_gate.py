@@ -493,7 +493,16 @@ def audit(
             if (root / relative).exists()
         )
         command_results["ruff"] = _run(
-            [sys.executable, "-m", "ruff", "check", *ruff_targets], root
+            [
+                sys.executable,
+                "-m",
+                "ruff",
+                "check",
+                "--config",
+                str(root / "pyproject.toml"),
+                *ruff_targets,
+            ],
+            root,
         )
         command_results["ruff"]["scope"] = "release package and release-gate files"
         ruff = command_results["ruff"]
