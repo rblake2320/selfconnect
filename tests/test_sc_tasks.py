@@ -130,15 +130,42 @@ def test_chain_starts_at_genesis(board):
 
 
 def test_wait_for_state_returns_on_transition(board):
+    # Issue #17: this intermittently failed once during PR #16 validation and
+    # never reproduced (30/30 isolated, 621-pass reruns). The suspected cause
+    # is the background transition dying silently under transient file-lock
+    # contention on a loaded runner, leaving wait_for_state to time out with
+    # no evidence. This version captures the trigger conditions so that if it
+    # recurs, the failure message contains everything needed to diagnose it
+    # rather than a bare "assert None".
     t = board.create("t")
+    errors: list[BaseException] = []
+    started = time.time()
+    transitioned_at: list[float] = []
 
     def later():
-        time.sleep(0.2)
-        board.transition(t.task_id, TaskState.WORKING)
+        try:
+            time.sleep(0.2)
+            board.transition(t.task_id, TaskState.WORKING)
+            transitioned_at.append(time.time() - started)
+        except BaseException as exc:  # noqa: BLE001 - capture, don't swallow
+            errors.append(exc)
 
-    threading.Thread(target=later).start()
+    thread = threading.Thread(target=later)
+    thread.start()
     got = board.wait_for_state(t.task_id, {TaskState.WORKING}, timeout=5.0, poll=0.05)
-    assert got is not None and got.state is TaskState.WORKING
+    thread.join(timeout=5.0)
+
+    if got is None or got.state is not TaskState.WORKING:
+        final = board.get(t.task_id)
+        diag = {
+            "waited_s": round(time.time() - started, 3),
+            "thread_alive": thread.is_alive(),
+            "thread_errors": [f"{type(e).__name__}: {e}" for e in errors],
+            "transition_completed_at_s": transitioned_at or None,
+            "final_state": final.state.value,
+            "wait_returned": None if got is None else got.state.value,
+        }
+        raise AssertionError(f"issue #17 flake recurred; trigger conditions: {diag}")
 
 
 def test_wait_for_state_times_out(board):
