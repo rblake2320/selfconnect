@@ -37,17 +37,20 @@ would themselves cause harm if the report is intercepted.
 
 ## Supported versions
 
-Only the latest released version and `master` receive security fixes. Pin to a
-released tag for reproducibility and update promptly when a security release is
-published.
+`master` receives security fixes. This repository currently has no published
+GitHub release, so no historical tag should be inferred to be a supported
+security release. When a release is published, this section must name the
+supported version explicitly.
 
 ## Handling of secrets
 
 - Never commit private keys, tokens, or credentials to this repository.
   Report any that you find via the private channel above rather than in a
   public issue.
-- Release artifacts should be signed; verify signatures before trusting a
-  downloaded build.
+- Artifact signing is tracked separately and is not a current property of every
+  distributed file. When a release publishes a signature and verification
+  instructions, verify both before relying on that artifact. See issue #3 for
+  the open Windows code-signing work.
 
 ## Known boundaries
 
