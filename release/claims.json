@@ -13,6 +13,198 @@
   },
   "claims": [
     {
+      "id": "truth.readme_tagged_catalog",
+      "statement": "The release gate binds explicit README SC-CLAIM blocks to ledger entries and exact excerpt hashes and fails on malformed, duplicate, unregistered, mismapped, or hash-mismatched tags.",
+      "status": "proven",
+      "release": true,
+      "scope": "Explicit SC-CLAIM blocks in README.md and deterministic release-gate tests.",
+      "boundary": "Natural-language prose outside tagged blocks is not mechanically classified or counted; the control is PARTIAL and still requires human claim review.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "truth.readme_tagged_catalog",
+        "path": "README.md",
+        "sha256_text": "ce2b79cf8364df93b1b87be6f2a89fd1943354ca92acc721e27aa0b5e658cdff"
+      },
+      "evidence": [
+        {
+          "path": "tools/release_gate.py",
+          "sha256_text": "871945bdb744eaa177f733979826c3a1b7beecaf76e5fd277320a02a5bd24aab"
+        },
+        {
+          "path": "tests/test_release_gate.py",
+          "sha256_text": "6bbb7cdad7638bcac400a7c50be146ec3514bc882319dfb17e38af5b7acbcf77"
+        },
+        {
+          "path": ".github/workflows/ci.yml",
+          "sha256_text": "4dc415a924ff2619b0f7f858dea8feacd9e6919b44495d22e5d21b132f08c1b1"
+        }
+      ]
+    },
+    {
+      "id": "product.core_win32_bridge",
+      "statement": "The core package implements guarded, class-selected Windows terminal actuation plus optional readback, mesh, and governance adapters.",
+      "status": "proven",
+      "release": true,
+      "scope": "The v0.12 Windows SDK surface declared by the tracked source and package tests.",
+      "boundary": "The core SDK is not by itself a compliance product, authorization package, universal desktop controller, or proof that optional adapters are enabled in a deployment.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "product.core_win32_bridge",
+        "path": "README.md",
+        "sha256_text": "495c355ac55fae494bebdc65a7a634ce254237dbe0d4ef9c4824eb6aec966ea2"
+      },
+      "evidence": [
+        {
+          "path": "self_connect.py",
+          "sha256_text": "515614e5add74efc2fa43825e12ef5d208f3fee8c2d428148325812f3bace5bd"
+        },
+        {
+          "path": "sc_cli.py",
+          "sha256_text": "f3f3b671278e640fff9dfba6ee07af25b3a459e433ae17d3e8606db5d13704ca"
+        },
+        {
+          "path": "tests/test_package_adapters.py",
+          "sha256_text": "f1e4c06e99f192d93182f1b4f2a36871c3b35d02975ad2b56250b003e2297ef4"
+        }
+      ]
+    },
+    {
+      "id": "runbooks.manual_capture",
+      "statement": "The repository includes operator-authored Win32 runbooks and a manually invoked structured runbook writer.",
+      "status": "proven",
+      "release": true,
+      "scope": "Tracked runbooks and runbook_writer.py.",
+      "boundary": "The writer does not observe retries or run automatically; three retries is an operator trigger guideline.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "runbooks.manual_capture",
+        "path": "README.md",
+        "sha256_text": "1796e290809d752b00d40291f8c1066155048525e5b8d4c5dc6d0bd7dadfd774"
+      },
+      "evidence": [
+        {
+          "path": "runbook_writer.py",
+          "sha256_text": "5c832fa3cd683d699681ad46666da418cacad580acb081f6cc4e1f3848b7d56c"
+        },
+        {
+          "path": "runbooks/README.md",
+          "sha256_text": "2ab8ac86c3efd3b4883fdb326b40a5f25d2fe706799abda63407c81739f019e0"
+        }
+      ]
+    },
+    {
+      "id": "package.installation_extras",
+      "statement": "The package declares optional UIA, MCP, Windows service, Telegram, ClaudeGo, and full dependency groups.",
+      "status": "proven",
+      "release": true,
+      "scope": "Dependency declarations in pyproject.toml.",
+      "boundary": "Dependency availability does not establish adapter enablement, deployment posture, or live validation.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "package.installation_extras",
+        "path": "README.md",
+        "sha256_text": "2c67c1e243808f76e4dd685a8d93738e4cc539d6a4531815bb43c07bfc3aa8e0"
+      },
+      "evidence": [
+        {
+          "path": "pyproject.toml",
+          "sha256_text": "a9e08e93885679ef55102fe835a20657b437316c39fac948563e2b1f91118729"
+        }
+      ]
+    },
+    {
+      "id": "package.cli_target_guard",
+      "statement": "The CLI send path requires explicit input authorization and guarded target identity or explicit current-target confirmation, and it distinguishes transport acceptance from verified delivery.",
+      "status": "proven",
+      "release": true,
+      "scope": "sc_cli.send_text_to_window and its package-adapter tests.",
+      "boundary": "A matching guard and successful transport record do not establish receiver processing; an explicit non-terminal override remains available.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "package.cli_target_guard",
+        "path": "README.md",
+        "sha256_text": "2197aaa4e1f3e5c751488d255bc839798fccb156d9667d27f98031df4914c22d"
+      },
+      "evidence": [
+        {
+          "path": "sc_cli.py",
+          "sha256_text": "f3f3b671278e640fff9dfba6ee07af25b3a459e433ae17d3e8606db5d13704ca"
+        },
+        {
+          "path": "tests/test_package_adapters.py",
+          "sha256_text": "f1e4c06e99f192d93182f1b4f2a36871c3b35d02975ad2b56250b003e2297ef4"
+        }
+      ]
+    },
+    {
+      "id": "package.mcp_guarded_surface",
+      "statement": "The optional MCP server exposes six named tools and keeps input disabled by default with target verification retained when enabled.",
+      "status": "proven",
+      "release": true,
+      "scope": "The tracked sc_mcp.py server adapter and package tests.",
+      "boundary": "MCP tool registration does not establish a running server, remote authorization, deployment hardening, or receiver delivery.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "package.mcp_guarded_surface",
+        "path": "README.md",
+        "sha256_text": "df7413aad1157bb5f2cdf1181600393525ec601a5e0a51b952ba6e2e12b560ea"
+      },
+      "evidence": [
+        {
+          "path": "sc_mcp.py",
+          "sha256_text": "93cd26ab978133a19ab7f612b2c50882e6f3ba940d24dae5def310930711e42e"
+        },
+        {
+          "path": "tests/test_package_adapters.py",
+          "sha256_text": "f1e4c06e99f192d93182f1b4f2a36871c3b35d02975ad2b56250b003e2297ef4"
+        }
+      ]
+    },
+    {
+      "id": "product.profile_boundaries",
+      "statement": "The repository documents three configuration profiles with explicit authorization and deployment boundaries.",
+      "status": "proven",
+      "release": true,
+      "scope": "Documented product configuration intent only.",
+      "boundary": "Profile selection does not provision controls or establish an ATO, DoD Impact Level authorization, compliance determination, WORM checkpoint, hardware identity, or independent assessment.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "product.profile_boundaries",
+        "path": "README.md",
+        "sha256_text": "71791f4d1c65a4bed60149712adaacda5da4c184db5b216a45d043cfacfa4e78"
+      },
+      "evidence": [
+        {
+          "path": "docs/SELFCONNECT_PRODUCT_BOUNDARIES.md",
+          "sha256_text": "5a7d8255c16fff6be2925dc0cd94013556119f9bf434d1f56271c6385a4eb0f6"
+        }
+      ]
+    },
+    {
+      "id": "mesh.registry_hash_chain",
+      "statement": "The local mesh registry uses birth IDs, records lifecycle and manual events in a SHA-256 hash chain, verifies retained-chain integrity, and records bounded Git snapshots.",
+      "status": "proven",
+      "release": true,
+      "scope": "sc_mesh_registry.py and its deterministic package-adapter tests.",
+      "boundary": "The local chain is tamper-evident for retained content, not deletion- or truncation-resistant without an external checkpoint, and does not prove current runtime mesh health.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "mesh.registry_hash_chain",
+        "path": "README.md",
+        "sha256_text": "93c842ea3904d95a26470c015f2cbae1a9bfb91ebe2aaa8d7407c4781eabd26d"
+      },
+      "evidence": [
+        {
+          "path": "sc_mesh_registry.py",
+          "sha256_text": "f5b1bcd23c5bf779b75cbfd006d0d35d9696837aedc3ed82ce0a9265abd7548d"
+        },
+        {
+          "path": "tests/test_package_adapters.py",
+          "sha256_text": "f1e4c06e99f192d93182f1b4f2a36871c3b35d02975ad2b56250b003e2297ef4"
+        }
+      ]
+    },
+    {
       "id": "terminal.os_native_actuation",
       "statement": "SelfConnect can inject visible terminal input into the tested Windows Terminal CASCADIA surface through Win32 WM_CHAR without requiring MCP, HTTP, or a cloud API for that actuation step.",
       "status": "proven",
@@ -20,12 +212,19 @@
       "scope": "The guarded Windows Terminal CASCADIA surface only.",
       "boundary": "A successful PostMessageW return establishes queue acceptance, not receiver processing or visible delivery. This does not cover ConsoleWindowClass, universal application input, or claim that the wider ecosystem never uses APIs, MCP, brokers, or networks.",
       "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "terminal.os_native_actuation",
+        "path": "README.md",
+        "sha256_text": "82470a79c4bc522d9a007f3d2a9aa5ec5b998a781b2a0d21233ee4e26eed319a"
+      },
       "evidence": [
         {
-          "path": "self_connect.py"
+          "path": "self_connect.py",
+          "sha256_text": "515614e5add74efc2fa43825e12ef5d208f3fee8c2d428148325812f3bace5bd"
         },
         {
-          "path": "tests/test_package_adapters.py"
+          "path": "tests/test_package_adapters.py",
+          "sha256_text": "f1e4c06e99f192d93182f1b4f2a36871c3b35d02975ad2b56250b003e2297ef4"
         }
       ]
     },
@@ -37,6 +236,11 @@
       "scope": "The recorded Windows cmd.exe ConsoleWindowClass proof and the guarded class-selected package path.",
       "boundary": "WriteConsoleInputW record acceptance alone is not application delivery. The PASS requires the independent target-process effect. This does not establish parity for Windows Terminal tabs, every console host, elevated cross-integrity targets, or arbitrary TUIs.",
       "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "terminal.console_input_transport",
+        "path": "README.md",
+        "sha256_text": "1a171809d741e84d1134e59425229d414c5ee6eb2b0c78558df10b39056846da"
+      },
       "evidence": [
         {
           "path": "experiments/win32_probe/results/console_input_transport_PASS_redacted.json",
@@ -65,10 +269,12 @@
           ]
         },
         {
-          "path": "tests/test_console_io.py"
+          "path": "tests/test_console_io.py",
+          "sha256_text": "91051060063871a126ea7805eb05ee78feb47911d2405b159e324b50f044a8c6"
         },
         {
-          "path": "tests/test_console_input_transport_probe.py"
+          "path": "tests/test_console_input_transport_probe.py",
+          "sha256_text": "7908c0add03151fa29da8512cad4a5c3ed29e7eec00f01e0df270f50bbe28c3f"
         }
       ]
     },
@@ -102,6 +308,290 @@
       ]
     },
     {
+      "id": "dashboard.claudego_local",
+      "statement": "The optional ClaudeGo package implements a local dashboard, agent-window status display, and optional tray and Windows toast adapters.",
+      "status": "proven",
+      "release": true,
+      "scope": "Tracked ClaudeGo implementation and mocked integration tests.",
+      "boundary": "The deterministic tests do not establish a currently running live desktop deployment or end-to-end notification delivery.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "dashboard.claudego_local",
+        "path": "README.md",
+        "sha256_text": "b266ff5ddc89a14aee10243b1e626d2094864ee63d3a11a956072f344abf605e"
+      },
+      "evidence": [
+        {
+          "path": "claudego/dashboard.py",
+          "sha256_text": "1240df28c10c8ea4c31b2fd44382e7d6e925f000d502257a742f95c86939b5d4"
+        },
+        {
+          "path": "claudego/scanner.py",
+          "sha256_text": "13c8573b0f137da24d9b634101f5e724b55928d68eea299569f0281c42a3da5b"
+        },
+        {
+          "path": "tests/test_claudego_dashboard.py",
+          "sha256_text": "3265fbbca20fe14313ff8a6d665e83f9184eb876ebc72e7de4a59a37e19ca09e"
+        },
+        {
+          "path": "tests/test_claudego_scanner.py",
+          "sha256_text": "974688e5d9af12c9443da772878b5fa1f89d747a23f6c02a96675a6c4a17956a"
+        }
+      ]
+    },
+    {
+      "id": "framing.structured_messages",
+      "statement": "The SDK implements structured STX/NUL/ETX frames and reports an optional ACK only after independent configured verification.",
+      "status": "proven",
+      "release": true,
+      "scope": "Framing and ACK behavior implemented in self_connect.py and deterministic console tests.",
+      "boundary": "Readback depends on observable receiver output and is not a universal application-level receiver acknowledgement.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "framing.structured_messages",
+        "path": "README.md",
+        "sha256_text": "3a3477e8c2bd86daf739ab678ba63512ac7cc4d4e9a846245bae7770760a6214"
+      },
+      "evidence": [
+        {
+          "path": "self_connect.py",
+          "sha256_text": "515614e5add74efc2fa43825e12ef5d208f3fee8c2d428148325812f3bace5bd"
+        },
+        {
+          "path": "tests/test_console_io.py",
+          "sha256_text": "91051060063871a126ea7805eb05ee78feb47911d2405b159e324b50f044a8c6"
+        }
+      ]
+    },
+    {
+      "id": "package.public_api_surface",
+      "statement": "The package exports the tracked v0.12 Win32, framing, readback, clipboard, watchdog, approval-relay, listener, migration, and foreground-input helpers without duplicate or undefined export names.",
+      "status": "proven",
+      "release": true,
+      "scope": "self_connect.__all__ and the exact export smoke test.",
+      "boundary": "Export presence is not live behavior evidence and remains subject to Windows, target, permission, and optional-dependency boundaries.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "package.public_api_surface",
+        "path": "README.md",
+        "sha256_text": "aaa87fe89c5b31ba38853ba8a826c691a2faebd28b15e3ef99c760cc9dd17143"
+      },
+      "evidence": [
+        {
+          "path": "self_connect.py",
+          "sha256_text": "515614e5add74efc2fa43825e12ef5d208f3fee8c2d428148325812f3bace5bd"
+        },
+        {
+          "path": "tests/test_package_adapters.py",
+          "sha256_text": "f1e4c06e99f192d93182f1b4f2a36871c3b35d02975ad2b56250b003e2297ef4"
+        }
+      ]
+    },
+    {
+      "id": "history.agent_spawn_exercise",
+      "statement": "Tracked screenshots record an implemented Windows console, CLI-agent launch, and handoff exercise.",
+      "status": "proven",
+      "release": true,
+      "scope": "The exact historical screenshots and environment represented by them.",
+      "boundary": "This does not guarantee every agent CLI, account, policy, terminal, or host configuration, and the screenshots are not a repeatable release-run artifact.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "history.agent_spawn_exercise",
+        "path": "README.md",
+        "sha256_text": "d5b8ec4ef62b1d8f043f20ade94c66341b1aea85094fab77d725f61f5d290801"
+      },
+      "evidence": [
+        {
+          "path": "proofs/spawn_step4_handoff.png",
+          "sha256": "719b01e28b91154f411a7a7b6e704c4d4ba95d236ee592c0421e58f2b1e6f29a"
+        }
+      ]
+    },
+    {
+      "id": "history.background_input_exercise",
+      "statement": "Tracked captures record input on the tested minimized Windows terminal route.",
+      "status": "proven",
+      "release": true,
+      "scope": "The exact historical minimized-terminal capture and matching implementation boundary.",
+      "boundary": "The image alone does not establish arbitrary background application control or current parity across terminal versions.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "history.background_input_exercise",
+        "path": "README.md",
+        "sha256_text": "c6b6210b80f518037e5811b3f12784ffcf16ab81d3619165501d48ec21cff100"
+      },
+      "evidence": [
+        {
+          "path": "proofs/proof_3_minimized.png",
+          "sha256": "d345eb8694c30ced81e69881e36804741c400fbd25596cc1d0cf12e22cffd342"
+        }
+      ]
+    },
+    {
+      "id": "history.bidirectional_chat_exercise",
+      "statement": "Tracked captures record a bidirectional message exercise between two Claude CLI terminal sessions.",
+      "status": "proven",
+      "release": true,
+      "scope": "The exact historical terminal captures.",
+      "boundary": "The captures do not establish a general delivery guarantee, current model identity, or transport behavior outside the represented sessions.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "history.bidirectional_chat_exercise",
+        "path": "README.md",
+        "sha256_text": "0f91ea514da37e413b54d902ee7f98afd7a5f93c05435064eccba19e6881a57d"
+      },
+      "evidence": [
+        {
+          "path": "proofs/bidirectional_session_a.png",
+          "sha256": "6e839723e7f4156a19ca2ea1cae717a26a90fc2b1f680985a7fe8d4d80755058"
+        },
+        {
+          "path": "proofs/bidirectional_session_b.png",
+          "sha256": "27a9a2e0e1052539c5c5c57f19ccd3947c7ecab5d7882af64b59e88cff4b8b38"
+        }
+      ]
+    },
+    {
+      "id": "history.cross_vendor_mesh_exercise",
+      "statement": "Tracked captures record Claude, Codex, and Gemini CLI sessions participating in a historical Win32-terminal mesh exercise.",
+      "status": "proven",
+      "release": true,
+      "scope": "The exact historical terminal capture and local actuation leg.",
+      "boundary": "The evidence does not independently establish remote model identity, provider operation, current availability, or network-free model inference.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "history.cross_vendor_mesh_exercise",
+        "path": "README.md",
+        "sha256_text": "e1043f211a0f8d7f0794852a120a8e44eb6eb7aa3727a4dd277ba7a7953a7574"
+      },
+      "evidence": [
+        {
+          "path": "proofs/b_post_crossvendor.png",
+          "sha256": "91cb54eddf2fcce998f8678ed239175cf7ddafc97c4d37d131668c7521487ddb"
+        }
+      ]
+    },
+    {
+      "id": "history.framing_exercise",
+      "statement": "Tracked captures record agents exchanging and testing the STX/NUL/ETX framing implementation during development.",
+      "status": "proven",
+      "release": true,
+      "scope": "The exact historical development captures and current framing implementation.",
+      "boundary": "The evidence supports implementation and exercise, not exclusive authorship, absence of prior art, or patentability.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "history.framing_exercise",
+        "path": "README.md",
+        "sha256_text": "f16580f882fc56151516474e1371acdd0d72359166c9dd9a35209c27f0cee1d8"
+      },
+      "evidence": [
+        {
+          "path": "proofs/b_framing_v050_live.png",
+          "sha256": "94e754ca137ffb8bdcac54089aaf49ac04d55ea06a68d2b666439004f3f5eb27"
+        },
+        {
+          "path": "proofs/c_uuid_delivered.png",
+          "sha256": "7a2d7a8198c588824e873384bca93c2db1ec49d4ce23e2e645200477e4defd34"
+        }
+      ]
+    },
+    {
+      "id": "history.printwindow_ack_exercise",
+      "statement": "The framing implementation and deterministic tests require configured independent readback verification before reporting an ACK.",
+      "status": "proven",
+      "release": true,
+      "scope": "Current send_frame, verify_delivery, and deterministic console tests.",
+      "boundary": "The mechanism depends on readable output and is not a universal receiver-generated acknowledgement.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "history.printwindow_ack_exercise",
+        "path": "README.md",
+        "sha256_text": "de4490d768a5f8dc0aa7acc1d74e240f83ac192069f6929f5b8fc44b032f93ed"
+      },
+      "evidence": [
+        {
+          "path": "self_connect.py",
+          "sha256_text": "515614e5add74efc2fa43825e12ef5d208f3fee8c2d428148325812f3bace5bd"
+        },
+        {
+          "path": "tests/test_console_io.py",
+          "sha256_text": "91051060063871a126ea7805eb05ee78feb47911d2405b159e324b50f044a8c6"
+        }
+      ]
+    },
+    {
+      "id": "history.antigravity_exchange_exercise",
+      "statement": "A tracked session log records a Claude-to-Antigravity/Gemini exchange using the local Windows UI path.",
+      "status": "proven",
+      "release": true,
+      "scope": "The exact historical log and local UI actuation/readback leg.",
+      "boundary": "The record does not independently establish remote model identity, provider traffic, current application compatibility, or an entirely network-free exchange.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "history.antigravity_exchange_exercise",
+        "path": "README.md",
+        "sha256_text": "292bee608d20677c460300ea21b6ae0a9243fffc1f2cf13829e6e4fcb86bee2c"
+      },
+      "evidence": [
+        {
+          "path": "docs/ai-to-ai-chat-log.md",
+          "sha256_text": "49932efae75515b885e812c1df7809d3bc42197b8ef487fa71858453ea74be8d"
+        }
+      ]
+    },
+    {
+      "id": "transport.engineering_distinction",
+      "statement": "The tested local terminal actuation path uses Windows input primitives and does not require a network call for that actuation step, unlike common app-layer network transports.",
+      "status": "proven",
+      "release": true,
+      "scope": "The core local actuation implementation and its network-import release check.",
+      "boundary": "The broader ecosystem can use networked adapters; this is an engineering distinction, not an exclusivity, prior-art, novelty, non-obviousness, or patentability conclusion.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "transport.engineering_distinction",
+        "path": "README.md",
+        "sha256_text": "3ff9fe236d86620c924484f102570fcb9bce5d78356b8933dc7053850f31b374"
+      },
+      "evidence": [
+        {
+          "path": "self_connect.py",
+          "sha256_text": "515614e5add74efc2fa43825e12ef5d208f3fee8c2d428148325812f3bace5bd"
+        },
+        {
+          "path": "sc_cli.py",
+          "sha256_text": "f3f3b671278e640fff9dfba6ee07af25b3a459e433ae17d3e8606db5d13704ca"
+        },
+        {
+          "path": "docs/SELFCONNECT_PRODUCT_BOUNDARIES.md",
+          "sha256_text": "5a7d8255c16fff6be2925dc0cd94013556119f9bf434d1f56271c6385a4eb0f6"
+        }
+      ]
+    },
+    {
+      "id": "antigravity.controller_surface",
+      "statement": "The repository implements connect, chat, and monitor interfaces over its UIA-based Antigravity/Electron adapter.",
+      "status": "proven",
+      "release": true,
+      "scope": "Tracked antigravity_controller.py surface and deterministic controller tests.",
+      "boundary": "Implementation presence does not establish current compatibility with every Electron/WebView2 application or a live provider response.",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "antigravity.controller_surface",
+        "path": "README.md",
+        "sha256_text": "bac1ecf233070dff7e715439f7770d76659967315f045a14b4f43c91981a4f95"
+      },
+      "evidence": [
+        {
+          "path": "antigravity_controller.py",
+          "sha256_text": "83cf299294803eb8b3f62db96a86448e152b0ca0f76ffad05eb0f1a690939127"
+        },
+        {
+          "path": "tests/test_antigravity_controller.py",
+          "sha256_text": "b83ca0e43bf4992cda551f173c13487f2522bb7b67099cf41d1803cb9544a5ed"
+        }
+      ]
+    },
+    {
       "id": "browser.edge_local_fixture",
       "statement": "SelfConnect read and controlled an owned local page in an isolated Microsoft Edge profile through UIA and stopped at a mock protected checkpoint.",
       "status": "proven",
@@ -109,6 +599,11 @@
       "scope": "Microsoft Edge against the recorded local owned fixture.",
       "boundary": "This does not claim public-site, multi-tab, Chrome, Firefox, CAPTCHA bypass, anti-bot evasion, download, upload, passkey, or cross-browser parity.",
       "verified_on": "2026-06-17",
+      "public_readme": {
+        "tag": "browser.edge_local_fixture",
+        "path": "README.md",
+        "sha256_text": "b9f8058440487fac3cc860638aa796f0f9abe54e35d757dd18219cefeeb98d3c"
+      },
       "evidence": [
         {
           "path": "experiments/win32_probe/results/browser_local_proof_PASS_redacted.json",
@@ -272,16 +767,24 @@
       "release": false,
       "scope": "Existing local approval and Telegram bridge prototypes.",
       "boundary": "The current scripts must not be described as one integrated governed primitive: the escalation file is not consumed by approval_telegram.py, the bridge selects a broadly matching terminal, and reply injection does not use the full package target guard.",
-      "verified_on": "2026-07-09",
+      "verified_on": "2026-07-15",
+      "public_readme": {
+        "tag": "approval.telegram_governed_roundtrip",
+        "path": "README.md",
+        "sha256_text": "9b148bf65c6ae67f48d3a16175cf57925fbac6b20276df407299d7ce358c5f22"
+      },
       "evidence": [
         {
-          "path": "approval_partner.py"
+          "path": "approval_partner.py",
+          "sha256_text": "d26adfb49926e678e03cd8b192c86660cbe5e2817c306060a9cb9c1292e15b60"
         },
         {
-          "path": "approval_telegram.py"
+          "path": "approval_telegram.py",
+          "sha256_text": "9f0f9b6393840d58dd7fd01c5d76362afb857e060db2a0e81e91604384d5630e"
         },
         {
-          "path": "self_connect.py"
+          "path": "self_connect.py",
+          "sha256_text": "515614e5add74efc2fa43825e12ef5d208f3fee8c2d428148325812f3bace5bd"
         }
       ]
     },

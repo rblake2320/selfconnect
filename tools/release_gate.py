@@ -49,6 +49,79 @@ def _sha256_text(path: Path) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _sha256_normalized_text(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+_README_CLAIM_START = re.compile(
+    r'^<!-- SC-CLAIM:([a-z][a-z0-9._-]*) START -->$'
+)
+_README_CLAIM_END = re.compile(
+    r'^<!-- SC-CLAIM:([a-z][a-z0-9._-]*) END -->$'
+)
+
+
+def _readme_claim_blocks(text: str) -> tuple[dict[str, dict[str, str]], list[str]]:
+    """Parse explicit public-claim blocks without classifying free-form prose."""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    blocks: dict[str, dict[str, str]] = {}
+    errors: list[str] = []
+    active_id: str | None = None
+    active_start = 0
+    active_lines: list[str] = []
+
+    for line_no, line in enumerate(lines, 1):
+        start = _README_CLAIM_START.fullmatch(line)
+        end = _README_CLAIM_END.fullmatch(line)
+        if "SC-CLAIM:" in line and not start and not end:
+            errors.append(f"line {line_no}: malformed claim tag")
+            continue
+        if start:
+            claim_id = start.group(1)
+            if active_id is not None:
+                errors.append(
+                    f"line {line_no}: nested claim {claim_id!r} inside {active_id!r}"
+                )
+                continue
+            active_id = claim_id
+            active_start = line_no
+            active_lines = []
+            continue
+        if end:
+            claim_id = end.group(1)
+            if active_id is None:
+                errors.append(f"line {line_no}: unmatched end tag for {claim_id!r}")
+                continue
+            if claim_id != active_id:
+                errors.append(
+                    f"line {line_no}: end tag {claim_id!r} does not match {active_id!r}"
+                )
+                continue
+            content = "\n".join(active_lines).strip("\n") + "\n"
+            if claim_id in blocks:
+                errors.append(f"line {active_start}: duplicate claim tag {claim_id!r}")
+            elif not content.strip():
+                errors.append(f"line {active_start}: empty claim block {claim_id!r}")
+            else:
+                blocks[claim_id] = {
+                    "content": content,
+                    "sha256_text": _sha256_normalized_text(content),
+                    "start_line": str(active_start),
+                    "end_line": str(line_no),
+                }
+            active_id = None
+            active_start = 0
+            active_lines = []
+            continue
+        if active_id is not None:
+            active_lines.append(line)
+
+    if active_id is not None:
+        errors.append(f"line {active_start}: unclosed claim tag {active_id!r}")
+    return blocks, errors
+
+
 def _run(command: list[str], root: Path, timeout: int = 600) -> dict[str, Any]:
     started = time.monotonic()
     try:
@@ -173,7 +246,13 @@ def _benchmark_summary(path: Path) -> dict[str, Any]:
     }
 
 
-def _audit_claims(root: Path, claims_doc: dict[str, Any], checks: list[Check]) -> dict[str, Any]:
+def _audit_claims(
+    root: Path,
+    claims_doc: dict[str, Any],
+    checks: list[Check],
+    *,
+    readme_text: str | None = None,
+) -> dict[str, Any]:
     policy = claims_doc.get("policy", {})
     release_statuses = set(policy.get("release_statuses", []))
     non_release_statuses = set(policy.get("non_release_statuses", []))
@@ -181,6 +260,9 @@ def _audit_claims(root: Path, claims_doc: dict[str, Any], checks: list[Check]) -
     seen: set[str] = set()
     public_total = 0
     public_valid = 0
+    claim_failures: dict[str, list[str]] = {}
+    claim_public_refs: dict[str, dict[str, Any]] = {}
+    readme_blocks, readme_errors = _readme_claim_blocks(readme_text or "")
 
     for claim in claims_doc.get("claims", []):
         claim_id = claim.get("id", "<missing-id>")
@@ -214,8 +296,19 @@ def _audit_claims(root: Path, claims_doc: dict[str, Any], checks: list[Check]) -
                 failures.append(f"missing evidence: {relative or '<empty>'}")
                 continue
             expected_hash = item.get("sha256_text")
-            if expected_hash and _sha256_text(evidence_path) != expected_hash:
-                failures.append(f"hash mismatch: {relative}")
+            expected_file_hash = item.get("sha256")
+            if expected_hash and expected_file_hash:
+                failures.append(f"multiple hash modes: {relative}")
+            if expected_hash:
+                if not re.fullmatch(r"[0-9a-f]{64}", str(expected_hash)):
+                    failures.append(f"invalid sha256_text: {relative}")
+                elif _sha256_text(evidence_path) != expected_hash:
+                    failures.append(f"hash mismatch: {relative}")
+            if expected_file_hash:
+                if not re.fullmatch(r"[0-9a-f]{64}", str(expected_file_hash)):
+                    failures.append(f"invalid sha256: {relative}")
+                elif _sha256(evidence_path) != expected_file_hash:
+                    failures.append(f"hash mismatch: {relative}")
             if item.get("assertions"):
                 try:
                     document = _read_json(evidence_path)
@@ -235,6 +328,30 @@ def _audit_claims(root: Path, claims_doc: dict[str, Any], checks: list[Check]) -
                             f"assertion failed {relative}:{assertion['path']} "
                             f"expected={assertion.get('equals')!r} actual={actual!r}"
                         )
+        public_ref = claim.get("public_readme")
+        if public_ref is not None:
+            if not isinstance(public_ref, dict):
+                failures.append("public_readme must be an object")
+            else:
+                claim_public_refs[claim_id] = public_ref
+                if public_ref.get("tag") != claim_id:
+                    failures.append(
+                        f"public_readme tag mismatch: {public_ref.get('tag')!r}"
+                    )
+                if public_ref.get("path") != "README.md":
+                    failures.append(
+                        f"public_readme path must be README.md: {public_ref.get('path')!r}"
+                    )
+                block = readme_blocks.get(claim_id)
+                if block is None:
+                    failures.append("public_readme tag is absent from README.md")
+                else:
+                    expected_excerpt_hash = public_ref.get("sha256_text", "")
+                    if not re.fullmatch(r"[0-9a-f]{64}", str(expected_excerpt_hash)):
+                        failures.append("public_readme sha256_text is not a lowercase SHA-256")
+                    elif block["sha256_text"] != expected_excerpt_hash:
+                        failures.append("public_readme excerpt hash mismatch")
+        claim_failures[claim_id] = failures
         if is_release and not failures:
             public_valid += 1
         checks.append(
@@ -245,13 +362,58 @@ def _audit_claims(root: Path, claims_doc: dict[str, Any], checks: list[Check]) -
             )
         )
 
+    tagged_valid = 0
+    tag_failures = list(readme_errors)
+    for claim_id in readme_blocks:
+        if claim_id not in seen:
+            tag_failures.append(f"unregistered README claim tag {claim_id!r}")
+            continue
+        if claim_id not in claim_public_refs:
+            tag_failures.append(
+                f"README claim tag {claim_id!r} has no public_readme mapping"
+            )
+            continue
+        if not claim_failures.get(claim_id):
+            tagged_valid += 1
+    checks.append(
+        Check(
+            "truth.readme_tagged_claims",
+            "fail" if tag_failures else "pass",
+            "; ".join(tag_failures)
+            if tag_failures
+            else (
+                f"tagged_valid={tagged_valid}; tagged_total={len(readme_blocks)}; "
+                "coverage applies only to explicit SC-CLAIM blocks"
+            ),
+        )
+    )
+
     return {
-        "total": len(seen),
-        "release_total": public_total,
-        "release_valid": public_valid,
-        "release_coverage_percent": (
+        "ledger_claim_total": len(seen),
+        "release_ledger_total": public_total,
+        "release_ledger_valid": public_valid,
+        "release_ledger_coverage_percent": (
             round(100 * public_valid / public_total, 2) if public_total else 100.0
         ),
+        "release_ledger_coverage_scope": (
+            "Ledger entries with release=true only; this is not README claim coverage."
+        ),
+        "tagged_readme_valid": tagged_valid,
+        "tagged_readme_total": len(readme_blocks),
+        "tagged_readme_coverage_percent": (
+            round(100 * tagged_valid / len(readme_blocks), 2)
+            if readme_blocks
+            else 100.0
+        ),
+        "tagged_readme_coverage_scope": (
+            "Explicit SC-CLAIM blocks in README.md only. Numerator is valid tagged "
+            "blocks; denominator is all syntactically valid tagged blocks."
+        ),
+        "natural_language_claim_detection": (
+            "PARTIAL: free-form README prose outside explicit SC-CLAIM blocks is not "
+            "mechanically classified or counted. Human review remains required."
+        ),
+        "tag_parse_errors": readme_errors,
     }
 
 
@@ -469,7 +631,7 @@ def audit(
         )
     )
 
-    claims = _audit_claims(root, claims_doc, checks)
+    claims = _audit_claims(root, claims_doc, checks, readme_text=readme)
     command_results: dict[str, Any] = {}
     if run_tests:
         command_results["tests"] = _run([sys.executable, "-m", "pytest", "-q"], root)
@@ -567,11 +729,17 @@ def compare(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, An
                 candidate.get("counts", {}).get("fail", 0)
                 - baseline.get("counts", {}).get("fail", 0)
             ),
-            "baseline_claim_coverage_percent": baseline.get("claims", {}).get(
-                "release_coverage_percent"
+            "baseline_release_ledger_coverage_percent": baseline.get("claims", {}).get(
+                "release_ledger_coverage_percent"
             ),
-            "candidate_claim_coverage_percent": candidate.get("claims", {}).get(
-                "release_coverage_percent"
+            "candidate_release_ledger_coverage_percent": candidate.get("claims", {}).get(
+                "release_ledger_coverage_percent"
+            ),
+            "baseline_tagged_readme_coverage_percent": baseline.get("claims", {}).get(
+                "tagged_readme_coverage_percent"
+            ),
+            "candidate_tagged_readme_coverage_percent": candidate.get("claims", {}).get(
+                "tagged_readme_coverage_percent"
             ),
         },
         "benchmark": None,

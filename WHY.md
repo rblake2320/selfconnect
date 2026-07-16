@@ -24,6 +24,37 @@ the positive discovery behavior together.
 - Sessions without a distinguishable external window report a bounded skip
   instead of weakening discovery safety or manufacturing a target.
 
+## 2026-07-15 - Bind Public Claims With Stable Tagged Excerpts
+
+### Decision
+
+Treat a public README statement as mechanically governed only when it is inside
+an exact `SC-CLAIM:<id> START/END` block, the ID maps back to the same ledger
+entry, and the normalized excerpt hash matches `release/claims.json`.
+
+### Why
+
+The previous release percentage answered only "how many release ledger rows
+are internally valid?" It did not answer "how many README capability claims
+are registered?" Natural-language claim classification is not reliable enough
+to silently expand that denominator. Exact tags make the controlled set
+deterministic while an explicit `PARTIAL` boundary prevents a complete-coverage
+claim about untagged prose.
+
+Historical screenshots and logs are useful reduction-to-practice records, but
+they do not support universal behavior, remote model identity, patentability,
+authorization, or production conclusions. Their public wording therefore says
+`implemented and exercised` and names the represented boundary.
+
+### Consequences
+
+- A capability edit and its claim record are one atomic change.
+- Exact excerpt hashes make statement-to-ledger mismatches fail the release
+  audit, even when the tag ID still exists.
+- Human review remains required for untagged natural-language prose.
+- This control does not provide a legal, compliance, novelty, or authorization
+  determination.
+
 ## 2026-07-15 - Select Terminal Input by Verified Window Class
 
 ### Decision

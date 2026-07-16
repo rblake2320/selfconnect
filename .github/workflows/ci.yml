@@ -37,6 +37,8 @@ jobs:
           approval_partner.py
           approval_telegram.py
           claudego/
+          tools/release_gate.py
+          tests/test_release_gate.py
 
       - name: Syntax check
         run: python -m py_compile self_connect.py
@@ -77,6 +79,9 @@ jobs:
 
       - name: Unit tests (no Win32 desktop needed)
         run: python -m pytest tests/ -v --tb=short
+
+      - name: Release claim and package audit
+        run: python tools/release_gate.py audit --root .
 
       - name: SDK smoke tests
         if: ${{ !cancelled() }}

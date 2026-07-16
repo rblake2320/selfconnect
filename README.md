@@ -1,80 +1,77 @@
 # SelfConnect SDK v0.12.0
 
-**OS-native bridge between AI agents and Windows desktop apps.**  
-SelfConnect started with `PostMessage(WM_CHAR)` and `PrintWindow`; it now selects
-the input transport by verified window class, uses target-guarded sends, UIA
-readback, echo filtering, mesh birth IDs, and optional governed adapters.
+<!-- SC-CLAIM:product.core_win32_bridge START -->
+**Windows-native terminal actuation and observation primitives for AI-assisted
+desktop workflows.** SelfConnect selects the input transport from a verified
+window class, applies target guards, and exposes optional readback, mesh, and
+governance adapters. The core package is a Windows SDK, not a compliance or
+authorization product by itself.
+<!-- SC-CLAIM:product.core_win32_bridge END -->
 
 ```python
 from self_connect import list_windows, send_string, save_capture
 ```
 
----
-
-## Why Runbooks Exist
-
-`runbooks/capture_chrome_window.md` shows session 10 and session 14 in its Verified section.
-The same procedure was rediscovered twice before anyone wrote it down. That's what this
-system exists to prevent.
-
-Six runbooks are included — each one documents a Win32 procedure that cost at least one
-full session of trial-and-error before it was proved. `runbook_writer.py` generates new
-ones automatically when an operation requires 3+ retries.
-
----
+<!-- SC-CLAIM:truth.readme_tagged_catalog START -->
+Every externally positioned capability or historical exercise retained in this
+README is enclosed in a stable `SC-CLAIM` block. `tools/release_gate.py` binds
+those tags to `release/claims.json` and fails on malformed, duplicate,
+unregistered, mismapped, or excerpt-hash-mismatched tags. This is explicit-tag
+coverage only: the gate does not reliably identify claims in arbitrary
+natural-language prose, so human review remains part of release review.
+<!-- SC-CLAIM:truth.readme_tagged_catalog END -->
 
 ## What It Does
 
-SelfConnect lets a frontier AI model (Claude, Codex, or any CLI agent) control Windows
-desktop applications using raw Win32 APIs — and communicate with *other AI agents* through
-the same channel.
+<!-- SC-CLAIM:terminal.os_native_actuation START -->
+On the tested Windows Terminal CASCADIA surface, SelfConnect uses exact-HWND
+`WM_CHAR`. A successful `PostMessageW` call establishes queue acceptance only,
+not receiver processing or visible delivery. Independent readback, a receiver
+ACK, or another receiver-side effect is required for a delivery claim. This
+actuation step does not require MCP, HTTP, or a cloud API; optional surrounding
+adapters may use those technologies.
+<!-- SC-CLAIM:terminal.os_native_actuation END -->
 
-```
-AI Agent A                         AI Agent B
-    │                                   │
-    ├─ PrintWindow(hwnd_B) ──────────>  │  reads B's screen
-    │                                   │
-    ├─ class-selected Win32 input ───>  │  types into B's terminal
-    │                                   │
-    │  <──── class-selected Win32 input ┤  B types into A's terminal
-    │                                   │
-    └─ PrintWindow(hwnd_A) <──────────  ┘  B reads A's screen
-```
+<!-- SC-CLAIM:terminal.console_input_transport START -->
+On the recorded isolated `ConsoleWindowClass` / `cmd.exe` proof, SelfConnect
+used `WriteConsoleInputW` against `CONIN$`, restored the caller console, and
+verified a target-process effect independently of the API return. This result
+does not establish support for every console host, TUI, integrity boundary, or
+Windows Terminal tab.
+<!-- SC-CLAIM:terminal.console_input_transport END -->
 
-The tested CASCADIA path uses exact-HWND `WM_CHAR`; `ConsoleWindowClass` uses
-`WriteConsoleInputW` against `CONIN$`. A successful `PostMessageW` call proves
-queue acceptance only. Independent readback or a receiver ACK is required to
-claim delivery. The core actuation step needs no API or network traffic.
+For the complete current boundary, read
+[`docs/SELFCONNECT_PRODUCT_BOUNDARIES.md`](docs/SELFCONNECT_PRODUCT_BOUNDARIES.md).
 
-For the current product boundary, read
-`docs/SELFCONNECT_PRODUCT_BOUNDARIES.md`.
+## Runbooks
 
----
+<!-- SC-CLAIM:runbooks.manual_capture START -->
+The repository includes operator-authored Win32 runbooks.
+`runbook_writer.py` creates a structured runbook when a caller or operator
+invokes it; its "3+ retries" rule is a documented trigger guideline, not an
+automatic retry observer.
+<!-- SC-CLAIM:runbooks.manual_capture END -->
 
 ## Installation
 
-```bash
-pip install selfconnect                  # core (Pillow + psutil)
-pip install selfconnect[uia]             # + UIA text extraction
-pip install selfconnect[mcp]             # + MCP server adapter
-pip install selfconnect[service]         # + Fabric/Windows service support
-pip install selfconnect[full]            # + all optional adapters
-pip install selfconnect[telegram]        # + Telegram approval bridge
-pip install selfconnect[claudego]        # + ClaudeGo web dashboard
-```
-
-From this GitHub branch for cross-machine testing:
+<!-- SC-CLAIM:package.installation_extras START -->
+The package declares a small core plus optional extras for UIA, MCP, Windows
+service support, Telegram, and the ClaudeGo dashboard. Installing an extra
+makes its dependencies available; it does not prove that a deployment has
+enabled or validated that adapter.
+<!-- SC-CLAIM:package.installation_extras END -->
 
 ```bash
-pip install "selfconnect[full,mcp] @ git+https://github.com/rblake2320/selfconnect.git@test/win32-hardening-v1"
+pip install selfconnect
+pip install selfconnect[uia]
+pip install selfconnect[mcp]
+pip install selfconnect[service]
+pip install selfconnect[telegram]
+pip install selfconnect[claudego]
+pip install selfconnect[full]
 ```
 
----
-
-## Package Probes
-
-The package installs a `selfconnect` command for repeatable testing on other
-Windows systems:
+## Package Probes And Guarded Input
 
 ```bash
 selfconnect doctor --json
@@ -83,433 +80,204 @@ selfconnect windows --query "Claude"
 selfconnect guard --hwnd 0x123456 --expect-pid 1234 --expect-class CASCADIA_HOSTING_WINDOW_CLASS
 selfconnect read --hwnd 0x123456
 selfconnect capture --hwnd 0x123456 --path proof.png
-selfconnect-mesh scan --query Claude
-selfconnect-mesh register --role codex-1 --hwnd 0x123456 --profile explore --task "package guard" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
 ```
 
-Input delivery is intentionally gated:
+<!-- SC-CLAIM:package.cli_target_guard START -->
+The CLI send path requires explicit input authorization and either matching
+target expectations or an explicit confirmation of the currently inspected
+target. It requires a terminal class by default. The selected transport must
+report complete acceptance, and raw transport results keep
+`delivery_verified=false` until independent readback or ACK evidence exists.
+<!-- SC-CLAIM:package.cli_target_guard END -->
 
 ```bash
-selfconnect send --hwnd 0x123456 --text "hello" --submit --allow-input --expect-pid 1234 --expect-class CASCADIA_HOSTING_WINDOW_CLASS
-# or set SELFCONNECT_ALLOW_INPUT=1
+selfconnect send --hwnd 0x123456 --text "hello" --submit --allow-input \
+  --expect-pid 1234 --expect-class CASCADIA_HOSTING_WINDOW_CLASS
 ```
-
-The send path has three independent conditions:
-
-- `--allow-input` proves the caller is allowed to type.
-- `--expect-*` proves the HWND still points at the intended target.
-- Terminal classes are required by default to prevent accidental writes into
-  windows such as Notepad.
-- The selected transport must report complete acceptance; the result names the
-  actual transport and keeps `delivery_verified=false` until readback or ACK.
-
-If you intentionally inspected the current target and want to send without an
-expected PID/exe/class/title, pass `--confirm-current-target`.
-If you intentionally need a non-terminal target, pass `--allow-non-terminal`.
-
----
 
 ## MCP Server
 
-Install the optional MCP dependency and run:
+<!-- SC-CLAIM:package.mcp_guarded_surface START -->
+The optional MCP server exposes `doctor`, `list_windows`, `read_window`,
+`capture_window`, `verify_target`, and `send_text`. `send_text` is disabled
+unless `SELFCONNECT_MCP_ALLOW_INPUT=1`; when enabled, it still requires target
+verification fields or explicit current-target confirmation and requires a
+terminal class by default. `doctor` reports capability probes; a probe such as
+`tpm_identity` or `named_pipe_impersonation` indicates detected local support,
+not use by every core path or an external validation or authorization.
+<!-- SC-CLAIM:package.mcp_guarded_surface END -->
 
 ```bash
-pip install "selfconnect[mcp] @ git+https://github.com/rblake2320/selfconnect.git@test/win32-hardening-v1"
+pip install selfconnect[mcp]
 selfconnect-mcp
 ```
-
-The MCP server exposes:
-
-- `doctor`
-- `list_windows`
-- `read_window`
-- `capture_window`
-- `verify_target`
-- `send_text`
-
-The `send_text` tool is disabled unless explicitly enabled:
-
-```bash
-set SELFCONNECT_MCP_ALLOW_INPUT=1
-selfconnect-mcp
-```
-
-The MCP `send_text` tool also requires target verification fields, or
-`confirm_current_target=true` after the caller has inspected the target. It
-requires a terminal class by default unless `require_terminal=false`.
-
-`doctor` reports platform capability probes. Some probes, such as
-`tpm_identity` and `named_pipe_impersonation`, indicate local OS support and
-experiment/enterprise adapter availability; they are not claims that every
-adapter is enabled in the core SDK path.
-
-The branch also carries a repo-local Codex skill at
-`skills/selfconnect-win32/` and the composed Win32 proof at
-`experiments/win32_probe/chained_channel.py`; both are included in the built
-wheel for traceability.
-
----
 
 ## Product Profiles
 
-SelfConnect has three operating profiles:
-
-- `explore`: normal personal use and capability testing. Fast by default, with
-  target verification still enabled so the wrong window does not get typed into.
-- `governed`: enterprise validation. The same capabilities can be wrapped with
-  leases, identity checks, service mode, ETW, audit, and MCP adapter policy.
-- government/high-assurance: fail-closed deployment posture with WORM, TPM/CNG,
-  job sandboxing, service SID, off-host evidence, and ATO documentation where
-  required.
-
-The design rule is: capabilities stay reusable; policy wrappers change by
-profile. Normal SelfConnect should not become hard to use just because the
-government lane exists.
-
----
+<!-- SC-CLAIM:product.profile_boundaries START -->
+The repository documents `explore`, `governed`, and
+government/high-assurance configuration profiles. They express intended policy
+postures around the same reusable capabilities. Merely selecting a profile
+does not provision WORM storage, hardware keys, an authorization boundary, an
+ATO, a DoD Impact Level authorization, or independent assessment evidence.
+<!-- SC-CLAIM:product.profile_boundaries END -->
 
 ## Mesh Registry
 
-Use `selfconnect-mesh` to track which terminals are part of the active mesh.
-Do not infer mesh membership from every open terminal.
-
 ```bash
 selfconnect-mesh scan --query Claude
-selfconnect-mesh register --role claude-1 --hwnd 0x123456 --profile governed --task "TPM attestation" --expect-class CASCADIA_HOSTING_WINDOW_CLASS
-selfconnect-mesh update --role claude-1 --status compacting --task "auto-compact pause"
-selfconnect-mesh heartbeat --role claude-1
-selfconnect-mesh list
-selfconnect-mesh repo
-selfconnect-mesh event --type task_assigned --role claude-1 --summary "TPM attestation fix"
+selfconnect-mesh register --role claude-1 --hwnd 0x123456 --profile governed --task "review"
+selfconnect-mesh update --role claude-1 --status working --task "review"
+selfconnect-mesh event --type task_assigned --role claude-1 --summary "review"
 selfconnect-mesh events --role claude-1 --limit 20
 selfconnect-mesh verify-events
 ```
 
-Roles should be unique. If a role migrates to a new HWND, use `--replace` so the
-registry shows that the old route was intentionally superseded.
+<!-- SC-CLAIM:mesh.registry_hash_chain START -->
+The mesh registry assigns per-terminal birth IDs and records role lifecycle and
+manual events in a local append-only SHA-256 hash chain. Verification detects
+retained-entry edits, inserted rows, broken links, and malformed records. Mesh
+events also capture a bounded Git snapshot. The local chain is tamper-evident,
+not tamper-resistant against deletion or truncation without an off-host or WORM
+checkpoint.
+<!-- SC-CLAIM:mesh.registry_hash_chain END -->
 
-The registry is only current state. The durable history is
-`mesh_events.jsonl`, an append-only hash-chained event log written beside the
-registry by default. Register, update, heartbeat, handoff, and remove actions
-write events automatically. Use `selfconnect-mesh event` for manual spawn/task
-notes, `selfconnect-mesh events` to audit by role, birth ID, or event type, and
-`selfconnect-mesh verify-events` to detect edits, inserted rows, broken links,
-or corrupted records. For stronger tamper resistance, anchor the reported
-`head_hash` to WORM/off-host storage.
+## Approval Experiments
 
-Every new event also records a git snapshot from the current repo: branch, HEAD
-commit, upstream, ahead/behind counts, dirty flag, dirty file count, and a small
-status sample. Use `selfconnect-mesh repo` before assigning or closing work when
-you need a quick source-control check without reading raw git output.
-
-Profiles make the product split explicit without forking the code:
-
-- `explore` is for everyday capability testing. Input is still target-guarded
-  so SelfConnect does not type into the wrong window, but heavy enterprise
-  controls are optional.
-- `governed` is for enterprise/government validation, where TPM identity, DACL
-  pipes, impersonation, sandboxing, ETW, and approval/audit controls can be
-  required around the same capabilities.
-
----
-
-## Quick Start
-
-```python
-import sys
-sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-from self_connect import list_windows, send_string, save_capture
-
-# Find all visible windows
-for w in list_windows():
-    print(f"hwnd={w.hwnd} title={w.title[:60]!r} exe={w.exe_name!r}")
-
-# Type into a verified terminal surface (including Enter)
-delivery = send_string(window_target, "your message here\r")  # \r = Enter
-assert delivery["ok"]  # transport acceptance; use readback/ACK for delivery
-
-# Capture any window's pixels
-save_capture(hwnd, path="proofs/capture.png")
-```
-
----
-
-## Approval Automation
-
-Two daemons for unattended operation. Run them in the background — walk away.
-
-### Local auto-approval (`approval_partner.py`)
-
-Watches all Claude Code terminal windows, detects approval prompts, and injects
-`y` or `n` based on allow/deny rules. Unknown tools are escalated.
-
-```bash
-python approval_partner.py                # run with default rules
-python approval_partner.py --dry-run      # detect prompts but don't inject
-python approval_partner.py --approve-all  # approve everything (use with care)
-python approval_partner.py --list-windows # show detected Claude terminals
-```
-
-Default allow: `Bash(git:*)`, `Bash(npm:*)`, `Bash(python:*)`, `Bash(gh:*)`,
-`Read(*)`, `Write(*)`, `Edit(*)`, `Glob(*)`, `Grep(*)`
-
-Default deny: `Bash(rm:*)`, `Bash(rmdir:*)`, `Bash(curl:*)`, `Bash(wget:*)`
-
-### Telegram bridge (`approval_telegram.py`)
-
-Escalates unknown tools to your phone. Tap approve/deny — response is injected
-back into the terminal automatically.
-
-```bash
-cp .env.approval.example .env.approval
-# Edit: set TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ALLOWED_USER_ID
-python approval_telegram.py
-```
-
-Run both together for full coverage: local daemon handles known-safe tools instantly;
-unknown tools hit your phone.
-
----
+<!-- SC-CLAIM:approval.telegram_governed_roundtrip START -->
+`approval_partner.py` and `approval_telegram.py` are separate local
+experiments. A governed end-to-end ApprovalRelay-to-Telegram-to-target-guard
+roundtrip is not part of the release evidence set, so the README does not
+position the pair as an integrated unattended approval control.
+<!-- SC-CLAIM:approval.telegram_governed_roundtrip END -->
 
 ## ClaudeGo Dashboard
 
-A lightweight web dashboard for monitoring the Claude Code mesh in real time.
+<!-- SC-CLAIM:dashboard.claudego_local START -->
+The optional local ClaudeGo package serves a dashboard that lists discovered
+agent windows and approval-prompt status, with optional tray and Windows toast
+adapters. Its automated tests use mocked Win32 integrations; this README does
+not claim a current live desktop deployment.
+<!-- SC-CLAIM:dashboard.claudego_local END -->
 
 ```bash
-python -m claudego           # starts on http://localhost:9090
+python -m claudego
 ```
 
-Features:
-- Live window list with approval-prompt status indicators (green / yellow / red)
-- System tray icon (`claudego/tray.py`) — color reflects mesh health
-- Desktop toast notifications (`claudego/notifier.py`) via winotify
+## Structured Framing
 
-```bash
-pip install selfconnect[claudego]   # installs pystray + winotify
-```
-
----
-
-## Spawn Another AI Session
+<!-- SC-CLAIM:framing.structured_messages START -->
+The SDK implements STX/NUL/ETX structured frames with a JSON header, UUID
+message ID, sequence, topic, payload length, and optional readback-based ACK.
+An ACK result is reported only after the configured independent verification
+step; raw input acceptance alone is not an ACK.
+<!-- SC-CLAIM:framing.structured_messages END -->
 
 ```python
-import subprocess, ctypes, time
-from self_connect import list_windows, send_string, restore_window
+from self_connect import parse_frame, send_frame
 
-before = {w.hwnd for w in list_windows()}
-proc = subprocess.Popen(
-    ["cmd.exe", "/k", "cd /d C:\\your\\project"],
-    creationflags=subprocess.CREATE_NEW_CONSOLE
-)
-time.sleep(2.5)
-
-# Find new window via hwnd-set-diff
-new_win = None
-user32 = ctypes.windll.user32
-for w in list_windows():
-    if w.hwnd not in before:
-        cb = ctypes.create_unicode_buffer(256)
-        user32.GetClassNameW(w.hwnd, cb, 256)
-        if "CASCADIA" in cb.value.upper() or "Console" in cb.value:
-            new_win = w; break
-
-restore_window(new_win.hwnd)
-time.sleep(0.3)
-send_string(new_win, "claude\r")   # or "codex\r" / "gemini\r"
-time.sleep(15)
-send_string(new_win, "Your instructions here\r")
+result = send_frame(target_window, from_hwnd=my_hwnd, payload="hello", ack=True)
 ```
 
----
+## Public API Surface
 
-## Reliable Framing
+<!-- SC-CLAIM:package.public_api_surface START -->
+The v0.12 package exports the Win32 window, capture, class-selected input,
+framing, UIA/child-text, clipboard, watchdog, approval-relay, listener,
+migration, and foreground `SendInput` helpers declared by `self_connect.py`.
+The release smoke test verifies that the declared export list contains no
+duplicate or undefined symbols. Availability and behavior remain subject to
+the function-specific Windows and optional-dependency boundaries.
+The complete names and signatures are in `self_connect.__all__` and the API
+sections of [`CLAUDE.md`](CLAUDE.md).
+<!-- SC-CLAIM:package.public_api_surface END -->
 
-For multi-agent meshes, use the framing layer to send structured messages:
+## Recorded Implementation Exercises
 
-```python
-from self_connect import send_frame, parse_frame
+These are historical implementation/exercise records, not universal product,
+performance, legal-novelty, compliance, or authorization conclusions.
 
-# Send a framed message with full UUID and ACK verification
-send_frame(target_window, from_hwnd=my_hwnd, payload="hello", topic="chat", ack=True)
+<!-- SC-CLAIM:history.agent_spawn_exercise START -->
+- **Agent spawn exercise:** tracked screenshots record a Windows console being
+  opened, a CLI agent command being entered, and a handoff appearing in that
+  session. This is an implemented-and-exercised record, not a guarantee for
+  every CLI, account, policy, or host configuration.
+<!-- SC-CLAIM:history.agent_spawn_exercise END -->
 
-# Frame format: STX | JSON_HEADER | NUL | escaped_payload | ETX
-# JSON_HEADER: {"from":hwnd,"to":hwnd,"seq":n,"topic":"...","len":n,"message_id":"uuid4"}
-```
+<!-- SC-CLAIM:history.background_input_exercise START -->
+- **Background input exercise:** tracked before/after captures record input on
+  the tested unfocused/minimized Windows terminal route. This does not establish
+  arbitrary background application control.
+<!-- SC-CLAIM:history.background_input_exercise END -->
 
----
+<!-- SC-CLAIM:history.bidirectional_chat_exercise START -->
+- **Bidirectional exercise:** tracked session captures record messages in both
+  directions between two Claude CLI terminals. They establish the recorded
+  exercise only, not a general delivery guarantee.
+<!-- SC-CLAIM:history.bidirectional_chat_exercise END -->
 
-## API Reference (v0.10.0 — 60 exports)
+<!-- SC-CLAIM:history.cross_vendor_mesh_exercise START -->
+- **Cross-vendor exercise:** tracked captures record Claude, Codex, and Gemini
+  CLI sessions participating in the historical Win32-terminal mesh. Model and
+  provider connectivity were outside the measured local actuation boundary.
+<!-- SC-CLAIM:history.cross_vendor_mesh_exercise END -->
 
-Full export list and signatures: see `CLAUDE.md` → Key Files section.
+<!-- SC-CLAIM:history.framing_exercise START -->
+- **Framing exercise:** tracked captures record agents exchanging and testing
+  the STX/NUL/ETX framing implementation while it was being developed. The
+  evidence supports implementation and exercise, not exclusive authorship or a
+  legal novelty conclusion.
+<!-- SC-CLAIM:history.framing_exercise END -->
 
-### Core
-| Function | Description |
-|----------|-------------|
-| `list_windows()` | Enumerate all visible windows → `[WindowTarget]` |
-| `find_target(name)` | Find window by title/exe substring |
-| `send_string(target, text)` | Class-selected input: WM_CHAR for tested CASCADIA, WriteConsoleInputW for ConsoleWindowClass; returns structured acceptance evidence |
-| `save_capture(hwnd, path)` | PrintWindow → save PNG |
-| `capture_window(hwnd)` | PrintWindow → PIL Image |
-| `restore_window(hwnd)` | ShowWindow + SetForegroundWindow |
+<!-- SC-CLAIM:history.printwindow_ack_exercise START -->
+- **Readback ACK exercise:** the framing code and tests implement a
+  fingerprint/readback verification step after transport acceptance. It is not
+  a universal receiver ACK and remains dependent on readable receiver output.
+<!-- SC-CLAIM:history.printwindow_ack_exercise END -->
 
-### Framing Layer
-| Function | Description |
-|----------|-------------|
-| `build_frame(from_hwnd, to_hwnd, payload, topic, seq)` | Build STX\|JSON\|NUL\|payload\|ETX string |
-| `parse_frame(raw)` | Extract + validate + unescape frame from buffer |
-| `send_frame(target, from_hwnd, payload, ...)` | Build + send, optional ACK |
-| `verify_delivery(hwnd, fingerprint, timeout, ...)` | PrintWindow ACK — confirms receiver saw message |
+<!-- SC-CLAIM:history.antigravity_exchange_exercise START -->
+- **Antigravity exchange exercise:** a tracked capture and session log record a
+  Claude-to-Antigravity/Gemini exchange using the local Windows UI path. The
+  record does not establish the remote model identity independently, and model
+  provider traffic was outside the measured SelfConnect actuation/readback leg.
+<!-- SC-CLAIM:history.antigravity_exchange_exercise END -->
 
-### Window Info
-| Function | Description |
-|----------|-------------|
-| `get_own_terminal_hwnd()` | Get this process's terminal HWND |
-| `get_child_texts(hwnd)` | WM_GETTEXT on child windows |
-| `get_text_uia(hwnd)` | UIA text extraction (requires pywinauto) |
-| `get_clipboard_text()` | Read clipboard |
-| `set_clipboard_text(text)` | Write clipboard |
+<!-- SC-CLAIM:browser.edge_local_fixture START -->
+- **Owned browser fixture:** the recorded Microsoft Edge proof read and
+  controlled an owned local page through UIA and stopped at a mock protected
+  checkpoint. It does not establish public-site, cross-browser, CAPTCHA-bypass,
+  passkey, upload/download, or anti-bot-evasion capability.
+<!-- SC-CLAIM:browser.edge_local_fixture END -->
 
-### Extended (v0.8+)
-| Class / Function | Description |
-|----------|-------------|
-| `WatchdogLoop` | Async watchdog — fires callback when pattern appears in target window |
-| `ApprovalRelay` | Policy-gated guardian — A approves B's tool prompts |
-| `MessageListener` | Async interrupt-pattern listener for incoming framed messages |
-| `MigrationCoordinator` | Context-preserving role migration between agents |
-| `send_keys(target, keys)` | SendInput (foreground) — for Enter/submit in Claude Code TUI |
+## Transport Distinction (Not A Patentability Conclusion)
 
----
+<!-- SC-CLAIM:transport.engineering_distinction START -->
+The tested core terminal actuation path differs from common app-layer
+HTTP/WebSocket/JSON-RPC agent integrations: it uses Windows input primitives at
+the local terminal boundary and does not require a network call for that
+actuation step. The broader SelfConnect ecosystem can use MCP, relays, storage,
+or networked governance adapters. This engineering distinction is not a
+conclusion about the existence or absence of prior art, and it is not a
+patentability conclusion.
+<!-- SC-CLAIM:transport.engineering_distinction END -->
 
-## Session History
+## Antigravity / Electron Adapter
 
-| Session | Version | Key Win |
-|---------|---------|---------|
-| 4 | v0.4.0 | First cross-AI PostMessage proof (Claude → Claude) |
-| 5 | v0.5.x | Framing layer (STX/NUL/ETX protocol) — self-designed by agents |
-| 6 | v0.6.0 | Universal Win32 app control; full design-to-code pipeline |
-| 7 | v0.8.0 | WatchdogLoop, ApprovalRelay, MessageListener |
-| 8 | v0.9.0 | MigrationCoordinator — context-preserving role migration |
-| 9 | v0.9.0 | Spark-2 Linux peer via hub_relay — cross-machine mesh live |
-| 10 | v0.9.0 | Browser automation (PIL.ImageGrab); CAPTCHA 100% correct |
-| 11 | v0.9.0 | PyPI publish readiness; CI green on master |
-| 12 | v0.9.0 | WebView2/Antigravity chat injection proved (Gemini responded) |
-| 13 | v0.9.1 | approval_partner + approval_telegram shipped |
-| 14 | v0.10.0 | ClaudeGo dashboard (tray + notifier); peer_watcher rules engine |
-
----
-
-## What Works / What Doesn't
-
-| Method | Works? | Notes |
-|--------|--------|-------|
-| `PostMessage(WM_CHAR)` to tested Windows Terminal CASCADIA surface | YES | Queue acceptance is not delivery; use readback/ACK |
-| `PostMessage(WM_CHAR)` to `ConsoleWindowClass` / cmd.exe | NO | Reproduced false-positive: call can succeed while no input appears |
-| `WriteConsoleInputW` to tested `ConsoleWindowClass` / cmd.exe | YES | Live receiver-effect proof; auto-selected for this class |
-| `send_string` with `\r` inside string | YES on tested terminal routes | Enter stays in the same class-selected transport |
-| `PostMessage(WM_CHAR)` to UWP Notepad | NO | TSF input, silently drops |
-| `SendInput` from background | NO | Always goes to foreground |
-| Separate `PostMessage(WM_CHAR, 13)` for Enter | NO | Ignored by Windows Terminal |
-| `WM_KEYDOWN/WM_KEYUP` for VK_RETURN | NO | Ignored by Windows Terminal |
-| `PostMessage(WM_CHAR)` to Chrome/Chromium browser surfaces | MIXED/NO | Current browser proof shows Chromium page surfaces need UIA Value/Invoke rather than terminal-style `WM_CHAR` |
-| UIA `ValuePattern` / `InvokePattern` to browser surfaces | YES | Proven for controlled browser UI/form actions without CDP/WebDriver/extension |
-| `SendInput` to WebView2/Chromium surfaces | MIXED/NO | Synthetic keyboard is unreliable; synthetic mouse can work in some cases |
-| Clipboard paste into WebView2 | NO | Claude Code subprocess is sandboxed from clipboard |
-| UIA `set_focus()` without Win32 foreground | YES | Transfers Blink focus internally — works behind lock screen |
-| UIA `invoke()` on WebView2 buttons | YES | Submits chat, dismisses popups — no click events needed |
-
----
-
-## Proven Capabilities
-
-All proved live in multi-session tests (see `proofs/` and `docs/`):
-
-1. **AI spawns AI** — launch cmd.exe, type `"claude\r"`, `"gemini\r"`, or `"codex\r"`, inject handoff
-2. **Background injection** — PostMessage works on minimized/unfocused windows
-3. **Bidirectional AI-to-AI chat** — two Claude sessions, 10+ timestamped entries
-4. **Cross-vendor AI mesh** — Claude + Codex + Gemini CLI communicating via Win32 terminal injection. 4-agent live mesh: Agent-A (Claude Sonnet 4.6) + Agent-B (Claude Code) + Agent-C (Gemini CLI) + Agent-D (Codex / GPT-5)
-5. **Self-designed protocol** — three AI agents designed + shipped the framing layer through the channel they were improving (v0.5.0 → v0.5.2 in 90 minutes)
-6. **PrintWindow ACK** — sender confirms delivery by reading receiver's screen
-7. **Claude ↔ Gemini via Win32** — Claude Code injected a message into Antigravity
-   (Google's standalone Electron IDE) and Gemini 3.1 Pro replied. The recorded
-   SelfConnect actuation/readback leg used no agent-to-agent API, clipboard, or
-   foreground-window transfer; model-provider connectivity was outside the
-   measured transport boundary.
-
-   ```
-   Claude:  "Hello from Claude Agent-A. What model are you?"
-   Gemini:  "Hello Claude Agent-A! I am Antigravity, running on Gemini 3.1 Pro."
-   ```
-
-   Full chain: `Claude Code → Python Win32 UIA+WM_CHAR → Antigravity Electron → Gemini 3.1 Pro`
-
-8. **Browser control boundary** —
-   Controlled browser proofs show that browser/Electron surfaces are not the
-   same as terminal surfaces. The reliable browser write path is UIA
-   `ValuePattern` / `InvokePattern`, not terminal-style `WM_CHAR`. SelfConnect
-   should detect protected checkpoints such as CAPTCHA and pause for human or
-   official test-flow handling; it should not be positioned as a CAPTCHA bypass
-   tool.
-
----
-
-## Why This Is Novel
-
-Most app-layer AI-to-AI protocols (A2A, MCP, ACP, ANP, AutoGen, LangChain) use:
-- An HTTP/WebSocket/JSON-RPC transport layer
-- An API key on at least one end
-- A broker or orchestrator
-
-SelfConnect uses `PostMessage(WM_CHAR)` → ConPTY input buffer → process stdin.  
-For the core terminal path, transport = Win32 thread message queue. No API,
-broker, or network is required for that actuation path. The broader ecosystem
-can still expose MCP, SSH, S3, or installer/governance adapters around the core.
-
----
-
-## Antigravity / Electron Chat Automation
-
-`antigravity_controller.py` — high-level SDK for controlling Antigravity (Google's
-Electron IDE) and any Electron/WebView2 chat interface programmatically.
+<!-- SC-CLAIM:antigravity.controller_surface START -->
+`antigravity_controller.py` implements `connect`, `chat`, and
+`AntigravityMonitor` interfaces over the repository's UIA-based Electron
+adapter. Its presence establishes an implementation surface; actual operation
+depends on the target application's current accessibility tree and is not
+claimed for every Electron or WebView2 application.
+<!-- SC-CLAIM:antigravity.controller_surface END -->
 
 ```python
-from antigravity_controller import connect, chat, AntigravityMonitor
+from antigravity_controller import connect, chat
 
 session = connect()
 response = chat(session, "What model are you?")
-
-monitor = (
-    AntigravityMonitor(session)
-    .on("response", lambda r: print(f"Gemini: {r}"))
-    .start()
-)
 ```
-
-**CLI:**
-```bash
-python antigravity_controller.py --list
-python antigravity_controller.py --chat "Hello, who are you?"
-python antigravity_controller.py --model
-```
-
----
-
-## Scripts
-
-| Script | What it does |
-|--------|-------------|
-| `antigravity_controller.py` | High-level Antigravity/Electron SDK — `connect`, `chat`, `AntigravityMonitor` |
-| `approval_partner.py` | Local auto-approval daemon — watches terminals, injects y/n via rules engine |
-| `approval_telegram.py` | Telegram bridge — phone approval for unknown tools |
-| `peer_watcher.py` | Rules-based peer approval watcher for a specific agent window |
-| `hub_relay.py` | Cross-machine mesh relay (Windows ↔ Spark-1 ↔ Spark-2) |
-| `spark2_client.py` | Linux RPC client — mirrors self_connect API from Spark-2 |
-| `inject_webview.py` | Low-level proof script — UIA+WM_CHAR injection into any Electron app |
-| `_spawn_claude.py` | Spawn a new Claude CLI session |
-| `proof_benchmark.py` | Live proof benchmark |
-| `test_self_connect.py` | Unit tests |
-
----
 
 ## License
 
-Apache License 2.0 — see `LICENSE`.
+Apache License 2.0 - see [`LICENSE`](LICENSE).
