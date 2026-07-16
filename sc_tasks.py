@@ -285,14 +285,33 @@ class TaskBoard:
     def _task_path(self, task_id: str) -> Path:
         return self.tasks_dir / f"{task_id}.json"
 
+    @staticmethod
+    def _retry_io(op, attempts: int = 10, base_delay: float = 0.01):
+        """Retry a filesystem op past transient Windows sharing violations.
+
+        On Windows os.replace() raises PermissionError (and open() can raise
+        it too) when another handle has the file open — e.g. a concurrent
+        reader in wait_for_state, or an antivirus scan. This is the root
+        cause of issue #17: a background transition's os.replace collided
+        with a poll-read and died. Bounded exponential backoff resolves the
+        transient contention; a persistent error still surfaces.
+        """
+        for i in range(attempts):
+            try:
+                return op()
+            except PermissionError:
+                if i == attempts - 1:
+                    raise
+                time.sleep(base_delay * (2 ** i))
+
     def _write_task(self, task: Task) -> None:
         task.updated_at = time.time()
         tmp = self._task_path(task.task_id).with_suffix(".json.tmp")
         tmp.write_text(json.dumps(task.to_dict(), indent=2), encoding="utf-8")
-        os.replace(tmp, self._task_path(task.task_id))
+        self._retry_io(lambda: os.replace(tmp, self._task_path(task.task_id)))
 
     def get(self, task_id: str) -> Task:
-        raw = self._task_path(task_id).read_text(encoding="utf-8")
+        raw = self._retry_io(lambda: self._task_path(task_id).read_text(encoding="utf-8"))
         return Task.from_dict(json.loads(raw))
 
     def all_tasks(self) -> list[Task]:
