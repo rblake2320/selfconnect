@@ -14,7 +14,7 @@ Commands:
     python sc_mesh.py read 0xHWND                  # read a peer's last screen text
     python sc_mesh.py relay 0xSRC 0xDST            # copy SRC's last reply into DST
 
-Protocol: text -> 1s settle -> Enter separately. Skips self, skips BUSY peers
+Protocol: text and Enter use one class-selected transport call. Skips self and BUSY peers
 (unless --force). Broadcasts are staggered so windows don't interleave.
 """
 import argparse
@@ -61,9 +61,12 @@ def roster():
 
 
 def _send(win, msg):
-    send_string(win, msg, char_delay=0.02)
-    time.sleep(1)
-    send_string(win, "\r", char_delay=0.02)
+    delivery = send_string(win, msg + "\r", char_delay=0.02)
+    if not isinstance(delivery, dict) or delivery.get("ok") is not True:
+        transport = delivery.get("transport", "unknown") if isinstance(delivery, dict) else "unknown"
+        error = delivery.get("error", "no delivery record") if isinstance(delivery, dict) else "no delivery record"
+        raise RuntimeError(f"mesh input failed via {transport}: {error}")
+    return delivery
 
 
 def cmd_roster(_):
@@ -83,8 +86,15 @@ def cmd_broadcast(args):
         return 1
     print(f"broadcasting to {len(targets)} agents...")
     for a in targets:
-        _send(a["win"], msg)
-        print(f'  -> 0x{a["hwnd"]:08X} [{a["kind"]}] {a["title"][:40]}')
+        try:
+            delivery = _send(a["win"], msg)
+        except RuntimeError as exc:
+            print(f'  !! 0x{a["hwnd"]:08X} [{a["kind"]}] {exc}')
+            return 2
+        print(
+            f'  -> 0x{a["hwnd"]:08X} [{a["kind"]}] {a["title"][:40]} '
+            f'via {delivery["transport"]}; consumption not verified'
+        )
         time.sleep(2)  # stagger so windows don't interleave
     return 0
 
@@ -99,8 +109,12 @@ def cmd_send(args):
     if not win:
         print("target not found")
         return 1
-    _send(win, " ".join(args.message))
-    print(f"sent -> 0x{win.hwnd:08X}")
+    try:
+        delivery = _send(win, " ".join(args.message))
+    except RuntimeError as exc:
+        print(f"failed -> 0x{win.hwnd:08X}: {exc}")
+        return 2
+    print(f"accepted -> 0x{win.hwnd:08X} via {delivery['transport']}; consumption not verified")
     return 0
 
 
@@ -124,8 +138,15 @@ def cmd_relay(args):
     if not last:
         print("nothing to relay from src")
         return 1
-    _send(dst, f"[relay from 0x{src.hwnd:08X}] {last}")
-    print(f"relayed 0x{src.hwnd:08X} -> 0x{dst.hwnd:08X}: {last[:60]}")
+    try:
+        delivery = _send(dst, f"[relay from 0x{src.hwnd:08X}] {last}")
+    except RuntimeError as exc:
+        print(f"relay failed 0x{src.hwnd:08X} -> 0x{dst.hwnd:08X}: {exc}")
+        return 2
+    print(
+        f"relayed 0x{src.hwnd:08X} -> 0x{dst.hwnd:08X} via {delivery['transport']}: "
+        f"{last[:60]}; consumption not verified"
+    )
     return 0
 
 

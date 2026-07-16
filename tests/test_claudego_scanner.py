@@ -29,7 +29,7 @@ _mock_sc.send_string = MagicMock()
 sys.modules.setdefault("self_connect", _mock_sc)
 
 # Mock approval_partner if not already importable from root
-import importlib
+import importlib  # noqa: E402
 
 try:
     importlib.import_module("approval_partner")
@@ -40,7 +40,7 @@ except ImportError:
     if str(_ROOT) not in _sys.path:
         _sys.path.insert(0, str(_ROOT))
 
-from approval_partner import PartnerConfig  # type: ignore[import]
+from approval_partner import PartnerConfig  # type: ignore[import]  # noqa: E402
 from claudego.scanner import (  # noqa: E402
     EVENT_AUTO_APPROVED,
     EVENT_MANUAL_APPROVED,
@@ -160,7 +160,10 @@ class TestScanner:
         from unittest.mock import patch
         win = _FakeWindowTarget(hwnd=10, title="T")
         self.scanner._win_map[10] = win
-        with patch("claudego.scanner.send_string") as mock_ss:
+        with patch(
+            "claudego.scanner.send_string",
+            return_value={"ok": True, "transport": "postmessage_wm_char"},
+        ) as mock_ss:
             assert self.scanner.manual_approve(10) is True
             mock_ss.assert_called_once_with(win, "y\r")
 
@@ -168,7 +171,10 @@ class TestScanner:
         from unittest.mock import patch
         win = _FakeWindowTarget(hwnd=11, title="T")
         self.scanner._win_map[11] = win
-        with patch("claudego.scanner.send_string") as mock_ss:
+        with patch(
+            "claudego.scanner.send_string",
+            return_value={"ok": True, "transport": "postmessage_wm_char"},
+        ) as mock_ss:
             assert self.scanner.manual_deny(11) is True
             mock_ss.assert_called_once_with(win, "n\r")
 
@@ -187,7 +193,10 @@ class TestScanner:
         self.scanner.add_callback(received.append)
         win = _FakeWindowTarget(hwnd=20, title="T")
         self.scanner._win_map[20] = win
-        with patch("claudego.scanner.send_string"):
+        with patch(
+            "claudego.scanner.send_string",
+            return_value={"ok": True, "transport": "postmessage_wm_char"},
+        ):
             self.scanner.manual_approve(20)
         assert any(e.event_type == EVENT_MANUAL_APPROVED for e in received)
 
@@ -197,6 +206,22 @@ class TestScanner:
         self.scanner.add_callback(received.append)
         win = _FakeWindowTarget(hwnd=21, title="T")
         self.scanner._win_map[21] = win
-        with patch("claudego.scanner.send_string"):
+        with patch(
+            "claudego.scanner.send_string",
+            return_value={"ok": True, "transport": "postmessage_wm_char"},
+        ):
             self.scanner.manual_deny(21)
         assert any(e.event_type == EVENT_MANUAL_DENIED for e in received)
+
+    def test_manual_approve_transport_failure_does_not_emit_success(self):
+        from unittest.mock import patch
+
+        received = []
+        self.scanner.add_callback(received.append)
+        self.scanner._win_map[22] = _FakeWindowTarget(hwnd=22, title="T")
+        with patch(
+            "claudego.scanner.send_string",
+            return_value={"ok": False, "transport": "win32_console_input"},
+        ):
+            assert self.scanner.manual_approve(22) is False
+        assert not any(e.event_type == EVENT_MANUAL_APPROVED for e in received)

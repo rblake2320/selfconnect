@@ -1,6 +1,6 @@
 # SelfConnect Proven vs Untested Capability Map
 
-Last updated: 2026-06-17
+Last updated: 2026-07-15
 
 This note keeps the claim boundary clean. SelfConnect has made a real shift,
 but not every possible Win32 surface has been tested yet.
@@ -15,6 +15,8 @@ The original SelfConnect path was two primitives:
 That proved OS-native AI-to-AI communication was possible, but it had reliability
 gaps:
 
+- A successful `PostMessageW` call could be mistaken for delivery even though a
+  `ConsoleWindowClass` receiver never saw the characters.
 - The sender could accidentally type into the wrong target window.
 - The receiver readback could confuse local echo with a real peer response.
 - Routing and migration state could ride through visible terminal text.
@@ -25,6 +27,10 @@ The recent work shifted SelfConnect from a two-primitive demo into a layered
 mesh:
 
 - Target-guarded sends: HWND/PID/exe/class/title are checked before input.
+- Class-selected terminal writes: tested CASCADIA uses exact-HWND `WM_CHAR`;
+  `ConsoleWindowClass` uses `WriteConsoleInputW` with caller restoration.
+- Structured acceptance: every send names its transport and distinguishes API
+  acceptance from verified receiver delivery.
 - Mesh registry: roles, tasks, profiles, HWNDs, and migration state are tracked.
 - Profiles: `explore` for fast local testing, `governed` for enterprise-style
   validation.
@@ -43,7 +49,9 @@ mesh state, and then governance/audit/identity where the deployment needs it.
 
 These have been tested in this branch or recorded as committed probes:
 
-- Terminal-to-terminal injection with `WM_CHAR`.
+- Terminal-to-terminal injection with `WM_CHAR` on the tested CASCADIA surface.
+- `ConsoleWindowClass` input through `WriteConsoleInputW`, live-verified through
+  an independent target-process effect.
 - Terminal/window capture with `PrintWindow`.
 - Window enumeration and target verification.
 - Notepad-style control/input experiments.
@@ -98,6 +106,8 @@ These should not be claimed as working until tested:
 - Anti-bot / abuse-detection evasion.
 - WebView2-hosted app control beyond normal HWND/UIA capture paths.
 - Cross-browser parity.
+- Universal delivery semantics across every console host and TUI.
+- PID-safe `WriteConsoleInputW` routing across multiple Windows Terminal tabs.
 
 ## Browser And CAPTCHA Boundary
 

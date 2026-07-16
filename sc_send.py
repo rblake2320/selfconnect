@@ -6,7 +6,7 @@ Usage:
     python sc_send.py --to "first contact" AXIOM: task complete, hash chain ok
     python sc_send.py --list                 # show injectable windows
 
-Protocol enforced: text first -> 1s settle -> Enter separately (never inline \\r).
+Protocol enforced: text and Enter use one class-selected transport call.
 Safety: refuses ambiguous targets (use --first to override), skips own window,
 idle-guards Codex-style busy spinners unless --force.
 """
@@ -14,7 +14,6 @@ import argparse
 import ctypes
 import os
 import sys
-import time
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -71,10 +70,16 @@ def main():
             return 3
 
     msg = " ".join(args.message)
-    send_string(win, msg, char_delay=0.02)
-    time.sleep(1)
-    send_string(win, "\r", char_delay=0.02)
-    print(f"SENT {len(msg)} chars -> 0x{win.hwnd:08X} {win.title[:50]!r}")
+    delivery = send_string(win, msg + "\r", char_delay=0.02)
+    if not isinstance(delivery, dict) or delivery.get("ok") is not True:
+        transport = delivery.get("transport", "unknown") if isinstance(delivery, dict) else "unknown"
+        error = delivery.get("error", "no delivery record") if isinstance(delivery, dict) else "no delivery record"
+        print(f"FAILED via {transport}: {error}")
+        return 4
+    print(
+        f"ACCEPTED {len(msg) + 1} chars via {delivery['transport']} -> "
+        f"0x{win.hwnd:08X} {win.title[:50]!r}; consumption not verified"
+    )
     return 0
 
 

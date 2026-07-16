@@ -21,6 +21,7 @@ from approval_partner import (
     decide,
     evaluate_rules,
     extract_tool_call,
+    inject_response,
 )
 
 # ── has_approval_prompt (text only, no Win32) ─────────────────────────────────
@@ -221,3 +222,27 @@ class TestDefaultRules:
         deny_set = set(DEFAULT_DENY)
         overlap = allow_set & deny_set
         assert not overlap, f"Patterns in both allow and deny: {overlap}"
+
+
+def test_inject_response_propagates_structured_transport(monkeypatch):
+    expected = {
+        "ok": True,
+        "transport": "win32_console_input",
+        "delivery_verified": False,
+    }
+    monkeypatch.setattr("approval_partner.send_string", lambda *args, **kwargs: expected)
+    win = type("WindowStub", (), {"hwnd": 123})()
+
+    result = inject_response(win, approve=True, cfg=PartnerConfig())
+
+    assert result is expected
+
+
+def test_inject_response_fails_without_delivery_record(monkeypatch):
+    monkeypatch.setattr("approval_partner.send_string", lambda *args, **kwargs: None)
+    win = type("WindowStub", (), {"hwnd": 123})()
+
+    result = inject_response(win, approve=False, cfg=PartnerConfig())
+
+    assert result["ok"] is False
+    assert result["error"] == "input transport returned no delivery record"

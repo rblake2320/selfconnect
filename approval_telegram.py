@@ -6,7 +6,7 @@ When Claude Code pauses for a tool-use approval, this script:
   1. Detects the approval prompt in the Claude terminal (via UIA text extraction)
   2. Sends a formatted message to your Telegram chat
   3. Waits for your reply ("yes" / "no")
-  4. Injects the answer into the terminal via PostMessage(WM_CHAR)
+  4. Injects the answer through SelfConnect's class-selected terminal transport
   5. Confirms the action back to you on Telegram
 
 Setup:
@@ -122,14 +122,21 @@ def _extract_tool_name(hwnd: int) -> str:
     return m.group(0) if m else "(unknown tool)"
 
 
-def _inject(hwnd: int, answer: str) -> None:
-    """Send 'y\r' or 'n\r' into the terminal."""
+def _inject(hwnd: int, answer: str) -> dict[str, object]:
+    """Send a decision and return transport acceptance evidence."""
     from self_connect import list_windows, send_string
     for w in list_windows():
         if w.hwnd == hwnd:
-            send_string(w, f"{answer}\r")
-            return
+            delivery = send_string(w, f"{answer}\r")
+            if isinstance(delivery, dict) and "ok" in delivery:
+                return delivery
+            return {
+                "ok": False,
+                "transport": "unknown",
+                "error": "input transport returned no delivery record",
+            }
     print(f"[approval] WARNING: hwnd {hwnd} gone before injection")
+    return {"ok": False, "transport": "none", "error": "target window disappeared"}
 
 
 async def _send_approval_request(win) -> None:
@@ -232,10 +239,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Apply to the oldest pending approval
     hwnd = min(_pending, key=lambda h: _pending[h]["sent_at"])
-    entry = _pending.pop(hwnd)
+    entry = _pending[hwnd]
     tool = entry["tool"]
 
-    _inject(hwnd, decision)
+    delivery = _inject(hwnd, decision)
+    if delivery.get("ok") is not True:
+        await msg.reply_text(
+            "Approval was not delivered; the request remains pending. "
+            f"Transport: {delivery.get('transport', 'unknown')}."
+        )
+        print(
+            f"[approval] FAILED to inject {label.lower()} for {tool}: "
+            f"{delivery.get('error', 'input transport failed')}"
+        )
+        return
+    _pending.pop(hwnd, None)
     print(f"[approval] {label}: {tool} (hwnd={hwnd})")
 
     confirm = f"{icon} {label} — Claude is continuing\nTool: {tool}"

@@ -36,8 +36,18 @@ class _FakeSelfConnect:
     def list_windows(self):
         return self.windows
 
-    def send_string(self, target, payload, char_delay=0.05):
-        self.sent.append((target, payload, char_delay))
+    def send_string(self, target, payload, char_delay=0.05, mode="auto"):
+        self.sent.append((target, payload, char_delay, mode))
+        return {
+            "ok": True,
+            "transport": "postmessage_wm_char",
+            "chars_requested": len(payload),
+            "chars_accepted": len(payload),
+            "delivery_evidence": "message_queue_acceptance_only",
+            "delivery_verified": False,
+            "error": "",
+            "winerror": 0,
+        }
 
 
 def test_parse_hwnd_accepts_decimal_and_hex():
@@ -589,6 +599,10 @@ def test_send_text_allows_matching_target_guard(monkeypatch):
     )
     assert result["ok"] is True
     assert fake.sent[0][1] == "hello\r"
+    assert fake.sent[0][3] == "auto"
+    assert result["transport"] == "postmessage_wm_char"
+    assert result["delivery_evidence"] == "message_queue_acceptance_only"
+    assert result["delivery_verified"] is False
 
 
 def test_send_text_explore_mode_unchanged_with_lease_params_omitted(monkeypatch):
@@ -674,6 +688,94 @@ def test_send_text_governed_allows_with_matching_lease(monkeypatch):
     assert fake.sent[0][1] == "hello\r"
 
 
+def test_send_text_fails_when_transport_returns_no_delivery_record(monkeypatch):
+    fake = _FakeSelfConnect()
+    fake.send_string = lambda *args, **kwargs: None
+    monkeypatch.setattr(sc_cli, "_load_sc", lambda: fake)
+    monkeypatch.setattr(sc_cli, "_window_valid_visible", lambda hwnd: (True, True))
+
+    result = sc_cli.send_text_to_window(
+        _FakeWindow.hwnd,
+        "hello",
+        allow_input=True,
+        expected_pid=_FakeWindow.pid,
+        expected_class=_FakeWindow.class_name,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "input transport returned no delivery record"
+
+
+def test_send_text_propagates_transport_failure(monkeypatch):
+    fake = _FakeSelfConnect()
+    fake.send_string = lambda *args, **kwargs: {
+        "ok": False,
+        "transport": "win32_console_input",
+        "chars_accepted": 0,
+        "delivery_evidence": "none",
+        "delivery_verified": False,
+        "error": "caller_console_restore_failed",
+        "winerror": 5,
+    }
+    monkeypatch.setattr(sc_cli, "_load_sc", lambda: fake)
+    monkeypatch.setattr(sc_cli, "_window_valid_visible", lambda hwnd: (True, True))
+
+    result = sc_cli.send_text_to_window(
+        _FakeWindow.hwnd,
+        "hello",
+        allow_input=True,
+        expected_pid=_FakeWindow.pid,
+        expected_class=_FakeWindow.class_name,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "input transport failed"
+    assert result["transport"] == "win32_console_input"
+    assert result["delivery"]["error"] == "caller_console_restore_failed"
+
+
+def test_send_cli_returns_nonzero_when_transport_fails(monkeypatch, capsys):
+    seen = {}
+
+    def fail_send(hwnd, text, **kwargs):
+        seen.update({"hwnd": hwnd, "text": text, **kwargs})
+        return {
+            "ok": False,
+            "transport": "win32_console_input",
+            "error": "input transport failed",
+        }
+
+    monkeypatch.setattr(sc_cli, "send_text_to_window", fail_send)
+
+    status = sc_cli.main([
+        "send", "--hwnd", "0x1234", "--text", "hello", "--submit",
+        "--allow-input", "--transport", "console", "--expect-pid", "4321",
+    ])
+
+    assert status == 1
+    assert seen["transport"] == "console"
+    assert seen["submit"] is True
+    assert '"ok": false' in capsys.readouterr().out
+
+
+def test_send_cli_returns_zero_only_for_explicit_success(monkeypatch, capsys):
+    monkeypatch.setattr(sc_cli, "send_text_to_window", lambda *args, **kwargs: {
+        "ok": True,
+        "transport": "postmessage_wm_char",
+        "delivery_verified": False,
+    })
+
+    status = sc_cli.main([
+        "send", "--hwnd", "0x1234", "--text", "hello", "--allow-input",
+        "--confirm-current-target",
+    ])
+
+    assert status == 0
+    output = capsys.readouterr().out
+    assert '"ok": true' in output
+    assert '"delivery_verified": false' in output
+
+
 def test_pyproject_exports_package_adapter_entry_points():
     text = Path("pyproject.toml").read_text()
     assert 'selfconnect = "sc_cli:main"' in text
@@ -693,11 +795,14 @@ def test_pyproject_exports_package_adapter_entry_points():
     assert '"experiments/win32_probe/channel_router_composition_probe.py"' in text
     assert '"experiments/win32_probe/chained_channel.py"' in text
     assert '"experiments/win32_probe/browser_local_proof.py"' in text
+    assert '"experiments/win32_probe/console_input_transport_probe.py"' in text
+    assert '"experiments/win32_probe/results/console_input_transport_PASS_redacted.json"' in text
     assert '"experiments/win32_probe/etw_provider.py"' in text
     assert '"experiments/win32_probe/pipe_role_lease_probe.py"' in text
     assert '"experiments/win32_probe/service_sid_probe.py"' in text
     assert '"experiments/win32_probe/uia_echo_filter_probe.py"' in text
     assert '"experiments/win32_probe/results/browser_local_proof_PASS_redacted.json"' in text
+    assert '"docs/CONSOLE_INPUT_TRANSPORT_PROOF.md"' in text
     assert '"experiments/win32_probe/results/channel_router_composition_LIVE_PASS_redacted.json"' in text
     assert '"experiments/win32_probe/results/channel_router_composition_PASS_redacted.json"' in text
     assert '"experiments/win32_probe/results/pipe_role_lease_PASS_redacted.json"' in text

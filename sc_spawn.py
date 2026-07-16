@@ -346,9 +346,11 @@ def _wait_new_window(before_hwnds: set[int], timeout: float, poll: float = 1.0):
 def _ring_doorbell(target, briefing: Path, task: Task) -> None:
     sc = _sc()
     line = f'Read "{briefing}" and follow it exactly. Your task id is {task.task_id}.'
-    sc.send_string(target, line, char_delay=0.02)
-    time.sleep(1.0)
-    sc.submit_claude_input(target.hwnd)
+    delivery = sc.send_string(target, line + "\r", char_delay=0.02)
+    if not isinstance(delivery, dict) or delivery.get("ok") is not True:
+        transport = delivery.get("transport", "unknown") if isinstance(delivery, dict) else "unknown"
+        error = delivery.get("error", "no delivery record") if isinstance(delivery, dict) else "no delivery record"
+        raise RuntimeError(f"doorbell input failed via {transport}: {error}")
 
 
 def spawn_agent(

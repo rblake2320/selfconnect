@@ -111,8 +111,15 @@ def tool_send_message(hwnd: int, text: str) -> str:
         return f"Window 0x{hwnd:x} not found"
     # Normalize escaped \r and \n so the model's string literals become real control chars
     text = text.replace('\\r', '\r').replace('\\n', '\n')
-    send_string(target, text, char_delay=0.02)
-    return f"Sent {len(text)} chars to 0x{hwnd:x}"
+    delivery = send_string(target, text, char_delay=0.02)
+    if not isinstance(delivery, dict) or delivery.get("ok") is not True:
+        transport = delivery.get("transport", "unknown") if isinstance(delivery, dict) else "unknown"
+        error = delivery.get("error", "no delivery record") if isinstance(delivery, dict) else "no delivery record"
+        return f"Input failed via {transport}: {error}"
+    return (
+        f"Accepted {len(text)} chars via {delivery['transport']} to 0x{hwnd:x}; "
+        "receiver delivery not verified"
+    )
 
 # === TOOL REGISTRY ===
 

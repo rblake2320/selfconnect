@@ -24,8 +24,8 @@ _mock_sc.list_windows = MagicMock(return_value=[])
 _mock_sc.send_string = MagicMock()
 sys.modules.setdefault("self_connect", _mock_sc)
 
-import importlib
-import pathlib as _pl
+import importlib  # noqa: E402
+import pathlib as _pl  # noqa: E402
 
 try:
     importlib.import_module("approval_partner")
@@ -113,7 +113,10 @@ class TestApprove:
         from unittest.mock import patch
         win = _FakeWindowTarget(hwnd=100, title="T")
         _scanner._win_map[100] = win
-        with patch("claudego.scanner.send_string") as mock_ss:
+        with patch(
+            "claudego.scanner.send_string",
+            return_value={"ok": True, "transport": "postmessage_wm_char"},
+        ) as mock_ss:
             r = client.post("/api/approve/100")
         assert r.json()["ok"] is True
         mock_ss.assert_called_once_with(win, "y\r")
@@ -128,7 +131,10 @@ class TestDeny:
         from unittest.mock import patch
         win = _FakeWindowTarget(hwnd=101, title="T")
         _scanner._win_map[101] = win
-        with patch("claudego.scanner.send_string") as mock_ss:
+        with patch(
+            "claudego.scanner.send_string",
+            return_value={"ok": True, "transport": "postmessage_wm_char"},
+        ) as mock_ss:
             r = client.post("/api/deny/101")
         assert r.json()["ok"] is True
         mock_ss.assert_called_once_with(win, "n\r")

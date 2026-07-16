@@ -14,18 +14,61 @@
   "claims": [
     {
       "id": "terminal.os_native_actuation",
-      "statement": "SelfConnect can inject visible terminal input through the Win32 WM_CHAR path without requiring MCP, HTTP, or a cloud API for that actuation step.",
+      "statement": "SelfConnect can inject visible terminal input into the tested Windows Terminal CASCADIA surface through Win32 WM_CHAR without requiring MCP, HTTP, or a cloud API for that actuation step.",
       "status": "proven",
       "release": true,
-      "scope": "Windows terminal surfaces accepted by the guarded package path.",
-      "boundary": "This does not claim universal application input or that the wider ecosystem never uses APIs, MCP, brokers, or networks.",
-      "verified_on": "2026-06-21",
+      "scope": "The guarded Windows Terminal CASCADIA surface only.",
+      "boundary": "A successful PostMessageW return establishes queue acceptance, not receiver processing or visible delivery. This does not cover ConsoleWindowClass, universal application input, or claim that the wider ecosystem never uses APIs, MCP, brokers, or networks.",
+      "verified_on": "2026-07-15",
       "evidence": [
         {
           "path": "self_connect.py"
         },
         {
           "path": "tests/test_package_adapters.py"
+        }
+      ]
+    },
+    {
+      "id": "terminal.console_input_transport",
+      "statement": "SelfConnect wrote a synthetic command into an isolated ConsoleWindowClass through WriteConsoleInputW, restored the caller console, and independently verified target-process execution.",
+      "status": "proven",
+      "release": true,
+      "scope": "The recorded Windows cmd.exe ConsoleWindowClass proof and the guarded class-selected package path.",
+      "boundary": "WriteConsoleInputW record acceptance alone is not application delivery. The PASS requires the independent target-process effect. This does not establish parity for Windows Terminal tabs, every console host, elevated cross-integrity targets, or arbitrary TUIs.",
+      "verified_on": "2026-07-15",
+      "evidence": [
+        {
+          "path": "experiments/win32_probe/results/console_input_transport_PASS_redacted.json",
+          "sha256_text": "5ef8698275e230cf13c52a2acc65a02cdcc330750ed08a979ce0f01f45b77a8b",
+          "assertions": [
+            {
+              "path": "verdict",
+              "equals": "PASS"
+            },
+            {
+              "path": "transport",
+              "equals": "win32_console_input"
+            },
+            {
+              "path": "caller_console_restored",
+              "equals": true
+            },
+            {
+              "path": "independent_process_effect",
+              "equals": true
+            },
+            {
+              "path": "delivery_verified",
+              "equals": true
+            }
+          ]
+        },
+        {
+          "path": "tests/test_console_io.py"
+        },
+        {
+          "path": "tests/test_console_input_transport_probe.py"
         }
       ]
     },

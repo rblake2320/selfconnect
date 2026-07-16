@@ -1,9 +1,9 @@
 # SelfConnect SDK v0.12.0
 
 **OS-native bridge between AI agents and Windows desktop apps.**  
-SelfConnect started with `PostMessage(WM_CHAR)` and `PrintWindow`; it now also
-uses target-guarded sends, UIA readback, echo filtering, mesh birth IDs, and
-optional governed adapters when the deployment needs them.
+SelfConnect started with `PostMessage(WM_CHAR)` and `PrintWindow`; it now selects
+the input transport by verified window class, uses target-guarded sends, UIA
+readback, echo filtering, mesh birth IDs, and optional governed adapters.
 
 ```python
 from self_connect import list_windows, send_string, save_capture
@@ -34,16 +34,17 @@ AI Agent A                         AI Agent B
     │                                   │
     ├─ PrintWindow(hwnd_B) ──────────>  │  reads B's screen
     │                                   │
-    ├─ PostMessage(WM_CHAR) ─────────>  │  types into B's terminal
+    ├─ class-selected Win32 input ───>  │  types into B's terminal
     │                                   │
-    │  <──── PostMessage(WM_CHAR) ──────┤  B types into A's terminal
+    │  <──── class-selected Win32 input ┤  B types into A's terminal
     │                                   │
     └─ PrintWindow(hwnd_A) <──────────  ┘  B reads A's screen
 ```
 
-The core terminal path still needs no API between agents and no network traffic.
-Modern SelfConnect keeps that fast path, then adds optional adapters around it
-instead of forcing every user into the heaviest governance mode.
+The tested CASCADIA path uses exact-HWND `WM_CHAR`; `ConsoleWindowClass` uses
+`WriteConsoleInputW` against `CONIN$`. A successful `PostMessageW` call proves
+queue acceptance only. Independent readback or a receiver ACK is required to
+claim delivery. The core actuation step needs no API or network traffic.
 
 For the current product boundary, read
 `docs/SELFCONNECT_PRODUCT_BOUNDARIES.md`.
@@ -93,12 +94,14 @@ selfconnect send --hwnd 0x123456 --text "hello" --submit --allow-input --expect-
 # or set SELFCONNECT_ALLOW_INPUT=1
 ```
 
-The send path has two gates:
+The send path has three independent conditions:
 
 - `--allow-input` proves the caller is allowed to type.
 - `--expect-*` proves the HWND still points at the intended target.
 - Terminal classes are required by default to prevent accidental writes into
   windows such as Notepad.
+- The selected transport must report complete acceptance; the result names the
+  actual transport and keeps `delivery_verified=false` until readback or ACK.
 
 If you intentionally inspected the current target and want to send without an
 expected PID/exe/class/title, pass `--confirm-current-target`.
@@ -221,8 +224,9 @@ from self_connect import list_windows, send_string, save_capture
 for w in list_windows():
     print(f"hwnd={w.hwnd} title={w.title[:60]!r} exe={w.exe_name!r}")
 
-# Type into a window (including Enter) — works on background/minimized windows
-send_string(window_target, "your message here\r")  # \r = Enter key
+# Type into a verified terminal surface (including Enter)
+delivery = send_string(window_target, "your message here\r")  # \r = Enter
+assert delivery["ok"]  # transport acceptance; use readback/ACK for delivery
 
 # Capture any window's pixels
 save_capture(hwnd, path="proofs/capture.png")
@@ -343,7 +347,7 @@ Full export list and signatures: see `CLAUDE.md` → Key Files section.
 |----------|-------------|
 | `list_windows()` | Enumerate all visible windows → `[WindowTarget]` |
 | `find_target(name)` | Find window by title/exe substring |
-| `send_string(target, text)` | PostMessage(WM_CHAR) each char — `\r` = Enter |
+| `send_string(target, text)` | Class-selected input: WM_CHAR for tested CASCADIA, WriteConsoleInputW for ConsoleWindowClass; returns structured acceptance evidence |
 | `save_capture(hwnd, path)` | PrintWindow → save PNG |
 | `capture_window(hwnd)` | PrintWindow → PIL Image |
 | `restore_window(hwnd)` | ShowWindow + SetForegroundWindow |
@@ -398,9 +402,10 @@ Full export list and signatures: see `CLAUDE.md` → Key Files section.
 
 | Method | Works? | Notes |
 |--------|--------|-------|
-| `PostMessage(WM_CHAR)` to Windows Terminal | YES | The core mechanism |
-| `PostMessage(WM_CHAR)` to cmd.exe | YES | Legacy console |
-| `send_string` with `\r` inside string | YES | Enter key — MUST be in string |
+| `PostMessage(WM_CHAR)` to tested Windows Terminal CASCADIA surface | YES | Queue acceptance is not delivery; use readback/ACK |
+| `PostMessage(WM_CHAR)` to `ConsoleWindowClass` / cmd.exe | NO | Reproduced false-positive: call can succeed while no input appears |
+| `WriteConsoleInputW` to tested `ConsoleWindowClass` / cmd.exe | YES | Live receiver-effect proof; auto-selected for this class |
+| `send_string` with `\r` inside string | YES on tested terminal routes | Enter stays in the same class-selected transport |
 | `PostMessage(WM_CHAR)` to UWP Notepad | NO | TSF input, silently drops |
 | `SendInput` from background | NO | Always goes to foreground |
 | Separate `PostMessage(WM_CHAR, 13)` for Enter | NO | Ignored by Windows Terminal |
