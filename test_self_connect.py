@@ -66,8 +66,12 @@ def test_version():
     check("version not empty", len(__version__) > 0)
     import self_connect
     check("__all__ defined", hasattr(self_connect, "__all__"))
-    check("__all__ has 63 exports", len(self_connect.__all__) == 63,
+    check("__all__ has 67 exports", len(self_connect.__all__) == 67,
           f"got {len(self_connect.__all__)}")
+    check("__all__ has no duplicate exports",
+          len(self_connect.__all__) == len(set(self_connect.__all__)))
+    missing = [name for name in self_connect.__all__ if not hasattr(self_connect, name)]
+    check("every __all__ export is defined", not missing, f"missing {missing}")
 
 
 def test_window_discovery():

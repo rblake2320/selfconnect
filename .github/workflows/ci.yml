@@ -6,20 +6,28 @@ on:
   pull_request:
     branches: [master, main]
 
+permissions:
+  contents: read
+
 jobs:
   lint-python:
     name: Python syntax + imports
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install ruff Pillow psutil pytest pytest-asyncio python-dotenv python-telegram-bot fastapi uvicorn httpx cryptography dilithium-py
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[service]" ruff pytest pytest-asyncio python-dotenv python-telegram-bot fastapi uvicorn httpx cryptography dilithium-py
+
+      - name: Verify Windows service dependency
+        run: python -c "import pywintypes, win32file, win32pipe, winerror; print('pywin32 service dependency available')"
 
       - name: Ruff lint — all SDK files
         run: >
@@ -71,4 +79,5 @@ jobs:
         run: python -m pytest tests/ -v --tb=short
 
       - name: SDK smoke tests
+        if: ${{ !cancelled() }}
         run: python test_self_connect.py

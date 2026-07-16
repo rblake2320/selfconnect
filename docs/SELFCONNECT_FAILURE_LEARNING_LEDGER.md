@@ -7,6 +7,30 @@ GitHub, without storing raw private transcripts or noisy local artifacts.
 
 ## Entries
 
+### 2026-07-15: CI Must Install Capability Dependencies Before Exercising Them
+
+- Context: the Windows CI job ran the complete test directory but installed an
+  ad hoc dependency list that omitted the declared `service` extra and its
+  `pywin32` dependency.
+- Result: ten Fabric IOCP, overlapped named-pipe, service, and service benchmark
+  tests failed with API-unavailable errors on a Windows runner. The same run's
+  fleet CLI fixture inherited the runner's live RAM snapshot and returned the
+  correct `halt_recommended` verdict instead of the fixture's expected
+  `capture` verdict. Because pytest failed first, the SDK smoke step was skipped
+  and a stale 63-export assertion hid the four v0.11 console exports.
+- Decision: capability tests must install the package extra that owns the
+  capability. CLI tests that assert a specific policy verdict must supply every
+  environmental input that can legitimately outrank that verdict.
+- Fix: CI installs editable `.[service]` and explicitly imports the required
+  Win32 modules before tests. The fleet fixture supplies a healthy resource
+  snapshot, while a second regression supplies low RAM and asserts that the
+  halt recommendation remains enforced. The smoke test validates the 67-symbol
+  export contract, rejects duplicates and undefined names, and uses an
+  uncancelled CI condition so an earlier failed test gate does not conceal it.
+- Blind spot: a hosted Windows runner proves user-mode Win32 behavior in that
+  runner session. It does not prove installation or operation as a persistent
+  Windows SCM service on a release host.
+
 ### 2026-06-20: Stale Terminals Are Not Valid Real Benchmark Agents
 
 - Context: early 5-real attempt reused existing terminal windows.

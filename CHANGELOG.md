@@ -2,6 +2,26 @@
 
 All notable changes to SelfConnect are documented here.
 
+## [Unreleased]
+
+### Fixed
+- CI now installs the package with its declared `service` extra before running
+  the real Windows IOCP, overlapped named-pipe, Fabric service, and service
+  benchmark tests. The previous workflow ran those tests without `pywin32`, so
+  API availability failures obscured the tested capability rather than
+  exercising it.
+- Fleet guard CLI tests now provide explicit resource snapshots. A separate
+  regression proves that low available RAM still takes precedence over a
+  capture-only missed ACK and returns `halt_recommended`; the safety threshold
+  was not weakened to make CI pass.
+- The SDK smoke test now matches the 67-symbol v0.12 public export surface and
+  also rejects duplicate or undefined exports. CI runs this smoke test after an
+  earlier test failure, unless the workflow was cancelled, so one failed gate
+  cannot hide another.
+- CI's official checkout and Python setup actions are pinned to the exact
+  commits for `v7.0.0` and `v6.3.0`, respectively, and the workflow declares
+  read-only repository-content permission.
+
 ## [0.12.0] — 2026-07-02
 
 ### Added — Orchestration layer (additive; `self_connect.py` unchanged)
