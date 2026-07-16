@@ -18,9 +18,7 @@ of an unpatched flaw puts every user at risk.
 Instead, report privately:
 
 - Use **GitHub Private Vulnerability Reporting** on this repository
-  (*Security → Report a vulnerability*), or
-- Email the maintainer at the address on the GitHub profile of the repository
-  owner.
+  (*Security → Report a vulnerability*).
 
 Please include: affected version/commit, a description, reproduction steps or a
 proof-of-concept, and the impact you observed. If you have a suggested fix,
