@@ -1,5 +1,20 @@
 # Engineering Log
 
+## 2026-07-15 - Deterministic External-Target Smoke Probe
+
+- Base: `56d5ff1802dca5d4136bcc32fa37aa122d4944dc`.
+- Trigger: post-merge Actions run `29465734240` failed 71/72 SDK smoke
+  assertions when the first enumerated window belonged to the runner console.
+- Root cause: the smoke test derived a broad keyword from `windows[0]`, while
+  `find_target` correctly excludes the resolved caller terminal PID.
+- Change: the smoke selects a visible window outside the caller PID, requires a
+  title query unique among eligible windows, and asserts the exact HWND and PID
+  returned. Duplicate titles are skipped in favor of a unique candidate.
+- Coverage: focused regression tests cover caller exclusion, duplicate titles,
+  and the no-safe-candidate boundary.
+- Rollback: revert this smoke-only change; do not weaken `find_target` caller
+  exclusion to accommodate the former test oracle.
+
 ## 2026-07-15 - ConsoleWindowClass False-Positive Closure
 
 - Base: `a87e490c88c4ccb18ccaac514d018c7bba779d55`.

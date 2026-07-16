@@ -99,18 +99,47 @@ def test_window_discovery():
     )
 
 
+def _select_unique_external_window(windows, own_pid):
+    """Return an external window and a title query that identifies only it."""
+    eligible = [
+        window
+        for window in windows
+        if window.pid != own_pid and window.title.strip()
+    ]
+    for candidate in eligible:
+        query = candidate.title.strip()
+        matches = [
+            window
+            for window in eligible
+            if query.casefold() in window.title.casefold()
+        ]
+        if len(matches) == 1:
+            return candidate, query
+    return None, ""
+
+
 def test_find_target():
     print("\n-- find_target --")
-    # Should find at least one window with a common keyword
     windows = list_windows()
-    if not windows:
-        skip("find existing target", "no visible top-level windows in this session")
+    own_pid = get_own_terminal_pid()
+    candidate, query = _select_unique_external_window(windows, own_pid)
+    if candidate is None:
+        skip(
+            "find existing target",
+            "no external visible window has a unique non-empty title",
+        )
     else:
-        # Use first window's title word as keyword
-        kw = windows[0].title.split()[0] if windows[0].title.split() else ""
-        if kw:
-            t = find_target(kw)
-            check(f"find_target('{kw[:20]}')", t is not None)
+        target = find_target(query, own_pid=own_pid)
+        check(
+            f"find_target('{query[:20]}') returns exact external window",
+            target is not None
+            and target.hwnd == candidate.hwnd
+            and target.pid == candidate.pid,
+            (
+                f"expected hwnd={candidate.hwnd} pid={candidate.pid}; "
+                f"got {target}"
+            ),
+        )
     result = find_target("__NONEXISTENT_WINDOW_XYZZY__")
     check("find_target returns None for missing", result is None)
 

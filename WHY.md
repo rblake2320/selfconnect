@@ -1,5 +1,29 @@
 # Decision Record
 
+## 2026-07-15 - Test Discovery Against an Exact External Window
+
+### Decision
+
+Keep `find_target` self-exclusion unchanged. For the live SDK smoke, enumerate
+visible windows, remove the resolved caller PID, select a title that matches
+exactly one remaining window, and require discovery to return that window's
+HWND and PID. Skip explicitly when the session exposes no safe unique target.
+
+### Why
+
+The failed CI assertion tested an impossible condition: it selected the
+caller's own first window and then expected a self-excluding API to return it.
+A broad first-word query could also resolve a different window and still pass.
+The exact external-target assertion now checks the intended safety behavior and
+the positive discovery behavior together.
+
+### Consequences
+
+- Caller exclusion remains a production invariant.
+- Duplicate titles cannot create a false-positive smoke result.
+- Sessions without a distinguishable external window report a bounded skip
+  instead of weakening discovery safety or manufacturing a target.
+
 ## 2026-07-15 - Select Terminal Input by Verified Window Class
 
 ### Decision
