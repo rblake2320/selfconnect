@@ -4,6 +4,29 @@ All notable changes to SelfConnect are documented here.
 
 ## [Unreleased]
 
+### Added
+- Added 24 stable public README claim blocks bound to scoped
+  `release/claims.json` entries and exact excerpt hashes.
+- Added an explicit release claim/package audit step to the Windows CI workflow.
+- The release gate now reports the valid tagged numerator and total tagged
+  denominator, and explicitly reports natural-language claim detection as
+  `PARTIAL` outside the tagged set.
+- Added adversarial release-gate coverage for unregistered, duplicate,
+  mismapped, malformed, mismatched-end, and excerpt-hash-mismatched public
+  claim tags.
+- Added raw-file SHA-256 validation for binary evidence, separate from the
+  line-ending-normalized text digest used for text artifacts.
+
+### Changed
+- Replaced the legal-conclusion-style novelty heading with a bounded transport
+  distinction and narrowed historical demonstrations to
+  implemented-and-exercised records.
+- Corrected the runbook writer and approval prototype descriptions so they no
+  longer imply automatic retry observation or an integrated governed Telegram
+  approval roundtrip.
+- Recorded, rather than concealed, one unreproduced task-state wait failure;
+  30 focused repetitions and two subsequent full-suite runs passed.
+
 ### Fixed
 - `send_string(mode="auto")` now selects `WriteConsoleInputW` for
   `ConsoleWindowClass` and retains exact-HWND `WM_CHAR` only for the tested

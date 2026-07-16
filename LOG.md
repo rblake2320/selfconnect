@@ -15,6 +15,42 @@
 - Rollback: revert this smoke-only change; do not weaken `find_target` caller
   exclusion to accommodate the former test oracle.
 
+## 2026-07-15 - Public README Claim-to-Evidence Binding
+
+- Base: `5c493300b937a0f912e32a131061a132d2c11fe8`.
+- Trigger: issue #13 showed that the old `100.0%` claim figure counted only
+  release-ledger rows and did not enumerate public README statements.
+- Inventory: 24 retained public capability, boundary, or historical-exercise
+  blocks now carry stable `SC-CLAIM` IDs. Each resolves to a unique
+  `release/claims.json` entry with statement, scope, boundary, verification
+  date, named evidence, evidence hashes where applicable, and an exact README
+  excerpt hash.
+- Claim corrections: removed the legal-conclusion-style novelty heading;
+  replaced universal `proved live` wording with bounded
+  `implemented-and-exercised` history; corrected automatic runbook generation
+  to a manual trigger; and stopped positioning the two approval prototypes as
+  one governed roundtrip.
+- Gate: strict claim-block parsing rejects malformed, nested, mismatched,
+  duplicate, unregistered, mismapped, and excerpt-hash-mismatched tags. Output
+  names the tagged numerator and denominator and labels free-form prose
+  classification `PARTIAL`.
+- CI: the Windows workflow runs the release claim/package audit as an explicit
+  named step in addition to its regression coverage.
+- Evidence hashing: normalized `sha256_text` remains available for text, while
+  screenshot evidence now uses raw-file `sha256`; the gate rejects ambiguous or
+  malformed hash declarations.
+- Validation: 14/14 release-gate tests passed; full suite passed 621 with 9
+  display-dependent skips; release-scoped Ruff passed; the release audit passed
+  47 checks with zero failures; wheel build contained all 31 required modules
+  (`f6b2696972ee52d4195157d4718f6549b2183f295237097f99fc0238694d9a00`).
+- Test honesty: the first full-suite run transiently failed
+  `test_wait_for_state_returns_on_transition` (620 passed). The exact test then
+  passed 30/30 isolated repetitions, a standalone full rerun passed 621, and the
+  consolidated audit rerun passed 621. The unreproduced flake remains tracked;
+  it is not represented as root-caused by this claim-control change.
+- Rollback: revert the pull-request commit. Do not restore the old claim
+  percentage without also restoring its explicit ledger-only label.
+
 ## 2026-07-15 - ConsoleWindowClass False-Positive Closure
 
 - Base: `a87e490c88c4ccb18ccaac514d018c7bba779d55`.
