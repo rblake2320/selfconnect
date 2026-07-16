@@ -424,10 +424,6 @@ if __name__ == "__main__":
     test_layer4_continuity()
 
     print("\n" + "=" * 50)
-    print(f"PASS {PASS}  FAIL {FAIL}  SKIP {SKIP}")
-    sys.exit(1 if FAIL else 0)
-
-    print("\n" + "=" * 50)
     total = PASS + FAIL + SKIP
     print(f"Results: {PASS}/{total} passed, {FAIL} failed, {SKIP} skipped")
     sys.exit(1 if FAIL > 0 else 0)
