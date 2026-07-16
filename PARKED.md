@@ -1,5 +1,16 @@
 # Parked Work
 
+## P-005 - Managed External Window Fixture for SDK Smoke
+
+- Status: parked; the live smoke uses windows already present in the session.
+- Current replacement: select an external visible window with a unique title,
+  assert its exact HWND/PID, or record an explicit skip when none exists.
+- Why parked: provisioning a managed desktop window is runner infrastructure,
+  not a reason to relax `find_target` self-exclusion or accept an ambiguous
+  title match.
+- Restore condition: a CI-owned window fixture with deterministic lifecycle,
+  stable identity, and cleanup on both success and failure.
+
 ## P-001 - General Receiver Delivery ACK
 
 - Status: parked, not represented as complete.
