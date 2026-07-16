@@ -133,12 +133,42 @@ def test_guard_cli_reads_state_file(capsys):
 
     try:
         state_path.write_text(
-            json.dumps({"agents": [{"name": "codex-1", "missed_acks": 1}]}),
+            json.dumps({
+                "agents": [{"name": "codex-1", "missed_acks": 1}],
+                "resources": {"ram_free_mb": 40_000, "gpu": None},
+            }),
             encoding="utf-8",
         )
         assert fleet.main(["guard", "--state-json", str(state_path)]) == 0
         output = json.loads(capsys.readouterr().out)
         assert output["verdict"] == "capture"
+        assert output["capture_triggers"][0]["kind"] == "missed_ack"
+    finally:
+        temp_dir.cleanup()
+
+
+def test_guard_cli_low_resources_override_capture_and_recommend_halt(capsys):
+    temp_dir = tempfile.TemporaryDirectory()
+    state_path = Path(temp_dir.name) / "state.json"
+
+    try:
+        state_path.write_text(
+            json.dumps({
+                "agents": [{"name": "codex-1", "missed_acks": 1}],
+                "resources": {"ram_free_mb": 10_000, "gpu": None},
+            }),
+            encoding="utf-8",
+        )
+        assert fleet.main(["guard", "--state-json", str(state_path)]) == 0
+        output = json.loads(capsys.readouterr().out)
+        assert output["verdict"] == "halt_recommended"
+        assert output["action"] == "stop_assigning_and_capture"
+        assert output["halt_reasons"] == [{
+            "kind": "ram_floor",
+            "ram_free_mb": 10_000,
+            "floor_mb": fleet.DEFAULT_RAM_FLOOR_MB,
+        }]
+        assert output["capture_triggers"][0]["kind"] == "missed_ack"
     finally:
         temp_dir.cleanup()
 

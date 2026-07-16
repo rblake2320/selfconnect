@@ -56,7 +56,8 @@ For the current product boundary, read
 pip install selfconnect                  # core (Pillow + psutil)
 pip install selfconnect[uia]             # + UIA text extraction
 pip install selfconnect[mcp]             # + MCP server adapter
-pip install selfconnect[full]            # + UIA + comtypes
+pip install selfconnect[service]         # + Fabric/Windows service support
+pip install selfconnect[full]            # + all optional adapters
 pip install selfconnect[telegram]        # + Telegram approval bridge
 pip install selfconnect[claudego]        # + ClaudeGo web dashboard
 ```
