@@ -31,10 +31,13 @@ it as a peer response.
 
 ## Architecture
 
-### Injection channel (unchanged)
+### Injection channel used by this proof
 
-`send_string()` uses `PostMessage(WM_CHAR)` — background-safe, no focus
-required. This is the proven patent core. This probe does not change it.
+This recorded Windows Terminal / ConPTY proof used `PostMessage(WM_CHAR)` on
+the tested CASCADIA surface. Current `send_string(mode="auto")` is
+class-selected: `ConsoleWindowClass` uses `WriteConsoleInputW` instead. In both
+cases, raw API acceptance is transport evidence only; the echo-filter/readback
+stage is what establishes receiver observation for this proof.
 
 ### Read channel
 

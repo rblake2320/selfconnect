@@ -85,6 +85,7 @@ Repository = "https://github.com/rblake2320/selfconnect"
 
 [tool.hatch.build.targets.wheel]
 artifacts = [
+    "experiments/win32_probe/results/console_input_transport_PASS_redacted.json",
     "experiments/fabric_v2/results/baseline_5agent_fabric_v2_service_transport.json",
     "experiments/fabric_v2/results/SC_FABRIC_SERVICE_20260621_1135_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_service_selftest_20260621_113419_redacted.json",
@@ -135,6 +136,8 @@ include = [
     "experiments/win32_probe/channel_router_composition_probe.py",
     "experiments/win32_probe/chained_channel.py",
     "experiments/win32_probe/browser_local_proof.py",
+    "experiments/win32_probe/console_input_transport_probe.py",
+    "experiments/win32_probe/results/console_input_transport_PASS_redacted.json",
     "experiments/win32_probe/etw_provider.py",
     "experiments/win32_probe/pipe_role_lease_probe.py",
     "experiments/win32_probe/runtime_sid_probe.py",
@@ -174,6 +177,7 @@ include = [
     "docs/PATENT_EVIDENCE_FREEZE_2026-06-20.md",
     "docs/PATENT_PRIOR_ART_SNAPSHOT.md",
     "docs/PIPE_ROLE_LEASE_PROOF.md",
+    "docs/CONSOLE_INPUT_TRANSPORT_PROOF.md",
     "docs/UIA_ECHO_FILTER_TERMCONTROL.md",
     "docs/PROVEN_VS_UNTESTED.md",
     "docs/SELFCONNECT_PRODUCT_BOUNDARIES.md",

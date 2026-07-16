@@ -1,6 +1,6 @@
 # SelfConnect Claim Evidence Matrix
 
-Last updated: 2026-06-21
+Last updated: 2026-07-15
 
 This matrix ties current SelfConnect positioning to concrete proof artifacts on
 `test/win32-hardening-v1`. It is intentionally conservative: if a capability has
@@ -8,7 +8,7 @@ not been live-tested or committed as a probe, it is marked as pending.
 
 | Claim area | Current status | Evidence |
 | --- | --- | --- |
-| OS-native terminal injection | Proven | `self_connect.send_string`, `test_self_connect.py`, existing WM_CHAR terminal mesh use |
+| OS-native terminal injection | Proven on bounded target classes | `send_string(mode="auto")` selects exact-HWND `WM_CHAR` for tested CASCADIA and `WriteConsoleInputW` for `ConsoleWindowClass`. Live console proof: `experiments/win32_probe/results/console_input_transport_PASS_redacted.json`. Boundary: PostMessage queue acceptance and console record insertion are not receiver delivery without independent readback/ACK/effect |
 | Window capture readback | Proven | `capture_window`, `save_capture`, `test_self_connect.py` |
 | Target-safe sends | Proven in package path | `sc_cli.verify_target`, guarded `send`, `tests/test_package_adapters.py` |
 | Mesh role/task/birth tracking | Proven in package path | `sc_mesh_registry.py`, `selfconnect-mesh list/register/update/heartbeat`; birth IDs distinguish terminal instances |
@@ -27,7 +27,7 @@ not been live-tested or committed as a probe, it is marked as pending.
 | Named pipe + DACL + impersonation | Proven; DACL hardened | `sc_fabric_v2.create_pipe_security_attributes()`, `sc_fabric_v2.pipe_security_summary()`, `tests/test_fabric_v2.py`; pipe restricted to owner SID + SYSTEM, deny-all fallback, no raw SID in output |
 | Pipe-authenticated role leases/generations | Proven as isolated control-plane proof | `sc_mesh_lease.py`, `experiments/win32_probe/pipe_role_lease_probe.py`, redacted PASS artifact |
 | Governed lease gate on guarded send/read path | Proven as optional in-process runtime gate | optional runtime governed enforcement on the guarded send/read path (role+birth_id+generation+hwnd+owner_sid_hash) layered over the explore-mode target guard; `sc_mesh_lease.evaluate_lease_gate`, `sc_mesh_lease.current_owner_sid`, `sc_cli.send_text_to_window`/`read_window`, `sc_mcp` tools, `tests/test_mesh_lease.py`, `tests/test_package_adapters.py`, `experiments/win32_probe/runtime_sid_probe.py`, `experiments/win32_probe/results/runtime_sid_probe_PASS_redacted.json`. Boundary: OPTIONAL, in-process, NOT a full daemon; explore mode unchanged (no-op); birth_id optional in gate (checked when provided, skipped when omitted for backward compat); runtime OS SID lookup now uses `OpenProcessToken` -> `GetTokenInformation(TokenUser)` -> `ConvertSidToStringSidW` and fails closed on `<unknown-sid>` |
-| Channel-router composition proof | Proven as redacted model proof plus live throwaway/local proof | `experiments/win32_probe/channel_router_composition_probe.py`, `experiments/win32_probe/results/channel_router_composition_PASS_redacted.json`, `experiments/win32_probe/results/channel_router_composition_LIVE_PASS_redacted.json`, `tests/test_channel_router_composition.py`, `docs/CHANNEL_ROUTER_COMPOSITION_PROOF.md`. Boundary: deterministic model proof selects terminal `WM_CHAR`, browser UIA Value/Invoke, metadata file registry, governed lease gate, stale-denial, wrong-target denial, and echo-filtered readback; live proof composes throwaway terminal `TextChanged_event` and isolated local browser UIA-class read/write without MCP; strict public-browser no-keyboard rerun remains separate |
+| Channel-router composition proof | Proven as redacted model proof plus live throwaway/local proof | `experiments/win32_probe/channel_router_composition_probe.py`, `experiments/win32_probe/results/channel_router_composition_PASS_redacted.json`, `experiments/win32_probe/results/channel_router_composition_LIVE_PASS_redacted.json`, `tests/test_channel_router_composition.py`, `docs/CHANNEL_ROUTER_COMPOSITION_PROOF.md`. Boundary: the recorded model selected terminal `WM_CHAR` for its CASCADIA fixture; current production auto routing is class-aware and uses `WriteConsoleInputW` for `ConsoleWindowClass`. The browser route remains UIA Value/Invoke |
 | TPM/CNG key use | Proven in experiment/enterprise lane | `experiments/win32_probe/CAPABILITY_BACKLOG.md`; full attestation pending |
 | TPM platform attestation | Pending | `NCryptCreateClaim` descriptor fix still required |
 | ETW provider smoke | Proven as isolated probe | `experiments/win32_probe/etw_provider.py`, `CAPABILITY_BACKLOG.md` |
@@ -47,9 +47,10 @@ not been live-tested or committed as a probe, it is marked as pending.
 
 The current defensible position is:
 
-> SelfConnect has proven an OS-native Windows AI mesh over desktop surfaces,
-> with guarded targeting, structured readback, echo suppression, role tracking,
-> local browser fixture control, and optional governed assurance probes.
+> SelfConnect has bounded proof for OS-native Windows terminal actuation over
+> class-selected transports, guarded targeting, structured readback, echo
+> suppression, role tracking, local browser fixture control, and optional
+> governed assurance probes.
 
 The current non-claims are:
 

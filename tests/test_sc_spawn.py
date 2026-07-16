@@ -51,12 +51,38 @@ class FakeSC:
     def get_window_text(self, hwnd):
         return self.console_text
 
-    def send_string(self, target, text, char_delay=0.05):
+    def send_string(self, target, text, char_delay=0.05, mode="auto"):
         self.sent.append(text)
+        return {
+            "ok": True,
+            "transport": "postmessage_wm_char",
+            "chars_accepted": len(text),
+            "delivery_evidence": "message_queue_acceptance_only",
+            "delivery_verified": False,
+        }
 
     def submit_claude_input(self, hwnd):
         self.submitted.append(hwnd)
         return True
+
+
+def test_ring_doorbell_submits_with_class_aware_transport(tmp_path, fake_sc):
+    task = type("TaskStub", (), {"task_id": "TSK-1"})()
+
+    sc_spawn._ring_doorbell(fake_sc.windows[0], tmp_path / "brief.md", task)
+
+    assert len(fake_sc.sent) == 1
+    assert fake_sc.sent[0].endswith("Your task id is TSK-1.\r")
+    assert str(tmp_path / "brief.md") in fake_sc.sent[0]
+    assert fake_sc.submitted == []
+
+
+def test_ring_doorbell_fails_closed_without_delivery_record(tmp_path, fake_sc):
+    fake_sc.send_string = lambda *args, **kwargs: None
+    task = type("TaskStub", (), {"task_id": "TSK-2"})()
+
+    with pytest.raises(RuntimeError, match="no delivery record"):
+        sc_spawn._ring_doorbell(fake_sc.windows[0], tmp_path / "brief.md", task)
 
 
 # ---------- worktree naming ----------

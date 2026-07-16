@@ -7,6 +7,26 @@ GitHub, without storing raw private transcripts or noisy local artifacts.
 
 ## Entries
 
+### 2026-07-15: PostMessage Acceptance Is Not Console Delivery
+
+- Context: a verified `ConsoleWindowClass` / `pwsh.exe` target returned true
+  from the send/PostMessage path, but no characters appeared. Receiver
+  self-send produced the same false positive.
+- Result: CLI and orchestration callers could report success after queue
+  acceptance without evidence that the console input buffer or application
+  received anything.
+- Decision: transport selection is tied to the guarded target class.
+  `ConsoleWindowClass` uses `WriteConsoleInputW`; tested CASCADIA keeps
+  exact-HWND `WM_CHAR`. No console failure falls back to PostMessage.
+- Fix: require complete console-record writes and explicit caller-console
+  restoration; return the actual transport and keep raw acceptance
+  `delivery_verified=false`. Official callers propagate failures.
+- Evidence: the redacted live proof passes only after an independent target
+  process effect, not message/API acceptance:
+  `experiments/win32_probe/results/console_input_transport_PASS_redacted.json`.
+- Blind spot: a universal receiver ACK and multi-tab Windows Terminal console
+  identity remain parked in `PARKED.md`.
+
 ### 2026-07-15: CI Must Install Capability Dependencies Before Exercising Them
 
 - Context: the Windows CI job ran the complete test directory but installed an

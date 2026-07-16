@@ -217,11 +217,20 @@ def decide(tool_call: Optional[str], cfg: PartnerConfig) -> Optional[bool]:
 
 # ── Response injection ────────────────────────────────────────────────────────
 
-def inject_response(win: WindowTarget, approve: bool, cfg: PartnerConfig) -> None:
-    """Send 'y' or 'n' to the terminal window via PostMessage(WM_CHAR)."""
+def inject_response(win: WindowTarget, approve: bool, cfg: PartnerConfig) -> dict[str, object]:
+    """Send an approval decision and return transport acceptance evidence."""
     char = "y\r" if approve else "n\r"
-    if not cfg.dry_run:
-        send_string(win, char)
+    if cfg.dry_run:
+        return {"ok": True, "transport": "dry_run", "delivery_verified": False}
+    delivery = send_string(win, char)
+    if isinstance(delivery, dict) and "ok" in delivery:
+        return delivery
+    return {
+        "ok": False,
+        "transport": "unknown",
+        "delivery_verified": False,
+        "error": "input transport returned no delivery record",
+    }
 
 
 def write_escalation(tool_call: Optional[str], prompt_text: str) -> None:
@@ -264,13 +273,27 @@ def run(cfg: PartnerConfig) -> None:
                 label = tool_call or "(unparsed tool)"
 
                 if decision is True:
-                    inject_response(win, approve=True, cfg=cfg)
+                    delivery = inject_response(win, approve=True, cfg=cfg)
+                    if delivery.get("ok") is not True:
+                        print(
+                            f"{tag} FAILED to approve via "
+                            f"{delivery.get('transport', 'unknown')}: "
+                            f"{delivery.get('error', 'input transport failed')}"
+                        )
+                        continue
                     verb = "WOULD approve" if cfg.dry_run else "Auto-approved"
                     print(f"{tag} {verb}: {label}  [{win.title[:50]}]")
                     seen_prompt[win.hwnd] = now
 
                 elif decision is False:
-                    inject_response(win, approve=False, cfg=cfg)
+                    delivery = inject_response(win, approve=False, cfg=cfg)
+                    if delivery.get("ok") is not True:
+                        print(
+                            f"{tag} FAILED to deny via "
+                            f"{delivery.get('transport', 'unknown')}: "
+                            f"{delivery.get('error', 'input transport failed')}"
+                        )
+                        continue
                     verb = "WOULD deny" if cfg.dry_run else "Auto-denied"
                     print(f"{tag} {verb}: {label}  [{win.title[:50]}]")
                     seen_prompt[win.hwnd] = now

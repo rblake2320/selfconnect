@@ -5,6 +5,17 @@ All notable changes to SelfConnect are documented here.
 ## [Unreleased]
 
 ### Fixed
+- `send_string(mode="auto")` now selects `WriteConsoleInputW` for
+  `ConsoleWindowClass` and retains exact-HWND `WM_CHAR` only for the tested
+  CASCADIA surface. It no longer treats a successful `PostMessageW` call as
+  delivery or falls back to that path after a console-write failure.
+- Console writes require an exact record count, explicitly restore the caller's
+  original console, and return structured transport/restoration evidence.
+  `sc_cli`, `sc_spawn`, and the repository peer-send helpers now propagate
+  failures instead of printing unconditional success.
+- Added a redacted live proof that requires an independent receiver process
+  effect after a guarded `ConsoleWindowClass` write; API acceptance alone
+  cannot pass it.
 - CI now installs the package with its declared `service` extra before running
   the real Windows IOCP, overlapped named-pipe, Fabric service, and service
   benchmark tests. The previous workflow ran those tests without `pywin32`, so

@@ -189,9 +189,17 @@ def cmd_send_string(label, text):
     if not w:
         return f"ERROR: window not found for {label!r}"
     try:
-        send_string(w, text + ("\r" if not text.endswith("\r") else ""))
-        preview = repr(text[:50])
-        return f"send_string({label}={w.hwnd}, {preview}) OK"
+        delivery = send_string(w, text + ("\r" if not text.endswith("\r") else ""))
+        if delivery.get("ok") is not True:
+            return (
+                f"send_string({label}={w.hwnd}) FAILED via "
+                f"{delivery.get('transport', 'unknown')}: "
+                f"{delivery.get('error', 'input transport failed')}"
+            )
+        return (
+            f"send_string({label}={w.hwnd}) ACCEPTED via {delivery['transport']}; "
+            "receiver delivery not verified"
+        )
     except Exception as e:
         return f"send_string error: {e}"
 
@@ -201,8 +209,13 @@ def cmd_send_frame_msg(label, msg):
     if not w:
         return f"ERROR: window not found for {label!r}"
     try:
-        send_frame(w, LABEL_MAP["A"], msg, topic="spark2-relay")
-        return f"send_frame({label}={w.hwnd}) OK: {msg[:80]}"
+        delivery = send_frame(w, LABEL_MAP["A"], msg, topic="spark2-relay")
+        if delivery.get("transport_accepted") is not True:
+            return f"send_frame({label}={w.hwnd}) FAILED: {delivery.get('error', 'input failed')}"
+        return (
+            f"send_frame({label}={w.hwnd}) ACCEPTED via {delivery['transport']}; "
+            "receiver delivery not verified"
+        )
     except Exception as e:
         return f"send_frame error: {e}"
 

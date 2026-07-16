@@ -1,0 +1,27 @@
+{
+  "caller_console_restored": true,
+  "class_name": "ConsoleWindowClass",
+  "delivery_verified": true,
+  "elapsed_ms": 420.957,
+  "exe_name": "cmd.exe",
+  "guard_ok": true,
+  "hwnd": 7343352,
+  "independent_process_effect": true,
+  "pid": 12548,
+  "reason": "",
+  "records_requested": 280,
+  "records_written": 280,
+  "redacted": true,
+  "sentinel_hash": "3e50aec8d728467bbaa53b9ec17d3f5cb57b77cd4dbd53dfb8da8ac812cfbce8",
+  "sources": [
+    "Microsoft PostMessageW documentation: return precedes message processing",
+    "Microsoft WriteConsoleInput documentation: records are written to a console input buffer",
+    "SelfConnect guarded send plus independent target-process marker verification"
+  ],
+  "spawned_throwaway": true,
+  "title_hash": "ffa69ecd47ad92f2cc85fe38a3fd2b74889bc0347b318b271c9663fe95300045",
+  "transport": "win32_console_input",
+  "transport_accepted": true,
+  "verdict": "PASS",
+  "verified_at": "2026-07-16T01:51:37.339632+00:00"
+}

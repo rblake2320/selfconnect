@@ -343,6 +343,7 @@ def send_text_to_window(
     *,
     submit: bool = False,
     char_delay: float = 0.05,
+    transport: str = "auto",
     allow_input: bool = False,
     env_name: str = "SELFCONNECT_ALLOW_INPUT",
     expected_pid: int | None = None,
@@ -419,16 +420,30 @@ def send_text_to_window(
         return {"ok": False, "hwnd": hwnd, "error": "window disappeared after verification"}
 
     payload = text + ("\r" if submit else "")
-    sc.send_string(target, payload, char_delay=char_delay)
+    delivery = sc.send_string(target, payload, char_delay=char_delay, mode=transport)
+    if not isinstance(delivery, dict) or "ok" not in delivery:
+        return {
+            "ok": False,
+            "hwnd": hwnd,
+            "error": "input transport returned no delivery record",
+            "guard": guard,
+        }
     result: dict[str, Any] = {
-        "ok": True,
+        "ok": bool(delivery["ok"]),
         "hwnd": hwnd,
         "pid": target.pid,
         "exe_name": target.exe_name,
         "title": target.title,
-        "chars_sent": len(payload),
+        "transport": delivery.get("transport", "unknown"),
+        "chars_requested": len(payload),
+        "chars_accepted": int(delivery.get("chars_accepted", 0)),
+        "delivery_evidence": delivery.get("delivery_evidence", "none"),
+        "delivery_verified": bool(delivery.get("delivery_verified", False)),
+        "delivery": delivery,
         "guard": guard,
     }
+    if not result["ok"]:
+        result["error"] = "input transport failed"
     if lease_gate_dict is not None:
         result["lease_gate"] = lease_gate_dict
     return result
@@ -494,6 +509,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--text", required=True)
     p.add_argument("--submit", action="store_true", help="append Enter")
     p.add_argument("--char-delay", type=float, default=0.05)
+    p.add_argument(
+        "--transport",
+        choices=("auto", "console", "postmessage"),
+        default="auto",
+        help="native input transport; auto is class-aware and fail-closed",
+    )
     p.add_argument("--allow-input", action="store_true", help="required unless SELFCONNECT_ALLOW_INPUT=1")
     p.add_argument("--expect-pid", type=int, default=None)
     p.add_argument("--expect-exe", default="")
@@ -552,11 +573,12 @@ def main(argv: list[str] | None = None) -> int:
             ))
 
         if args.command == "send":
-            return _print_json(send_text_to_window(
+            result = send_text_to_window(
                 args.hwnd,
                 args.text,
                 submit=args.submit,
                 char_delay=args.char_delay,
+                transport=args.transport,
                 allow_input=args.allow_input,
                 expected_pid=args.expect_pid,
                 expected_exe=args.expect_exe,
@@ -565,7 +587,9 @@ def main(argv: list[str] | None = None) -> int:
                 confirm_current_target=args.confirm_current_target,
                 require_terminal=not args.allow_non_terminal,
                 own_pid=args.own_pid,
-            ))
+            )
+            _print_json(result)
+            return 0 if result.get("ok") is True else 1
 
         parser.error(f"unknown command: {args.command}")
         return 2

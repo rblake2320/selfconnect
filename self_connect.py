@@ -7,7 +7,8 @@ without UIA accessibility frameworks, without full-screen capture.
 
 Capabilities:
   - Find windows by exe, class, or fuzzy title (semantic targeting)
-  - Type into any window via PostMessage(WM_CHAR) or SendInput — background OK
+  - Select a target-specific text path: WM_CHAR for tested Windows Terminal
+    surfaces, console input records for legacy consoles, or foreground SendInput
   - Send key combos (Ctrl+C, Alt+Tab, etc.) via virtual key codes
   - Capture per-window screenshots via PrintWindow — no foreground needed
   - Click at absolute or window-relative coordinates
@@ -166,15 +167,19 @@ TOKEN_ELEVATION_TYPE = 18
 
 WT_HOST_CLASS  = "CASCADIA_HOSTING_WINDOW_CLASS"
 WT_INPUT_CLASS = "Windows.UI.Input.InputSite.WindowClass"
+CONSOLE_HOST_CLASS = "ConsoleWindowClass"
 
 # ── Why PostMessage works for Windows Terminal but not UWP Notepad ────────────
 #
-# Windows Terminal (CASCADIA_HOSTING_WINDOW_CLASS) routes WM_CHAR / WM_KEYDOWN
-# messages through ConPTY — the Windows pseudo-terminal layer — to the hosted
-# console process (cmd.exe, PowerShell, Claude Code, etc.). ConPTY accepts these
-# messages WITHOUT requiring the window to be in the foreground. PostMessage
-# delivers to the target's message queue regardless of foreground state, and
-# ConPTY forwards the character to the hosted app via its PTY pipe.
+# The tested Windows Terminal CASCADIA surface accepts WM_CHAR posts without
+# requiring foreground focus. A successful PostMessage call proves only that
+# the message was queued; independent readback is still required to establish
+# that the hosted application consumed or displayed the character.
+#
+# Traditional ConsoleWindowClass targets are different. Their reliable native
+# path is WriteConsoleInputW against the target console's CONIN$ buffer. Posting
+# WM_CHAR to the console window can succeed at the queue layer while placing no
+# character in the terminal input surface.
 #
 # UWP Notepad uses DirectWrite + RichEditD2DPT for text rendering. RichEditD2DPT
 # ignores WM_CHAR PostMessage — it only accepts input via its TSF (Text Services
@@ -182,12 +187,10 @@ WT_INPUT_CLASS = "Windows.UI.Input.InputSite.WindowClass"
 # This is why WM_CHAR works for Terminal but silently fails for modern Notepad.
 #
 # Rule of thumb:
-#   Terminal-style apps (ConPTY-hosted)  → WM_CHAR/WM_KEYDOWN via PostMessage ✓
+#   Windows Terminal CASCADIA surface    → WM_CHAR via PostMessage
+#   Traditional ConsoleWindowClass       → WriteConsoleInputW to CONIN$
 #   DirectWrite/RichEdit D2D apps        → must use SendInput with focus, or file I/O
 #   Classic Win32 edit controls          → SendInput KEYEVENTF_UNICODE ✓
-#
-# The foreground independence of PostMessage to ConPTY windows is the foundation
-# of Patent Claim 2: AI-to-AI instruction via background window keyboard injection.
 
 user32   = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -372,16 +375,14 @@ class BITMAPINFOHEADER(ctypes.Structure):
 # and ReadConsoleOutputW reads the console screen buffer directly without walking
 # the UIA accessibility tree. Both are background-safe.
 #
-# CAVEAT: these AttachConsole to the target's console host, which requires the
-# caller to FreeConsole() its own console for the duration (serialized by
-# _console_lock, restored to the parent console afterward). This is contained to
-# the short-lived injector process in the normal `python -c "..."` usage pattern.
-# send_string(mode="auto") tries this path first and falls back to PostMessage on
-# any failure, so it can never hard-fail relative to the legacy behavior.
+# CAVEAT: cross-console writes temporarily detach the caller from its console.
+# The writer snapshots the caller's console membership, restores an explicit
+# original PID, and reports failure if restoration fails. Auto mode selects this
+# path only for ConsoleWindowClass. It never hides a console-write failure by
+# falling back to PostMessage, whose successful return proves queueing only.
 
 _console_lock = threading.Lock()
 
-ATTACH_PARENT_PROCESS_CONST = 0xFFFFFFFF
 KEY_EVENT_TYPE = 0x0001
 
 # Explicit prototypes so 64-bit console handles are not truncated (the upstream
@@ -394,6 +395,12 @@ kernel32.CreateFileW.argtypes = [
 kernel32.AttachConsole.restype = wintypes.BOOL
 kernel32.AttachConsole.argtypes = [wintypes.DWORD]
 kernel32.FreeConsole.restype = wintypes.BOOL
+kernel32.GetConsoleProcessList.restype = wintypes.DWORD
+kernel32.GetConsoleProcessList.argtypes = [ctypes.POINTER(wintypes.DWORD), wintypes.DWORD]
+kernel32.GetCurrentProcessId.restype = wintypes.DWORD
+kernel32.GetCurrentProcessId.argtypes = []
+kernel32.GetLastError.restype = wintypes.DWORD
+kernel32.GetLastError.argtypes = []
 kernel32.CloseHandle.restype = wintypes.BOOL
 kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 
@@ -487,65 +494,236 @@ def _resolve_console_pid(target: "WindowTarget") -> int:
     return target.pid
 
 
-def _write_console_input(target_pid: int, text: str) -> bool:
-    """Write text to a process's console input buffer via WriteConsoleInputW.
+def _console_process_ids() -> tuple[list[int], int]:
+    """Return PIDs attached to the caller's current console and a Win32 error.
 
-    Background-safe. One syscall for the entire string — no per-character sleep.
-    Delivers real stdin key events (including Enter via VK_RETURN), so it also
-    submits in stdin-reading TUIs. Returns True on success, False on any failure
-    (caller falls back to PostMessage).
+    An empty list with error 0 means the caller has no console. Other errors are
+    surfaced because detaching without a known restoration target is unsafe.
     """
-    if not text:
-        return True
+    size = 8
+    while size <= 4096:
+        buffer = (wintypes.DWORD * size)()
+        count = int(kernel32.GetConsoleProcessList(buffer, size))
+        if count == 0:
+            error = int(kernel32.GetLastError())
+            if error == 6:  # ERROR_INVALID_HANDLE: process has no console
+                return [], 0
+            return [], error
+        if count <= size:
+            return [int(buffer[index]) for index in range(count)], 0
+        size = count
+    return [], 122  # ERROR_INSUFFICIENT_BUFFER
 
+
+def _console_write_result(
+    *,
+    ok: bool,
+    target_pid: int,
+    records_requested: int,
+    records_written: int = 0,
+    error: str = "",
+    winerror: int = 0,
+    caller_console_restored: bool = True,
+    restoration_method: str = "unchanged",
+) -> dict[str, object]:
+    return {
+        "ok": bool(ok),
+        "transport": "win32_console_input",
+        "target_pid": int(target_pid),
+        "records_requested": int(records_requested),
+        "records_written": int(records_written),
+        "error": str(error),
+        "winerror": int(winerror),
+        "caller_console_restored": bool(caller_console_restored),
+        "restoration_method": str(restoration_method),
+        "delivery_evidence": "console_input_records_written" if ok else "none",
+        "delivery_verified": False,
+    }
+
+
+def _restore_console(candidates: list[int]) -> tuple[bool, int, str]:
+    for candidate in candidates:
+        if kernel32.AttachConsole(wintypes.DWORD(candidate)):
+            return True, 0, f"pid:{candidate}"
+    return False, int(kernel32.GetLastError()), "failed"
+
+
+def _build_console_input_records(text: str) -> ctypes.Array:
     records = []
     for ch in text:
         vk = scan = 0
         if ch in ("\r", "\n"):
             vk, scan = VK_RETURN, 0x1C
         for down in (True, False):
-            rec = _INPUT_RECORD()
-            rec.EventType = KEY_EVENT_TYPE
-            rec.Event.KeyEvent.bKeyDown = down
-            rec.Event.KeyEvent.wRepeatCount = 1
-            rec.Event.KeyEvent.wVirtualKeyCode = vk
-            rec.Event.KeyEvent.wVirtualScanCode = scan
-            rec.Event.KeyEvent.uChar.UnicodeChar = ch
-            rec.Event.KeyEvent.dwControlKeyState = 0
-            records.append(rec)
+            record = _INPUT_RECORD()
+            record.EventType = KEY_EVENT_TYPE
+            record.Event.KeyEvent.bKeyDown = down
+            record.Event.KeyEvent.wRepeatCount = 1
+            record.Event.KeyEvent.wVirtualKeyCode = vk
+            record.Event.KeyEvent.wVirtualScanCode = scan
+            record.Event.KeyEvent.uChar.UnicodeChar = ch
+            record.Event.KeyEvent.dwControlKeyState = 0
+            records.append(record)
+    return (_INPUT_RECORD * len(records))(*records)
 
-    arr = (_INPUT_RECORD * len(records))(*records)
-    written = wintypes.DWORD(0)
+
+def _write_console_input_result(target_pid: int, text: str) -> dict[str, object]:
+    """Write input records to a target console with explicit restoration state.
+
+    The write is fail-closed: all records must be accepted and a caller that was
+    attached to another console must be reattached before success is reported.
+    The result establishes an OS console-buffer write, not application-level
+    consumption or visual delivery.
+    """
+    target_pid = int(target_pid)
+    records = _build_console_input_records(text)
+    requested = len(records)
+    if requested == 0:
+        return _console_write_result(ok=True, target_pid=target_pid, records_requested=0)
+    if target_pid <= 0:
+        return _console_write_result(
+            ok=False,
+            target_pid=target_pid,
+            records_requested=requested,
+            error="invalid_target_pid",
+        )
 
     with _console_lock:
-        kernel32.FreeConsole()
-        if not kernel32.AttachConsole(wintypes.DWORD(target_pid)):
-            kernel32.AttachConsole(wintypes.DWORD(ATTACH_PARENT_PROCESS_CONST))
-            return False
-        try:
-            # GetStdHandle is stale after AttachConsole — open CONIN$ directly.
-            GENERIC_READ  = 0x80000000
-            GENERIC_WRITE = 0x40000000
-            OPEN_EXISTING = 3
-            FILE_SHARE_READ_WRITE = 0x03
-            h_stdin = kernel32.CreateFileW(
-                "CONIN$", GENERIC_READ | GENERIC_WRITE,
-                FILE_SHARE_READ_WRITE, None, OPEN_EXISTING, 0, None,
+        original_pids, snapshot_error = _console_process_ids()
+        if snapshot_error:
+            return _console_write_result(
+                ok=False,
+                target_pid=target_pid,
+                records_requested=requested,
+                error="caller_console_snapshot_failed",
+                winerror=snapshot_error,
             )
-            if not h_stdin or h_stdin == wintypes.HANDLE(-1).value:
-                return False
-            try:
-                ok = kernel32.WriteConsoleInputW(
-                    h_stdin, arr, len(records), ctypes.byref(written)
+
+        current_pid = int(kernel32.GetCurrentProcessId())
+        restore_candidates = [pid for pid in original_pids if pid != current_pid]
+        same_console = target_pid in original_pids
+        if original_pids and not same_console and not restore_candidates:
+            return _console_write_result(
+                ok=False,
+                target_pid=target_pid,
+                records_requested=requested,
+                error="caller_console_restore_target_unavailable",
+            )
+
+        switched_console = False
+        if not same_console:
+            if original_pids and not kernel32.FreeConsole():
+                return _console_write_result(
+                    ok=False,
+                    target_pid=target_pid,
+                    records_requested=requested,
+                    error="caller_console_detach_failed",
+                    winerror=int(kernel32.GetLastError()),
+                    caller_console_restored=True,
                 )
-                return bool(ok) and written.value > 0
-            finally:
-                kernel32.CloseHandle(h_stdin)
-        except Exception:
-            return False
-        finally:
-            kernel32.FreeConsole()
-            kernel32.AttachConsole(wintypes.DWORD(ATTACH_PARENT_PROCESS_CONST))
+            if not kernel32.AttachConsole(wintypes.DWORD(target_pid)):
+                attach_error = int(kernel32.GetLastError())
+                restored = True
+                restore_error = 0
+                restore_method = "not_attached"
+                if original_pids:
+                    restored, restore_error, restore_method = _restore_console(restore_candidates)
+                return _console_write_result(
+                    ok=False,
+                    target_pid=target_pid,
+                    records_requested=requested,
+                    error=(
+                        "target_console_attach_failed"
+                        if restored
+                        else "target_attach_and_caller_restore_failed"
+                    ),
+                    winerror=restore_error or attach_error,
+                    caller_console_restored=restored,
+                    restoration_method=restore_method,
+                )
+            switched_console = True
+
+        written = wintypes.DWORD(0)
+        operation_ok = False
+        operation_error = ""
+        operation_winerror = 0
+        try:
+            generic_read = 0x80000000
+            generic_write = 0x40000000
+            open_existing = 3
+            share_read_write = 0x03
+            handle = kernel32.CreateFileW(
+                "CONIN$",
+                generic_read | generic_write,
+                share_read_write,
+                None,
+                open_existing,
+                0,
+                None,
+            )
+            if not handle or handle == wintypes.HANDLE(-1).value:
+                operation_error = "console_input_open_failed"
+                operation_winerror = int(kernel32.GetLastError())
+            else:
+                try:
+                    api_ok = bool(kernel32.WriteConsoleInputW(
+                        handle,
+                        records,
+                        requested,
+                        ctypes.byref(written),
+                    ))
+                    if not api_ok:
+                        operation_error = "console_input_write_failed"
+                        operation_winerror = int(kernel32.GetLastError())
+                    elif int(written.value) != requested:
+                        operation_error = "console_input_partial_write"
+                    else:
+                        operation_ok = True
+                finally:
+                    kernel32.CloseHandle(handle)
+        except Exception as exc:
+            operation_error = f"console_input_exception:{type(exc).__name__}"
+
+        restored = True
+        restore_error = 0
+        restore_method = "same_console" if same_console else "not_attached"
+        if switched_console:
+            detached = bool(kernel32.FreeConsole())
+            if not detached:
+                restored = False
+                restore_error = int(kernel32.GetLastError())
+                restore_method = "target_detach_failed"
+            elif original_pids:
+                restored, restore_error, restore_method = _restore_console(restore_candidates)
+            else:
+                restore_method = "originally_unattached"
+
+        if not restored:
+            return _console_write_result(
+                ok=False,
+                target_pid=target_pid,
+                records_requested=requested,
+                records_written=int(written.value),
+                error="caller_console_restore_failed",
+                winerror=restore_error,
+                caller_console_restored=False,
+                restoration_method=restore_method,
+            )
+        return _console_write_result(
+            ok=operation_ok,
+            target_pid=target_pid,
+            records_requested=requested,
+            records_written=int(written.value),
+            error=operation_error,
+            winerror=operation_winerror,
+            caller_console_restored=True,
+            restoration_method=restore_method,
+        )
+
+
+def _write_console_input(target_pid: int, text: str) -> bool:
+    """Compatibility wrapper returning only console-write success."""
+    return bool(_write_console_input_result(target_pid, text)["ok"])
 
 
 def _read_console_output(target_pid: int) -> Optional[str]:
@@ -553,13 +731,31 @@ def _read_console_output(target_pid: int) -> Optional[str]:
 
     Background-safe and much faster than get_text_uia() for ConPTY windows
     (no COM, no accessibility-tree walk). Returns the visible text grid, or
-    None on failure (caller falls back to UIA extraction).
+    None on failure (caller falls back to UIA extraction). Cross-console reads
+    use the same explicit caller-console restoration discipline as writes.
     """
     with _console_lock:
-        kernel32.FreeConsole()
-        if not kernel32.AttachConsole(wintypes.DWORD(target_pid)):
-            kernel32.AttachConsole(wintypes.DWORD(ATTACH_PARENT_PROCESS_CONST))
+        original_pids, snapshot_error = _console_process_ids()
+        if snapshot_error:
             return None
+
+        current_pid = int(kernel32.GetCurrentProcessId())
+        restore_candidates = [pid for pid in original_pids if pid != current_pid]
+        same_console = int(target_pid) in original_pids
+        if original_pids and not same_console and not restore_candidates:
+            return None
+
+        switched_console = False
+        if not same_console:
+            if original_pids and not kernel32.FreeConsole():
+                return None
+            if not kernel32.AttachConsole(wintypes.DWORD(target_pid)):
+                if original_pids:
+                    _restore_console(restore_candidates)
+                return None
+            switched_console = True
+
+        output: Optional[str] = None
         try:
             GENERIC_READ  = 0x80000000
             GENERIC_WRITE = 0x40000000
@@ -569,41 +765,44 @@ def _read_console_output(target_pid: int) -> Optional[str]:
                 "CONOUT$", GENERIC_READ | GENERIC_WRITE,
                 FILE_SHARE_READ_WRITE, None, OPEN_EXISTING, 0, None,
             )
-            if not h_out or h_out == wintypes.HANDLE(-1).value:
-                return None
-            try:
-                csbi = _CONSOLE_SCREEN_BUFFER_INFO()
-                if not kernel32.GetConsoleScreenBufferInfo(h_out, ctypes.byref(csbi)):
-                    return None
-                win = csbi.srWindow
-                width  = win.Right  - win.Left + 1
-                height = win.Bottom - win.Top  + 1
-                if width <= 0 or height <= 0:
-                    return None
-                buf_size  = _COORD(width, height)
-                buf_coord = _COORD(0, 0)
-                region    = _SMALL_RECT(win.Left, win.Top, win.Right, win.Bottom)
-                buf = (_CHAR_INFO * (width * height))()
-                if not kernel32.ReadConsoleOutputW(
-                    h_out, buf, buf_size, buf_coord, ctypes.byref(region)
-                ):
-                    return None
-                lines = []
-                for row in range(height):
-                    line = "".join(
-                        buf[row * width + col].Char.UnicodeChar for col in range(width)
-                    ).rstrip()
-                    lines.append(line)
-                while lines and not lines[-1]:
-                    lines.pop()
-                return "\n".join(lines)
-            finally:
-                kernel32.CloseHandle(h_out)
+            if h_out and h_out != wintypes.HANDLE(-1).value:
+                try:
+                    csbi = _CONSOLE_SCREEN_BUFFER_INFO()
+                    if kernel32.GetConsoleScreenBufferInfo(h_out, ctypes.byref(csbi)):
+                        win = csbi.srWindow
+                        width = win.Right - win.Left + 1
+                        height = win.Bottom - win.Top + 1
+                        if width > 0 and height > 0:
+                            buf_size = _COORD(width, height)
+                            buf_coord = _COORD(0, 0)
+                            region = _SMALL_RECT(win.Left, win.Top, win.Right, win.Bottom)
+                            buf = (_CHAR_INFO * (width * height))()
+                            if kernel32.ReadConsoleOutputW(
+                                h_out, buf, buf_size, buf_coord, ctypes.byref(region)
+                            ):
+                                lines = []
+                                for row in range(height):
+                                    line = "".join(
+                                        buf[row * width + col].Char.UnicodeChar
+                                        for col in range(width)
+                                    ).rstrip()
+                                    lines.append(line)
+                                while lines and not lines[-1]:
+                                    lines.pop()
+                                output = "\n".join(lines)
+                finally:
+                    kernel32.CloseHandle(h_out)
         except Exception:
-            return None
+            output = None
         finally:
-            kernel32.FreeConsole()
-            kernel32.AttachConsole(wintypes.DWORD(ATTACH_PARENT_PROCESS_CONST))
+            if switched_console:
+                detached = bool(kernel32.FreeConsole())
+                restored = detached
+                if detached and original_pids:
+                    restored, _, _ = _restore_console(restore_candidates)
+                if not restored:
+                    output = None
+        return output
 
 
 def read_console_fast(target: "WindowTarget") -> Optional[str]:
@@ -840,27 +1039,16 @@ def focus_window(hwnd: int) -> bool:
 
 
 # ── Input delivery ────────────────────────────────────────────────────────────
-def _send_char_postmessage(hwnd: int, ch: str) -> None:
-    """
-    PostMessage WM_CHAR/WM_KEYDOWN to a ConPTY-backed window (Windows Terminal).
-
-    For Enter (\r or \n): sends WM_KEYDOWN + WM_KEYUP with VK_RETURN.
-    ConPTY also accepts WM_CHAR(0x0D) for Enter, but WM_KEYDOWN is more reliable
-    across terminal emulator versions.
-
-    For all other chars: PostMessage(WM_CHAR, ord(ch), 0).
-    No foreground focus required — PostMessage delivers to the message queue.
-    """
-    if ch in ("\n", "\r"):
-        user32.PostMessageW(hwnd, WM_KEYDOWN,   VK_RETURN, 0)
-        user32.PostMessageW(hwnd, WM_KEYUP_MSG, VK_RETURN, 0)
-    else:
-        user32.PostMessageW(hwnd, WM_CHAR, ord(ch), 0)
+def _send_char_postmessage(hwnd: int, ch: str) -> bool:
+    """Post one WM_CHAR and report queue acceptance, not delivery."""
+    value = "\r" if ch == "\n" else ch
+    return bool(user32.PostMessageW(hwnd, WM_CHAR, ord(value), 0))
 
 
-def _send_char_sendinput(ch: str) -> None:
+def _send_char_sendinput(ch: str) -> bool:
     """SendInput KEYEVENTF_UNICODE — for traditional Win32 windows."""
     extra = ctypes.pointer(ctypes.c_ulong(0))
+    inserted = 0
     for flag in (0, KEYEVENTF_KEYUP):
         inp = INPUT()
         inp.type = INPUT_KEYBOARD
@@ -869,65 +1057,154 @@ def _send_char_sendinput(ch: str) -> None:
         inp.u.ki.dwFlags = (KEYEVENTF_UNICODE if ch not in ("\n", "\r") else 0) | flag
         inp.u.ki.time = 0
         inp.u.ki.dwExtraInfo = extra
-        user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+        inserted += int(user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT)))
+    return inserted == 2
+
+
+def _input_delivery_result(
+    *,
+    ok: bool,
+    target: WindowTarget,
+    transport: str,
+    chars_requested: int,
+    chars_accepted: int,
+    delivery_evidence: str,
+    error: str = "",
+    winerror: int = 0,
+    **extra: object,
+) -> dict[str, object]:
+    return {
+        "ok": bool(ok),
+        "transport": transport,
+        "target_hwnd": int(target.hwnd),
+        "target_pid": int(target.pid),
+        "chars_requested": int(chars_requested),
+        "chars_accepted": int(chars_accepted),
+        "delivery_evidence": delivery_evidence,
+        "delivery_verified": False,
+        "error": error,
+        "winerror": int(winerror),
+        **extra,
+    }
 
 
 def send_string(target: WindowTarget, text: str, char_delay: float = 0.05,
-                mode: str = "postmessage") -> None:
+                mode: str = "auto") -> dict[str, object]:
+    """Send text through a target-specific native input transport.
+
+    ``auto`` uses WriteConsoleInputW for ``ConsoleWindowClass``, exact-HWND
+    WM_CHAR for the tested CASCADIA surface, and foreground SendInput for other
+    windows. Explicit console or PostMessage modes reject incompatible classes.
+
+    The returned record describes transport acceptance. It deliberately keeps
+    ``delivery_verified`` false until an independent readback or ACK observes
+    receiver state. In particular, PostMessage success establishes only that a
+    message was placed in the target thread queue.
     """
-    Send text to the target window. Auto-selects delivery method.
+    normalized_mode = str(mode).strip().lower()
+    if normalized_mode not in {"auto", "console", "postmessage"}:
+        return _input_delivery_result(
+            ok=False,
+            target=target,
+            transport="none",
+            chars_requested=len(text),
+            chars_accepted=0,
+            delivery_evidence="none",
+            error="unsupported_transport_mode",
+        )
 
-    Modes (default "postmessage" — the safe, per-hwnd-targeted legacy path):
-      - "postmessage": per-character PostMessage(WM_CHAR) / SendInput. Targets the
-                       exact window handle, so it always reaches the intended tab.
-                       Byte-for-byte the pre-v0.11.0 behavior. This is the correct
-                       default for the multi-agent mesh.
-      - "console":     WriteConsoleInput fast path — the entire string in one
-                       syscall, no per-character sleep (100x+ faster for long
-                       briefings), and delivers a real Enter that submits in
-                       stdin-reading TUIs. Falls back to PostMessage on failure.
-      - "auto":        same as "console" but always falls back to PostMessage.
+    is_cascadia = target.class_name == WT_HOST_CLASS
+    is_legacy_console = target.class_name == CONSOLE_HOST_CLASS
+    if normalized_mode == "console" and not is_legacy_console:
+        return _input_delivery_result(
+            ok=False,
+            target=target,
+            transport="win32_console_input",
+            chars_requested=len(text),
+            chars_accepted=0,
+            delivery_evidence="none",
+            error="console_transport_requires_consolewindowclass",
+        )
+    if normalized_mode == "postmessage" and not is_cascadia:
+        return _input_delivery_result(
+            ok=False,
+            target=target,
+            transport="postmessage_wm_char",
+            chars_requested=len(text),
+            chars_accepted=0,
+            delivery_evidence="none",
+            error="postmessage_transport_requires_cascadia",
+        )
 
-    ⚠️  CONSOLE-PATH TARGETING CAVEAT: the console path resolves a target by PID,
-    not window handle. On Windows 11, all Windows Terminal tabs share ONE
-    WindowsTerminal.exe PID, and _resolve_console_pid picks the first OpenConsole
-    child — which is NOT reliably the tab you meant when multiple tabs/windows are
-    open. Use "console"/"auto" only when the target has a single, unambiguous
-    console (e.g. a directly-spawned Codex/cmd with its own conhost). For the
-    general mesh, keep the default "postmessage".
+    if is_legacy_console:
+        console_result = _write_console_input_result(target.pid, text)
+        return _input_delivery_result(
+            ok=bool(console_result["ok"]),
+            target=target,
+            transport=str(console_result["transport"]),
+            chars_requested=len(text),
+            chars_accepted=len(text) if console_result["ok"] else 0,
+            delivery_evidence=str(console_result["delivery_evidence"]),
+            error=str(console_result["error"]),
+            winerror=int(console_result["winerror"]),
+            records_requested=console_result["records_requested"],
+            records_written=console_result["records_written"],
+            caller_console_restored=console_result["caller_console_restored"],
+            restoration_method=console_result["restoration_method"],
+        )
 
-    Delivery details:
-    - Windows Terminal (CASCADIA_HOSTING_WINDOW_CLASS): PostMessage(WM_CHAR) to
-      the InputSite child, routed through ConPTY. Does NOT require foreground
-      focus — the target window can be visible but NOT the active window.
-      Include '\\r' in the text string to send Enter (wParam=0x0D via WM_CHAR,
-      or WM_KEYDOWN/VK_RETURN — both work through ConPTY).
-    - Classic Win32 windows: SendInput(KEYEVENTF_UNICODE). DOES require the
-      target window to have foreground focus.
-
-    Verified: one Claude session can inject text into another Claude session's
-    terminal window without stealing foreground focus (2026-04-30 live proof).
-    """
-    # Console fast path — direct WriteConsoleInput, no per-character delay.
-    if mode in ("auto", "console"):
-        try:
-            if _write_console_input(_resolve_console_pid(target), text):
-                return
-        except Exception:
-            pass
-        if mode == "console":
-            return  # console-only: no fallback
-
-    if target.is_uwp_terminal():
+    if is_cascadia:
         input_site = find_child_by_class(target.hwnd, WT_INPUT_CLASS)
-        delivery = input_site if input_site else target.hwnd
-        for ch in text:
-            _send_char_postmessage(delivery, ch)
+        delivery_hwnd = input_site if input_site else target.hwnd
+        accepted = 0
+        for character in text:
+            if not _send_char_postmessage(delivery_hwnd, character):
+                return _input_delivery_result(
+                    ok=False,
+                    target=target,
+                    transport="postmessage_wm_char",
+                    chars_requested=len(text),
+                    chars_accepted=accepted,
+                    delivery_evidence="message_queue_acceptance_only",
+                    error="postmessage_queue_rejected",
+                    winerror=int(kernel32.GetLastError()),
+                    delivery_hwnd=int(delivery_hwnd),
+                )
+            accepted += 1
             time.sleep(char_delay)
-    else:
-        for ch in text:
-            _send_char_sendinput(ch)
-            time.sleep(char_delay)
+        return _input_delivery_result(
+            ok=True,
+            target=target,
+            transport="postmessage_wm_char",
+            chars_requested=len(text),
+            chars_accepted=accepted,
+            delivery_evidence="message_queue_acceptance_only",
+            delivery_hwnd=int(delivery_hwnd),
+        )
+
+    accepted = 0
+    for character in text:
+        if not _send_char_sendinput(character):
+            return _input_delivery_result(
+                ok=False,
+                target=target,
+                transport="sendinput_unicode",
+                chars_requested=len(text),
+                chars_accepted=accepted,
+                delivery_evidence="sendinput_acceptance_only",
+                error="sendinput_rejected",
+                winerror=int(kernel32.GetLastError()),
+            )
+        accepted += 1
+        time.sleep(char_delay)
+    return _input_delivery_result(
+        ok=True,
+        target=target,
+        transport="sendinput_unicode",
+        chars_requested=len(text),
+        chars_accepted=accepted,
+        delivery_evidence="sendinput_acceptance_only",
+    )
 
 
 # VK name lookup for send_keys
@@ -1766,12 +2043,18 @@ class WindowPool:
     def get(self, name: str) -> Optional[WindowTarget]:
         return self.targets.get(name)
 
-    def send_to(self, name: str, text: str, char_delay: float = 0.05) -> None:
-        """Type text into a named window (no foreground focus required for UWP)."""
+    def send_to(self, name: str, text: str, char_delay: float = 0.05) -> dict[str, object]:
+        """Type text into a named window or raise on transport rejection."""
         t = self.targets.get(name)
         if not t:
             raise KeyError(f"No window named '{name}' in pool")
-        send_string(t, text, char_delay)
+        delivery = send_string(t, text, char_delay)
+        if delivery.get("ok") is not True:
+            raise RuntimeError(
+                f"input failed via {delivery.get('transport', 'unknown')}: "
+                f"{delivery.get('error', 'input transport failed')}"
+            )
+        return delivery
 
     def capture_all(self, crop: bool = True) -> "dict[str, object]":
         """Capture all registered windows. Returns {name: PIL.Image | None}."""
@@ -2076,8 +2359,16 @@ def send_frame(target, from_hwnd: int, payload: str,
     """
     to_hwnd = target.hwnd if hasattr(target, "hwnd") else target
     frame = build_frame(from_hwnd, to_hwnd, payload, topic, seq)
-    send_string(target, frame, char_delay=char_delay)
     header = _json.loads(frame[1:frame.index(_NUL)])
+    delivery = send_string(target, frame, char_delay=char_delay)
+    header["transport"] = delivery.get("transport", "unknown")
+    header["transport_accepted"] = delivery.get("ok") is True
+    header["delivery_verified"] = False
+    if not header["transport_accepted"]:
+        header["error"] = delivery.get("error", "input transport failed")
+        if ack:
+            header["acked"] = False
+        return header
     if not ack:
         return header
     # ACK loop: verify delivery, retry on failure
@@ -2085,11 +2376,18 @@ def send_frame(target, from_hwnd: int, payload: str,
     for _attempt in range(1, retries + 1):
         if verify_delivery(to_hwnd, fingerprint, timeout=ack_timeout):
             header["acked"] = True
+            header["delivery_verified"] = True
             return header
         # Retransmit
-        send_string(target, frame, char_delay=char_delay)
+        delivery = send_string(target, frame, char_delay=char_delay)
+        if delivery.get("ok") is not True:
+            header["transport_accepted"] = False
+            header["error"] = delivery.get("error", "input transport failed")
+            header["acked"] = False
+            return header
     # Final check after last retransmit
     header["acked"] = verify_delivery(to_hwnd, fingerprint, timeout=ack_timeout)
+    header["delivery_verified"] = header["acked"]
     return header
 
 
@@ -3034,8 +3332,8 @@ class MigrationCoordinator:
     def _spawn_successor(self, cp: Checkpoint, checkpoint_path: str) -> "int | None":
         """
         Spawn a new terminal, launch claude, inject the continuation briefing via
-        send_string (PostMessage WM_CHAR) — NOT stdin redirect, which Claude Code
-        silently ignores (requires real TTY).
+        the class-selected `send_string` transport - not stdin redirect, which
+        Claude Code silently ignores (requires a real TTY).
 
         Returns the new terminal's HWND so the coordinator can include it in the
         PEER_MIGRATING broadcast. Returns None if spawn or hwnd detection fails.
@@ -3102,16 +3400,17 @@ class MigrationCoordinator:
             time.sleep(0.3)
             new_win = next((w for w in list_windows() if w.hwnd == new_hwnd), None)
             if not new_win:
-                return new_hwnd
+                return None
             # Launch claude in the new terminal
-            send_string(new_win, "claude\r")
+            launch_delivery = send_string(new_win, "claude\r")
+            if launch_delivery.get("ok") is not True:
+                return None
             time.sleep(12.0)   # wait for Claude Code to initialize
-            # Inject briefing via PostMessage WM_CHAR (no stdin redirect — needs TTY)
-            send_string(new_win, briefing)
-            time.sleep(0.5)
-            send_string(new_win, "\r")
+            briefing_delivery = send_string(new_win, briefing + "\r")
+            if briefing_delivery.get("ok") is not True:
+                return None
         except Exception:
-            pass  # hwnd captured — caller has it for broadcast even if inject failed
+            return None
 
         return new_hwnd
 

@@ -167,7 +167,9 @@ class Scanner:
         if not win:
             return False
         if not self.dry_run:
-            send_string(win, "y\r")
+            delivery = send_string(win, "y\r")
+            if not isinstance(delivery, dict) or delivery.get("ok") is not True:
+                return False
         state = self._terminals.get(hwnd)
         tool = state.pending_tool if state else None
         evt = ScanEvent(EVENT_MANUAL_APPROVED, hwnd, win.title, tool_call=tool)
@@ -184,7 +186,9 @@ class Scanner:
         if not win:
             return False
         if not self.dry_run:
-            send_string(win, "n\r")
+            delivery = send_string(win, "n\r")
+            if not isinstance(delivery, dict) or delivery.get("ok") is not True:
+                return False
         state = self._terminals.get(hwnd)
         tool = state.pending_tool if state else None
         evt = ScanEvent(EVENT_MANUAL_DENIED, hwnd, win.title, tool_call=tool)
@@ -270,11 +274,14 @@ class Scanner:
             state.pending_tool = tool_call
 
             if decision is True:
+                if not self.dry_run:
+                    delivery = inject_response(win, approve=True, cfg=self.cfg)
+                    if delivery.get("ok") is not True:
+                        state.status = "approval_needed"
+                        continue
                 state.status = "working"
                 state.pending_tool = None
                 state.last_approval_time = now_mono
-                if not self.dry_run:
-                    inject_response(win, approve=True, cfg=self.cfg)
                 # Find which rule matched
                 rule = self._find_matching_rule(tool_call, allow=True)
                 evt = ScanEvent(
@@ -284,11 +291,14 @@ class Scanner:
                 self._record(evt)
 
             elif decision is False:
+                if not self.dry_run:
+                    delivery = inject_response(win, approve=False, cfg=self.cfg)
+                    if delivery.get("ok") is not True:
+                        state.status = "approval_needed"
+                        continue
                 state.status = "idle"
                 state.pending_tool = None
                 state.last_approval_time = now_mono
-                if not self.dry_run:
-                    inject_response(win, approve=False, cfg=self.cfg)
                 rule = self._find_matching_rule(tool_call, allow=False)
                 evt = ScanEvent(
                     EVENT_AUTO_DENIED, win.hwnd, win.title,
