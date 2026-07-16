@@ -6,6 +6,9 @@ Usage:
     python -m pytest test_self_connect.py -v # with pytest
 """
 
+import contextlib
+import os
+import subprocess
 import sys
 import time
 
@@ -58,6 +61,44 @@ def skip(name: str, reason: str):
     global SKIP
     SKIP += 1
     print(f"  SKIP  {name} ({reason})")
+
+
+@contextlib.contextmanager
+def headless_fixture_window():
+    """Spawn a real external visible top-level window for the duration of the
+    window-enumeration tests, so they run real assertions on a headless CI
+    session instead of skipping. Yields the window title once it is
+    enumerable, or None if the fixture could not start (tests then fall back
+    to whatever windows the session already has).
+
+    The window lives in a separate process (distinct PID) so find_target,
+    which requires an *external* window, is exercised too.
+    """
+    helper = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "_fixture_window.py")
+    if not os.path.exists(helper):
+        yield None
+        return
+    title = f"SelfConnectHeadlessFixture-{os.getpid()}"
+    proc = subprocess.Popen(
+        [sys.executable, helper, title],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    )
+    try:
+        deadline = time.time() + 8.0
+        ready = False
+        while time.time() < deadline:
+            if proc.poll() is not None:  # fixture died; don't hang
+                break
+            if any(title in w.title for w in list_windows()):
+                ready = True
+                break
+            time.sleep(0.1)
+        yield title if ready else None
+    finally:
+        proc.terminate()
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=5)
 
 
 def test_version():
@@ -368,13 +409,16 @@ if __name__ == "__main__":
     print("=" * 50)
 
     test_version()
-    test_window_discovery()
-    test_find_target()
-    test_window_text()
-    test_window_rect()
+    with headless_fixture_window():
+        # Window-enumeration tests: a real external fixture window keeps these
+        # from skipping on a headless CI session.
+        test_window_discovery()
+        test_find_target()
+        test_window_text()
+        test_window_rect()
+        test_capture()
+        test_window_pool()
     test_clipboard()
-    test_capture()
-    test_window_pool()
     test_send_keys_import()
     test_wait_for_window()
     test_layer4_continuity()
