@@ -27,6 +27,15 @@ process death release the kernel-held lock without deleting the pathname.
   successful release.
 - The mechanism is advisory and local-filesystem scoped, not a distributed or
   hostile-filesystem locking guarantee.
+- On POSIX, a process must not fork while holding a task lock unless the child
+  closes the inherited descriptor immediately. `flock` follows the inherited
+  open-file description, so a child can otherwise retain or release the
+  parent's lock. SelfConnect's supported Windows and spawn-based process paths
+  do not use this fork pattern.
+- The lock directory must be stable and excluded from temporary-file reapers or
+  manual pathname replacement. POSIX `flock` protects the opened inode, not the
+  pathname; replacing the persistent lock file could create a second lock
+  authority. SelfConnect never unlinks these files.
 
 ## 2026-07-15 - Test Discovery Against an Exact External Window
 

@@ -23,8 +23,12 @@
   cover a live process held beyond `stale_after`, automatic recovery after
   process exit, persistent lock-file reuse, and normalized unlock errors.
 - Boundary: advisory locking protects cooperating SelfConnect processes. It is
-  not a hostile-filesystem or mandatory-locking claim. A process that ignores
-  the advisory protocol can still modify the lock pathname.
+  not a hostile-filesystem or mandatory-locking claim. On POSIX, callers must
+  not retain the descriptor across `fork`, and the persistent lock directory
+  must not be reaped or have entries replaced: `flock` follows the inherited
+  open-file description/inode rather than enforcing pathname identity. A
+  process that ignores the advisory protocol can still modify the lock
+  pathname.
 - Rollback: revert the issue #23 pull-request commit. Restoring pathname unlink
   ownership restores the reproduced orphan, live-owner, and malformed-file
   failure classes.
