@@ -3,10 +3,13 @@
 import json
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from sc_tasks import (
+    FileLock,
     GENESIS_HASH,
+    LockReleaseError,
     LockTimeout,
     TaskBoard,
     TaskState,
@@ -70,9 +73,84 @@ def test_claim_is_exclusive_across_threads(board):
     for th in threads:
         th.start()
     for th in threads:
-        th.join()
+        th.join(timeout=15.0)
+    stuck = [th.name for th in threads if th.is_alive()]
+    assert not stuck, f"claim workers did not terminate: {stuck}"
     assert len(claimed) == 6
     assert len(set(claimed)) == 6  # no double-claims
+
+
+def test_claim_recovers_from_transient_lock_release_sharing_violation(
+    board, monkeypatch
+):
+    """A Windows reader may briefly prevent deletion of the board lock."""
+    for i in range(6):
+        board.create(f"task-{i}")
+
+    original_unlink = Path.unlink
+    injected = threading.Event()
+
+    def fail_first_board_lock_unlink(path, *args, **kwargs):
+        if path.name == "board.lock" and not injected.is_set():
+            injected.set()
+            raise PermissionError("simulated Windows sharing violation")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_first_board_lock_unlink)
+    claimed: list[str] = []
+    claimed_lock = threading.Lock()
+    errors: list[BaseException] = []
+
+    def worker(agent):
+        try:
+            while True:
+                try:
+                    task = board.claim(agent)
+                except LockTimeout:
+                    continue
+                if task is None:
+                    return
+                with claimed_lock:
+                    claimed.append(task.task_id)
+        except BaseException as exc:  # noqa: BLE001 - surface worker failures
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(f"agent-{i}",)) for i in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=15.0)
+
+    stuck = [thread.name for thread in threads if thread.is_alive()]
+    assert injected.is_set(), "release-sharing violation was not injected"
+    assert not stuck, f"claim workers did not terminate: {stuck}"
+    assert not errors, [f"{type(exc).__name__}: {exc}" for exc in errors]
+    assert len(claimed) == 6
+    assert len(set(claimed)) == 6
+    assert not (board.locks_dir / "board.lock").exists()
+
+
+def test_abandoned_same_process_lock_is_recoverable_after_release_failure(
+    tmp_path, monkeypatch
+):
+    lock_path = tmp_path / "board.lock"
+    failed_lock = FileLock(lock_path, timeout=0.05, stale_after=300.0).acquire()
+    original_unlink = Path.unlink
+
+    def persistently_block_unlink(path, *args, **kwargs):
+        if path == lock_path:
+            raise PermissionError("simulated persistent Windows sharing violation")
+        return original_unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as blocked:
+        blocked.setattr(Path, "unlink", persistently_block_unlink)
+        with pytest.raises(LockReleaseError, match="could not release"):
+            failed_lock.release()
+
+    assert lock_path.exists()
+    successor = FileLock(lock_path, timeout=0.5, stale_after=300.0).acquire()
+    successor.release()
+    assert not lock_path.exists()
 
 
 def test_dependencies_gate_claiming(board):

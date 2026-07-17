@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -78,6 +79,10 @@ class LockTimeout(RuntimeError):
     """Raised when a file lock cannot be acquired in time."""
 
 
+class LockReleaseError(RuntimeError):
+    """Raised when an owned file lock cannot be released safely."""
+
+
 @dataclass
 class Task:
     task_id: str
@@ -118,12 +123,31 @@ class FileLock:
     POSIX; no dependencies beyond stdlib (+psutil if available for pid check).
     """
 
+    _active_records: set[str] = set()
+    _active_records_lock = threading.Lock()
+
     def __init__(self, path: Path, timeout: float = LOCK_TIMEOUT_SECONDS,
                  stale_after: float = LOCK_STALE_SECONDS):
         self.path = Path(path)
         self.timeout = timeout
         self.stale_after = stale_after
         self._fd: Optional[int] = None
+        self._owner_record: Optional[str] = None
+
+    @classmethod
+    def _record_active(cls, owner_record: str) -> None:
+        with cls._active_records_lock:
+            cls._active_records.add(owner_record)
+
+    @classmethod
+    def _record_inactive(cls, owner_record: str) -> None:
+        with cls._active_records_lock:
+            cls._active_records.discard(owner_record)
+
+    @classmethod
+    def _is_record_active(cls, owner_record: str) -> bool:
+        with cls._active_records_lock:
+            return owner_record in cls._active_records
 
     def _pid_alive(self, pid: int) -> bool:
         try:
@@ -135,42 +159,68 @@ class FileLock:
     def _try_break_stale(self) -> None:
         try:
             raw = self.path.read_text(encoding="utf-8").strip()
-            pid_s, ts_s = raw.split(":", 1)
+            pid_s, ts_s, *_ = raw.split(":", 2)
             pid, ts = int(pid_s), float(ts_s)
         except (OSError, ValueError):
             return  # unreadable or vanished — let acquire retry
         expired = (time.time() - ts) > self.stale_after
-        if expired or not self._pid_alive(pid):
+        abandoned_here = (
+            pid == os.getpid()
+            and raw.count(":") >= 2
+            and not self._is_record_active(raw)
+        )
+        if expired or not self._pid_alive(pid) or abandoned_here:
             try:
                 self.path.unlink()
             except OSError:
                 pass
 
     def acquire(self) -> FileLock:
-        deadline = time.time() + self.timeout
+        deadline = time.monotonic() + self.timeout
         self.path.parent.mkdir(parents=True, exist_ok=True)
         while True:
             try:
                 self._fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                os.write(self._fd, f"{os.getpid()}:{time.time()}".encode())
+                self._owner_record = f"{os.getpid()}:{time.time()}:{uuid.uuid4().hex}"
+                os.write(self._fd, self._owner_record.encode())
+                self._record_active(self._owner_record)
                 return self
             except FileExistsError:
                 self._try_break_stale()
-                if time.time() >= deadline:
+                if time.monotonic() >= deadline:
                     raise LockTimeout(f"could not acquire {self.path}") from None
                 time.sleep(LOCK_POLL_SECONDS)
 
     def release(self) -> None:
+        owner_record = self._owner_record
+        if owner_record is None:
+            return
         if self._fd is not None:
             try:
                 os.close(self._fd)
             except OSError:
                 pass
             self._fd = None
+        deadline = time.monotonic() + self.timeout
         try:
-            self.path.unlink()
-        except OSError:
-            pass
+            while True:
+                try:
+                    current = self.path.read_text(encoding="utf-8").strip()
+                    if current != owner_record:
+                        raise LockReleaseError(
+                            f"refusing to release lock no longer owned by this holder: {self.path}"
+                        )
+                    self.path.unlink()
+                    return
+                except FileNotFoundError:
+                    return
+                except PermissionError as exc:
+                    if time.monotonic() >= deadline:
+                        raise LockReleaseError(f"could not release {self.path}") from exc
+                    time.sleep(LOCK_POLL_SECONDS)
+        finally:
+            self._record_inactive(owner_record)
+            self._owner_record = None
 
     def __enter__(self) -> FileLock:
         return self.acquire()
@@ -468,6 +518,7 @@ __all__ = [
     "GENESIS_HASH",
     "TERMINAL_STATES",
     "FileLock",
+    "LockReleaseError",
     "LockTimeout",
     "Task",
     "TaskBoard",

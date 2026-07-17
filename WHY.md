@@ -1,5 +1,43 @@
 # Decision Record
 
+## 2026-07-17 - Make File-Lock Release Verifiable and Recoverable
+
+### Decision
+
+Give every `FileLock` acquisition a unique owner record, track records owned by
+this process, verify the record before deletion, and retry transient Windows
+sharing violations to a monotonic deadline. If deletion remains impossible,
+raise `LockReleaseError` and mark the owner record inactive so a later claimant
+can recover the orphan once filesystem access returns.
+
+### Why
+
+Closing a file descriptor does not remove its pathname. On Windows, another
+reader can briefly prevent deletion. Treating that failure as success leaves a
+lock file whose PID is still alive even though its owning critical section has
+ended. PID liveness alone therefore cannot distinguish an active same-process
+lock from an abandoned one, and callers that retry `LockTimeout` can loop
+forever.
+
+Blind unlink retries are also unsafe: if a lock pathname were replaced between
+attempts, an old holder could delete a successor's lock. Comparing the unique
+owner record before every delete keeps recovery scoped to the acquisition that
+is actually being released.
+
+### Consequences
+
+- Transient Windows sharing violations no longer strand the board lock.
+- Persistent release failure is explicit and bounded rather than reported as
+  success.
+- A later same-process claimant can identify an abandoned token without waiting
+  for the five-minute age threshold.
+- Legacy two-field lock records remain readable and retain the prior PID/age
+  stale policy; only new tokenized records receive immediate same-process
+  abandonment detection.
+- A filesystem that continuously blocks lock deletion remains unavailable and
+  produces a bounded error; this mechanism is not a distributed lock or a
+  hostile-filesystem availability guarantee.
+
 ## 2026-07-15 - Test Discovery Against an Exact External Window
 
 ### Decision

@@ -1,5 +1,35 @@
 # Engineering Log
 
+## 2026-07-17 - Cross-Thread Claim Lock Release Recovery
+
+- Base: `c01708e30d7c048f1cfb696658c27b2f439e406a`.
+- Trigger: issue #23 reported that
+  `test_claim_is_exclusive_across_threads` could stop indefinitely on Windows.
+- Reproduction: the unchanged test hung in 2 of 11 bounded subprocess runs.
+  Faulthandler showed the test thread blocked in an unbounded join while the
+  remaining claimant threads waited in `FileLock.acquire`; the thread that had
+  owned the lock was no longer running.
+- Root cause: `FileLock.release` closed its descriptor, attempted one unlink,
+  and swallowed every `OSError`. A transient Windows sharing violation while a
+  contender or scanner read the lock file therefore left an orphan containing
+  the still-live process PID. Stale detection treated that PID as an active
+  owner, and the test's `LockTimeout` retry loop never terminated.
+- Change: lock records now include a unique acquisition token registered in
+  process. Release verifies ownership and retries deletion to a monotonic
+  deadline. A persistent failure raises `LockReleaseError` and retires the
+  in-process ownership record, allowing a later claimant to recognize and
+  remove the same-process orphan after the sharing conflict clears. Claim-test
+  joins are bounded and report stuck thread names.
+- Evidence: deterministic transient- and persistent-unlink regressions pass;
+  500/500 four-thread contention rounds passed; focused task tests passed
+  12/12; full suite passed 623 with 9 environment-bound skips; Ruff passed.
+- Boundary: an external actor that continuously denies deletion can still make
+  acquisition fail with a bounded lock error. This change prevents silent
+  success and indefinite same-process retry; it does not claim availability
+  against a permanently hostile filesystem.
+- Rollback: revert the issue #23 pull-request commit. Restoring the prior
+  swallow-on-release behavior restores the orphan-lock hang.
+
 ## 2026-07-15 - Deterministic External-Target Smoke Probe
 
 - Base: `56d5ff1802dca5d4136bcc32fa37aa122d4944dc`.
