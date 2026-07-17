@@ -50,9 +50,7 @@ No provider or model is invoked by the unit or repository test suites.
 
 ## Consumer-first release sequence
 
-The producer is intentionally fail-closed with
-`ECOSYSTEM_CONTRACT_SHA=CONSUMER_MAIN_SHA_REQUIRED`. The ecosystem consumer
-must merge first and pass its post-merge checks. A subsequent producer commit
-must then replace that placeholder in both code and workflow with the immutable
-consumer `main` commit. A feature-branch SHA is not a release contract pin, and
-the producer workflow cannot run successfully while the placeholder remains.
+The producer pins the reviewed ecosystem consumer contract at
+`f07b4a72ca900da531a8596168600977a6678427`, the immutable merge commit on consumer `main`.
+The workflow must present that exact value. A feature-branch SHA or a different
+main commit is not accepted as this producer's contract pin.

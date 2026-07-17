@@ -39,9 +39,9 @@ SCHEMA = "selfconnect.scale_readiness_evidence.v2"
 RUNG_SCHEMA = "selfconnect.restricted_scale_result.v2"
 CORE_REMOTE = "https://github.com/rblake2320/selfconnect"
 CORE_BRANCH = "master"
-# Fail-closed placeholder. Replace with the immutable selfconnect-ecosystem
-# main commit only after the consumer PR merges and its post-merge checks pass.
-ECOSYSTEM_CONTRACT_SHA = "CONSUMER_MAIN_SHA_REQUIRED"
+# Immutable selfconnect-ecosystem main commit containing the reviewed consumer
+# contract. The workflow must present this exact value.
+ECOSYSTEM_CONTRACT_SHA = "f07b4a72ca900da531a8596168600977a6678427"
 RUN_TITLE_PREFIX = "SC_SCALE"
 TERMINAL_CLASS = "CASCADIA_HOSTING_WINDOW_CLASS"
 TERMINAL_EXE = "WindowsTerminal.exe"
@@ -1124,7 +1124,7 @@ def write_contract_fixture(output_dir: Path) -> None:
             "producer_run_id": 123456,
             "producer_run_attempt": 1,
             "actor": "restricted-producer",
-            "ecosystem_contract_sha": "b" * 40,
+            "ecosystem_contract_sha": ECOSYSTEM_CONTRACT_SHA,
             "core_head_sha": "a" * 40,
         },
         "requested_runner_config": _requested_runner_config(),

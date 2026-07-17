@@ -7,14 +7,14 @@
     "fresh_detached_checkout": true,
     "git_config_cleared": true,
     "guard_module_sha256": "7afff59af60f25217a3dbe6a485201d7e2855e09abf73b0c27bd49fc276ae06a",
-    "producer_sha256": "964de01a34285eb4a7fdf3bd3cd6f05bf4971c7e0644eb0c886fbd2c2717a0be",
+    "producer_sha256": "b50f4f687711caf1565f1a4323eed741090de4347a9db7075910d5091bf1aa70",
     "python_env_cleared": true
   },
   "generated_at": "2026-07-17T17:00:00+00:00",
   "producer_context": {
     "actor": "restricted-producer",
     "core_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "ecosystem_contract_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "ecosystem_contract_sha": "f07b4a72ca900da531a8596168600977a6678427",
     "producer_run_attempt": 1,
     "producer_run_id": 123456,
     "ref": "refs/heads/master",

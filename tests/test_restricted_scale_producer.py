@@ -561,6 +561,11 @@ def test_requested_runner_config_does_not_assert_isolation_facts(
 def test_workflow_context_fails_closed_until_consumer_main_is_pinned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        producer,
+        "ECOSYSTEM_CONTRACT_SHA",
+        "CONSUMER_MAIN_SHA_REQUIRED",
+    )
     monkeypatch.setenv("ECOSYSTEM_CONTRACT_SHA", "CONSUMER_MAIN_SHA_REQUIRED")
     with pytest.raises(producer.ProducerError, match="consumer_contract_not_pinned"):
         producer._workflow_context()
@@ -586,6 +591,10 @@ def test_committed_contract_fixture_is_generator_output(tmp_path: producer.Path)
     vector = producer.json.loads((committed / "vector.json").read_text(encoding="utf-8"))
     manifest = producer.json.loads(
         (committed / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert (
+        manifest["producer_context"]["ecosystem_contract_sha"]
+        == producer.ECOSYSTEM_CONTRACT_SHA
     )
     assert vector["generator_source_sha256"] == producer.sha256_canonical_source(
         producer.Path(producer.__file__)
