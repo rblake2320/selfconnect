@@ -1,0 +1,322 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+
+import pytest
+from experiments.fabric_v2 import restricted_scale_producer as producer
+
+
+def test_provider_env_never_leaks_gemini_key_to_other_providers() -> None:
+    source = {
+        "PATH": "bin",
+        "OPENAI_API_KEY": "openai",
+        "ANTHROPIC_API_KEY": "anthropic",
+        "GEMINI_API_KEY": "gemini",
+        "PYTHONPATH": "unsafe",
+    }
+    assert "GEMINI_API_KEY" not in producer.provider_env("codex", source)
+    assert "GEMINI_API_KEY" not in producer.provider_env("claude", source)
+    assert set(producer.provider_env("gemini", source)) & {
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+    } == {"GEMINI_API_KEY"}
+
+
+@pytest.mark.parametrize(
+    "provider,token",
+    [
+        ("codex", "--dangerously-bypass-approvals-and-sandbox"),
+        ("claude", "bypassPermissions"),
+        ("gemini", "--skip-trust"),
+        ("gemini", "yolo"),
+    ],
+)
+def test_unsafe_provider_flags_are_rejected(provider: str, token: str) -> None:
+    argv = producer.provider_argv(
+        provider, "prompt", admin_policy=producer.Path("deny-all.toml")
+    ) + [token]
+    with pytest.raises(producer.ProducerError, match="unsafe_provider_flag"):
+        producer.validate_restricted_argv(provider, argv)
+
+
+def test_nonce_uses_32_cryptographic_random_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(producer.secrets, "token_bytes", lambda size: bytes(range(size)))
+    assert producer.crypto_nonce() == bytes(range(32)).hex()
+    monkeypatch.setattr(producer.secrets, "token_bytes", lambda _size: b"predictable-short")
+    with pytest.raises(producer.ProducerError, match="nonce_source_invalid"):
+        producer.crypto_nonce()
+
+
+def test_nonce_does_not_derive_from_wall_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    values = iter((b"a" * 32, b"b" * 32))
+    monkeypatch.setattr(producer.time, "time", lambda: 1.0)
+    monkeypatch.setattr(producer.secrets, "token_bytes", lambda _size: next(values))
+    assert producer.crypto_nonce() != producer.crypto_nonce()
+
+
+def test_provider_policy_digests_match_frozen_consumer_contract() -> None:
+    pins = producer.provider_pins()
+    assert set(pins["codex"]) == {
+        "required_policy_projection_sha256",
+        "required_tool_policy_sha256",
+        "expected_cli_version",
+        "expected_help_sha256",
+        "expected_entrypoint_sha256",
+        "expected_provider_exe_name",
+    }
+    assert pins["codex"]["required_policy_projection_sha256"] == (
+        "008845ea35aa87cdf84f1f87d287213e877a4e7caac8cfa1899ab37d81716d7b"
+    )
+    assert pins["claude"]["required_policy_projection_sha256"] == (
+        "2a0d78a6685bca211a77b2d06acdca5efe6bfe54f366e5500832c45dc9ae6f12"
+    )
+    assert pins["gemini"]["required_policy_projection_sha256"] == (
+        "183a476458c2db6d5530e088ee742b28ec460cd5d35e9347eef7c1b1ef6965a2"
+    )
+    assert producer.sha256_bytes(producer.GEMINI_DENY_ALL_POLICY) == (
+        producer.GEMINI_DENY_ALL_POLICY_SHA256
+    )
+    for provider, digest in producer.PROVIDER_ENTRYPOINT_SHA256.items():
+        assert pins[provider]["expected_entrypoint_sha256"] == digest
+        assert pins[provider]["expected_help_sha256"] == producer.PROVIDER_HELP_SHA256[provider]
+        assert pins[provider]["expected_provider_exe_name"] == producer.PROVIDER_EXE_NAMES[provider]
+
+
+def test_provider_pin_check_rejects_unpinned_help_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {
+        "PATH": "bin",
+        "OPENAI_API_KEY": "openai",
+        "ANTHROPIC_API_KEY": "anthropic",
+        "GEMINI_API_KEY": "gemini",
+    }
+    monkeypatch.setattr(
+        producer,
+        "resolve_provider_runtime",
+        lambda provider, _env: producer.ProviderRuntime(
+            (provider,), producer.Path(f"{provider}.exe")
+        ),
+    )
+
+    def fake_run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        provider = command[0]
+        if command[1:] == ["--version"]:
+            output = producer.PROVIDER_VERSIONS[provider]
+        else:
+            output = "help without required flags"
+        return SimpleNamespace(returncode=0, stdout=output.encode())
+
+    monkeypatch.setattr(producer.subprocess, "run", fake_run)
+    with pytest.raises(producer.ProducerError, match="provider_help_digest_mismatch"):
+        producer.verify_provider_pins(source)
+
+
+def test_provider_home_isolation_rejects_ambient_gemini_config(tmp_path: producer.Path) -> None:
+    (tmp_path / ".gemini").mkdir()
+    with pytest.raises(producer.ProducerError, match="provider_home_not_disposable"):
+        producer.verify_provider_home_isolation(
+            {"USERPROFILE": str(tmp_path), "PROGRAMDATA": str(tmp_path / "programdata")}
+        )
+
+
+def test_provider_failure_markers_override_an_exact_ack() -> None:
+    assert producer._provider_failure_observed(
+        "ACK_REAL_VENDOR provider=gemini role=realgemini-1 nonce=N\nRESOURCE_EXHAUSTED"
+    )
+
+
+def test_observed_ack_requires_an_actual_standalone_line() -> None:
+    expected = "ACK_REAL_VENDOR provider=codex role=realcodex-1 nonce=N"
+    assert producer._observed_exact_line(f"noise\n{expected}\n", expected) == expected
+    assert producer._observed_exact_line(f"prompt: {expected}", expected) is None
+
+
+def _window(**changes: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "hwnd": 100,
+        "pid": 200,
+        "exe_name": producer.TERMINAL_EXE,
+        "class_name": producer.TERMINAL_CLASS,
+        "title": "SC_SCALE codex realcodex-1 " + "a" * 64,
+    }
+    row.update(changes)
+    return row
+
+
+def _tree(provider_exe: str = "codex.exe") -> list[dict[str, int | str | None]]:
+    return [
+        {"pid": 200, "parent_pid": None, "exe_name": producer.TERMINAL_EXE},
+        {"pid": 250, "parent_pid": 200, "exe_name": "powershell.exe"},
+        {"pid": 300, "parent_pid": 250, "exe_name": provider_exe},
+    ]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"hwnd": 101},
+        {"pid": 201},
+        {"exe_name": "powershell.exe"},
+        {"class_name": "ConsoleWindowClass"},
+        {"title": "wrong"},
+    ],
+)
+def test_guard_rejects_wrong_hwnd_pid_exe_class_or_title(changes: dict[str, object]) -> None:
+    with pytest.raises(producer.ProducerError, match="window_process_guard_failed"):
+        producer.build_guard_receipt(
+            provider="codex",
+            role="realcodex-1",
+            nonce="a" * 64,
+            pre=_window(),
+            post=_window(**changes),
+            provider_pid=300,
+            process_rows=_tree(),
+            session_id=1,
+            shell_session_id=1,
+            provider_session_id=1,
+            provider_entrypoint_sha256="0" * 64,
+        )
+
+
+def test_guard_rejects_provider_outside_spawn_tree() -> None:
+    with pytest.raises(producer.ProducerError, match="window_process_guard_failed"):
+        producer.build_guard_receipt(
+            provider="codex",
+            role="realcodex-1",
+            nonce="a" * 64,
+            pre=_window(),
+            post=_window(),
+            provider_pid=999,
+            process_rows=_tree(),
+            session_id=1,
+            shell_session_id=1,
+            provider_session_id=1,
+            provider_entrypoint_sha256="0" * 64,
+        )
+
+
+def test_guard_rejects_cross_session_provider() -> None:
+    with pytest.raises(producer.ProducerError, match="window_process_guard_failed"):
+        producer.build_guard_receipt(
+            provider="codex",
+            role="realcodex-1",
+            nonce="a" * 64,
+            pre=_window(),
+            post=_window(),
+            provider_pid=300,
+            process_rows=_tree(),
+            session_id=1,
+            shell_session_id=1,
+            provider_session_id=2,
+            provider_entrypoint_sha256="0" * 64,
+        )
+
+
+def test_guard_emits_recomputable_relational_process_projection() -> None:
+    receipt = producer.build_guard_receipt(
+        provider="codex",
+        role="realcodex-1",
+        nonce="a" * 64,
+        pre=_window(),
+        post=_window(),
+        provider_pid=300,
+        process_rows=_tree(),
+        session_id=1,
+        shell_session_id=1,
+        provider_session_id=1,
+        provider_entrypoint_sha256=producer.PROVIDER_ENTRYPOINT_SHA256["codex"],
+    )
+    claim = receipt["claim"]
+    assert claim["tree_root_pid"] == claim["window_pid"] == 200
+    assert claim["provider_pid"] == 300
+    assert claim["process_tree_projection"] == _tree()
+    assert claim["process_tree_sha256"] == producer.sha256_bytes(
+        producer.canonical_json(_tree())
+    )
+    assert receipt["digest"] == producer.sha256_bytes(producer.canonical_json(claim))
+
+
+def test_provider_process_rejects_wrong_implementation_executable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = SimpleNamespace(
+        exe=lambda: r"C:\wrong.exe",
+        cmdline=lambda: [r"C:\wrong.exe"],
+        is_running=lambda: True,
+    )
+    monkeypatch.setattr(producer.psutil, "Process", lambda _pid: fake)
+    runtime = producer.ProviderRuntime((r"C:\approved.exe",), producer.Path(r"C:\approved.exe"))
+    with pytest.raises(producer.ProducerError, match="provider_process_executable_mismatch"):
+        producer._verify_provider_process(10, runtime)
+
+
+def test_concurrency_barrier_rejects_agent_that_already_exited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = SimpleNamespace(is_running=lambda: False)
+    monkeypatch.setattr(producer.psutil, "Process", lambda _pid: fake)
+    state = {
+        "provider_pid": 10,
+        "runtime": producer.ProviderRuntime(
+            (r"C:\approved.exe",), producer.Path(r"C:\approved.exe")
+        ),
+        "nonce": "a" * 64,
+    }
+    with pytest.raises(producer.ProducerError, match="provider_concurrency_barrier_failed"):
+        producer._assert_concurrent_provider_barrier([state])
+
+
+@pytest.mark.parametrize("offset", [timedelta(hours=-1), timedelta(minutes=6)])
+def test_rung_time_rejects_stale_or_future_interval(offset: timedelta) -> None:
+    now = datetime(2026, 7, 17, tzinfo=UTC)
+    started = now + offset
+    completed = started + timedelta(seconds=1)
+    with pytest.raises(producer.ProducerError, match="rung_time_invalid"):
+        producer.validate_interval(started, completed, now=now)
+
+
+def test_cleanup_rejects_surviving_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeProcess:
+        pid = 44
+
+        def children(self, recursive: bool = False) -> list[object]:  # noqa: ARG002
+            return []
+
+        def terminate(self) -> None:
+            pass
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(producer.psutil, "Process", lambda _pid: FakeProcess())
+    monkeypatch.setattr(
+        producer.psutil,
+        "wait_procs",
+        lambda values, timeout: ([], values),  # noqa: ARG005
+    )
+    with pytest.raises(producer.ProducerError, match="cleanup_incomplete"):
+        producer.cleanup_process_tree([44], wait_s=0)
+
+
+def test_cleanup_reports_no_remaining_processes(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeProcess:
+        pid = 44
+
+        def children(self, recursive: bool = False) -> list[object]:  # noqa: ARG002
+            return []
+
+        def terminate(self) -> None:
+            pass
+
+    monkeypatch.setattr(producer.psutil, "Process", lambda _pid: FakeProcess())
+    monkeypatch.setattr(
+        producer.psutil,
+        "wait_procs",
+        lambda values, timeout: (values, []),  # noqa: ARG005
+    )
+    receipt = producer.cleanup_process_tree([44], wait_s=0)
+    assert receipt["completed"] is True
+    assert receipt["remaining_count"] == 0
