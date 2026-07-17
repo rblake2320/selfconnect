@@ -325,6 +325,15 @@ def test_cleanup_rejects_surviving_process(monkeypatch: pytest.MonkeyPatch) -> N
     class FakeProcess:
         pid = 44
 
+        def is_running(self) -> bool:
+            return True
+
+        def create_time(self) -> float:
+            return 1.0
+
+        def exe(self) -> str:
+            return r"C:\owned.exe"
+
         def children(self, recursive: bool = False) -> list[object]:  # noqa: ARG002
             return []
 
@@ -335,18 +344,30 @@ def test_cleanup_rejects_surviving_process(monkeypatch: pytest.MonkeyPatch) -> N
             pass
 
     monkeypatch.setattr(producer.psutil, "Process", lambda _pid: FakeProcess())
+    monkeypatch.setattr(producer, "_process_session_id", lambda _pid: 3)
+    identity = producer.NativeProcessIdentity(44, 1.0, r"C:\owned.exe", 3)
+    monkeypatch.setattr(producer, "capture_process_identity", lambda _pid: identity)
     monkeypatch.setattr(
         producer.psutil,
         "wait_procs",
         lambda values, timeout: ([], values),  # noqa: ARG005
     )
     with pytest.raises(producer.ProducerError, match="cleanup_incomplete"):
-        producer.cleanup_process_tree([44], wait_s=0)
+        producer.cleanup_process_tree([identity], wait_s=0)
 
 
 def test_cleanup_reports_no_remaining_processes(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeProcess:
         pid = 44
+
+        def is_running(self) -> bool:
+            return True
+
+        def create_time(self) -> float:
+            return 1.0
+
+        def exe(self) -> str:
+            return r"C:\owned.exe"
 
         def children(self, recursive: bool = False) -> list[object]:  # noqa: ARG002
             return []
@@ -355,14 +376,52 @@ def test_cleanup_reports_no_remaining_processes(monkeypatch: pytest.MonkeyPatch)
             pass
 
     monkeypatch.setattr(producer.psutil, "Process", lambda _pid: FakeProcess())
+    monkeypatch.setattr(producer, "_process_session_id", lambda _pid: 3)
+    identity = producer.NativeProcessIdentity(44, 1.0, r"C:\owned.exe", 3)
+    monkeypatch.setattr(producer, "capture_process_identity", lambda _pid: identity)
     monkeypatch.setattr(
         producer.psutil,
         "wait_procs",
         lambda values, timeout: (values, []),  # noqa: ARG005
     )
-    receipt = producer.cleanup_process_tree([44], wait_s=0)
+    receipt = producer.cleanup_process_tree([identity], wait_s=0)
     assert receipt["completed"] is True
     assert receipt["remaining_count"] == 0
+
+
+def test_cleanup_never_terminates_reused_pid_victim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class ReusedVictim:
+        pid = 44
+
+        def is_running(self) -> bool:
+            return True
+
+        def create_time(self) -> float:
+            return 2.0
+
+        def exe(self) -> str:
+            return r"C:\victim.exe"
+
+        def children(self, recursive: bool = False) -> list[object]:  # noqa: ARG002
+            return []
+
+        def terminate(self) -> None:
+            calls.append("terminate")
+
+        def kill(self) -> None:
+            calls.append("kill")
+
+    monkeypatch.setattr(producer.psutil, "Process", lambda _pid: ReusedVictim())
+    monkeypatch.setattr(producer, "_process_session_id", lambda _pid: 3)
+    original = producer.NativeProcessIdentity(44, 1.0, r"C:\owned.exe", 3)
+    receipt = producer.cleanup_process_tree([original], wait_s=0)
+    assert calls == []
+    assert receipt["target_count"] == 0
+    assert receipt["identity_mismatch_count"] == 1
 
 
 def test_disposable_terminal_proof_rejects_preexisting_or_unowned_window() -> None:
@@ -433,7 +492,7 @@ def test_provider_wrapper_clears_environment_at_actual_child_process(
     )
     text = script.read_text(encoding="utf-8")
     assert "$psi.EnvironmentVariables.Clear()" in text
-    assert "actual_environment_names" in text
+    assert "constructed_initial_environment_names" in text
     assert "Start-Process" not in text
     assert "secret" not in text
 
@@ -441,6 +500,8 @@ def test_provider_wrapper_clears_environment_at_actual_child_process(
 def test_requested_runner_config_does_not_assert_isolation_facts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    merged_consumer_sha = "b" * 40
+    monkeypatch.setattr(producer, "ECOSYSTEM_CONTRACT_SHA", merged_consumer_sha)
     values = {
         "GITHUB_REPOSITORY": "rblake2320/selfconnect",
         "GITHUB_WORKFLOW": "Restricted Real-Agent Scale Producer",
@@ -448,7 +509,7 @@ def test_requested_runner_config_does_not_assert_isolation_facts(
         "SCALE_RUNNER_GROUP": "selfconnect-scale-ephemeral",
         "SCALE_PRODUCER_JOB": "restricted-scale-producer",
         "GITHUB_REF": "refs/heads/master",
-        "ECOSYSTEM_CONTRACT_SHA": producer.ECOSYSTEM_CONTRACT_SHA,
+        "ECOSYSTEM_CONTRACT_SHA": merged_consumer_sha,
         "GITHUB_SHA": "b" * 40,
         "GITHUB_RUN_ID": "1",
         "GITHUB_RUN_ATTEMPT": "1",
@@ -476,3 +537,36 @@ def test_requested_runner_config_does_not_assert_isolation_facts(
     assert "ephemeral_runner" not in encoded
     assert "dedicated_runner" not in encoded
     assert "sensitive_repositories_present" not in encoded
+
+
+def test_workflow_context_fails_closed_until_consumer_main_is_pinned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ECOSYSTEM_CONTRACT_SHA", "CONSUMER_MAIN_SHA_REQUIRED")
+    with pytest.raises(producer.ProducerError, match="consumer_contract_not_pinned"):
+        producer._workflow_context()
+
+
+def test_committed_contract_fixture_is_generator_output(tmp_path: producer.Path) -> None:
+    generated = tmp_path / "fixture"
+    producer.write_contract_fixture(generated)
+    committed = (
+        producer.ROOT / "tests" / "fixtures" / "restricted_scale_producer_bundle"
+    )
+    expected_names = {
+        "manifest.json",
+        "rung-10.json",
+        "rung-15.json",
+        "rung-20.json",
+        "vector.json",
+    }
+    assert {path.name for path in generated.iterdir()} == expected_names
+    assert {path.name for path in committed.iterdir()} == expected_names
+    for name in expected_names:
+        assert (generated / name).read_bytes() == (committed / name).read_bytes()
+    vector = producer.json.loads((committed / "vector.json").read_text(encoding="utf-8"))
+    assert vector["generator_source_sha256"] == producer.sha256_file(producer.Path(producer.__file__))
+    assert vector["bundle_files"] == {
+        name: producer.sha256_file(committed / name)
+        for name in sorted(expected_names - {"vector.json"})
+    }

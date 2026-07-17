@@ -15,9 +15,10 @@ readiness.
   command line exactly matches the pinned executable and restricted invocation.
   It retains the nonce-bound prompt and normalizes only executable and temporary
   policy paths to basenames.
-- `actual_environment_names` is the exact sorted name set used to construct the
+- `constructed_initial_environment_names` is the exact sorted name set used to construct the
   provider child's `ProcessStartInfo` environment after clearing inherited
-  variables. Values and credentials are never emitted.
+  variables. It is construction evidence, not a native readback from the child.
+  Values and credentials are never emitted.
 - `process_stdout` is the primary ACK observation.
   `rendered_terminal_copy` is a later UIA read of that stdout after the wrapper
   writes it to the terminal. It carries `derivative_of_event_id` and is not an
@@ -31,6 +32,12 @@ Windows Terminal window must be one of the producer's nonce-bound windows. If
 that ownership proof is unavailable, cleanup is limited to recorded shell and
 provider child PIDs; it does not terminate the terminal host.
 
+Cleanup records each owned root's PID together with its native creation time,
+resolved executable, and Windows session while the process is live. It
+revalidates that identity before both terminate and kill. A PID that has exited
+and been reused is skipped, and completed provider PIDs are never queued as
+cleanup roots.
+
 This prevents the producer from killing a user's shared Windows Terminal. It
 does not prove that the wider machine or runner image is disposable.
 
@@ -40,3 +47,12 @@ The ecosystem consumer must validate the frozen schema, GitHub artifact
 attestation, workflow/run identity, and evidence freshness. A real run also
 requires a separately administered restricted runner and provider credentials.
 No provider or model is invoked by the unit or repository test suites.
+
+## Consumer-first release sequence
+
+The producer is intentionally fail-closed with
+`ECOSYSTEM_CONTRACT_SHA=CONSUMER_MAIN_SHA_REQUIRED`. The ecosystem consumer
+must merge first and pass its post-merge checks. A subsequent producer commit
+must then replace that placeholder in both code and workflow with the immutable
+consumer `main` commit. A feature-branch SHA is not a release contract pin, and
+the producer workflow cannot run successfully while the placeholder remains.

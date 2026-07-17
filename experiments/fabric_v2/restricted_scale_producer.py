@@ -39,7 +39,9 @@ SCHEMA = "selfconnect.scale_readiness_evidence.v2"
 RUNG_SCHEMA = "selfconnect.restricted_scale_result.v2"
 CORE_REMOTE = "https://github.com/rblake2320/selfconnect"
 CORE_BRANCH = "master"
-ECOSYSTEM_CONTRACT_SHA = "93610d14414cd4e273a4192bfbfafd65a0bad67a"
+# Fail-closed placeholder. Replace with the immutable selfconnect-ecosystem
+# main commit only after the consumer PR merges and its post-merge checks pass.
+ECOSYSTEM_CONTRACT_SHA = "CONSUMER_MAIN_SHA_REQUIRED"
 RUN_TITLE_PREFIX = "SC_SCALE"
 TERMINAL_CLASS = "CASCADIA_HOSTING_WINDOW_CLASS"
 TERMINAL_EXE = "WindowsTerminal.exe"
@@ -102,6 +104,14 @@ class ProviderPolicy:
 class ProviderRuntime:
     command_prefix: tuple[str, ...]
     entrypoint: Path
+
+
+@dataclass(frozen=True)
+class NativeProcessIdentity:
+    pid: int
+    create_time: float
+    executable: str
+    session_id: int
 
 
 PROVIDERS = {
@@ -666,32 +676,87 @@ def _provider_failure_observed(text: str) -> bool:
     return any(marker.lower() in lowered for marker in markers)
 
 
-def cleanup_process_tree(root_pids: Sequence[int], *, wait_s: float = 10.0) -> dict[str, Any]:
-    targets: dict[int, psutil.Process] = {}
-    for pid in root_pids:
+def capture_process_identity(pid: int) -> NativeProcessIdentity:
+    try:
+        process = psutil.Process(pid)
+        if not process.is_running():
+            raise ProducerError("process_identity_unavailable")
+        return NativeProcessIdentity(
+            pid=pid,
+            create_time=process.create_time(),
+            executable=str(Path(process.exe()).resolve()),
+            session_id=_process_session_id(pid),
+        )
+    except (psutil.Error, OSError) as exc:
+        raise ProducerError("process_identity_unavailable") from exc
+
+
+def _matches_process_identity(
+    process: psutil.Process, identity: NativeProcessIdentity
+) -> bool:
+    try:
+        return (
+            process.pid == identity.pid
+            and process.is_running()
+            and process.create_time() == identity.create_time
+            and str(Path(process.exe()).resolve()) == identity.executable
+            and _process_session_id(process.pid) == identity.session_id
+        )
+    except (psutil.Error, OSError):
+        return False
+
+
+def cleanup_process_tree(
+    root_identities: Sequence[NativeProcessIdentity], *, wait_s: float = 10.0
+) -> dict[str, Any]:
+    targets: dict[int, tuple[psutil.Process, NativeProcessIdentity]] = {}
+    identity_mismatches = 0
+    for identity in root_identities:
         try:
-            root = psutil.Process(pid)
+            root = psutil.Process(identity.pid)
+            if not _matches_process_identity(root, identity):
+                identity_mismatches += 1
+                continue
             for process in [*root.children(recursive=True), root]:
-                targets[process.pid] = process
+                try:
+                    captured = capture_process_identity(process.pid)
+                except ProducerError:
+                    continue
+                targets[process.pid] = (process, captured)
         except psutil.Error:
             continue
-    for process in targets.values():
+    eligible: list[psutil.Process] = []
+    for process, identity in targets.values():
+        if not _matches_process_identity(process, identity):
+            identity_mismatches += 1
+            continue
         try:
             process.terminate()
+            eligible.append(process)
         except psutil.Error:
             pass
-    _, alive = psutil.wait_procs(list(targets.values()), timeout=wait_s)
+    _, alive = psutil.wait_procs(eligible, timeout=wait_s)
     for process in alive:
+        identity = targets[process.pid][1]
+        if not _matches_process_identity(process, identity):
+            identity_mismatches += 1
+            continue
         try:
             process.kill()
         except psutil.Error:
             pass
-    _, alive = psutil.wait_procs(alive, timeout=wait_s)
+    still_owned = [
+        process
+        for process in alive
+        if _matches_process_identity(process, targets[process.pid][1])
+    ]
+    _, alive = psutil.wait_procs(still_owned, timeout=wait_s)
     receipt = {
         "requested": True,
         "completed": not alive,
         "target_count": len(targets),
         "remaining_count": len(alive),
+        "identity_mismatch_count": identity_mismatches,
         "completed_at_utc": utc_text(utc_now()),
     }
     if alive:
@@ -737,9 +802,11 @@ def build_ack_observations(
     stdout_captured_at: datetime,
     rendered_line: str,
     rendered_captured_at: datetime,
+    stdout_event_id: str | None = None,
+    rendered_event_id: str | None = None,
 ) -> dict[str, Any]:
     """Describe stdout and its later terminal rendering without independence claims."""
-    stdout_event_id = secrets.token_hex(32)
+    stdout_event_id = stdout_event_id or secrets.token_hex(32)
     return {
         "process_stdout": {
             "event_id": stdout_event_id,
@@ -749,7 +816,7 @@ def build_ack_observations(
             "captured_at_utc": utc_text(stdout_captured_at),
         },
         "rendered_terminal_copy": {
-            "event_id": secrets.token_hex(32),
+            "event_id": rendered_event_id or secrets.token_hex(32),
             "source": "rendered_terminal_copy",
             "provenance": "terminal_render_of_captured_stdout",
             "derivative_of_event_id": stdout_event_id,
@@ -810,7 +877,7 @@ $proc.StartInfo = $psi
 if (-not $proc.Start()) {{ throw 'provider process did not start' }}
 $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
 $stderrTask = $proc.StandardError.ReadToEndAsync()
-@{{ provider_pid = $proc.Id; actual_environment_names = @($allowedNames | Sort-Object) }} | ConvertTo-Json -Compress | `
+@{{ provider_pid = $proc.Id; constructed_initial_environment_names = @($allowedNames | Sort-Object) }} | ConvertTo-Json -Compress | `
     Set-Content -LiteralPath {_ps_quote(str(running))}
 $proc.WaitForExit()
 $utf8 = [System.Text.UTF8Encoding]::new($false)
@@ -845,6 +912,8 @@ def _readback_exact_ack(hwnd: int, expected: str) -> str | None:
 
 
 def _workflow_context() -> dict[str, Any]:
+    if not SHA1_RE.fullmatch(ECOSYSTEM_CONTRACT_SHA):
+        raise ProducerError("consumer_contract_not_pinned")
     required = {
         "repository": os.environ.get("GITHUB_REPOSITORY"),
         "workflow": os.environ.get("GITHUB_WORKFLOW"),
@@ -897,13 +966,201 @@ def _roles(counts: Mapping[str, int]) -> list[tuple[str, str]]:
     ]
 
 
+def _fixture_environment_names(provider: str) -> list[str]:
+    names = set(COMMON_ENV) | {"CI", "NO_COLOR", PROVIDERS[provider].credential}
+    if provider == "gemini":
+        names.add("GEMINI_CLI_NO_RELAUNCH")
+    return sorted(names)
+
+
+def _fixture_argv_projection(provider: str, prompt: str) -> list[str]:
+    argv = provider_argv(
+        provider,
+        prompt,
+        admin_policy=Path(r"C:\fixture\gemini-deny-all.toml"),
+    )
+    if provider == "gemini":
+        projection = ["node.exe", "gemini.js", *argv[1:]]
+        projection[projection.index("--admin-policy") + 1] = "gemini-deny-all.toml"
+        return projection
+    return [PROVIDER_EXE_NAMES[provider], *argv[1:]]
+
+
+def _fixture_agent(
+    provider: str,
+    role: str,
+    *,
+    rung: int,
+    ordinal: int,
+    observed_at: datetime,
+) -> dict[str, Any]:
+    nonce = sha256_bytes(f"fixture:{rung}:{provider}:{ordinal}".encode())
+    expected = f"ACK_REAL_VENDOR provider={provider} role={role} nonce={nonce}"
+    prompt = f"Reply with exactly this one line and nothing else: {expected}"
+    root_pid = rung * 1000 + ordinal * 10
+    provider_pid = root_pid + 2
+    rows = [
+        {"pid": root_pid, "parent_pid": None, "exe_name": TERMINAL_EXE},
+        {"pid": root_pid + 1, "parent_pid": root_pid, "exe_name": "powershell.exe"},
+        {
+            "pid": provider_pid,
+            "parent_pid": root_pid + 1,
+            "exe_name": PROVIDER_EXE_NAMES[provider],
+        },
+    ]
+    title = f"SC_SCALE {provider} {role} {nonce}"
+    window = {
+        "hwnd": root_pid + 100_000,
+        "pid": root_pid,
+        "exe_name": TERMINAL_EXE,
+        "class_name": TERMINAL_CLASS,
+        "title": title,
+    }
+    guard = build_guard_receipt(
+        provider=provider,
+        role=role,
+        nonce=nonce,
+        pre=window,
+        post=window,
+        provider_pid=provider_pid,
+        process_rows=rows,
+        session_id=3,
+        shell_session_id=3,
+        provider_session_id=3,
+        provider_entrypoint_sha256=PROVIDER_ENTRYPOINT_SHA256[provider],
+    )
+    observations = build_ack_observations(
+        stdout_line=expected,
+        stdout_captured_at=observed_at,
+        rendered_line=expected,
+        rendered_captured_at=observed_at + timedelta(seconds=1),
+        stdout_event_id=sha256_bytes(f"stdout:{rung}:{provider}:{ordinal}".encode()),
+        rendered_event_id=sha256_bytes(f"render:{rung}:{provider}:{ordinal}".encode()),
+    )
+    pin = provider_pins()[provider]
+    return {
+        "provider": provider,
+        "role": role,
+        "nonce": nonce,
+        "nonce_sha256": sha256_bytes(nonce.encode()),
+        "expected_sha256": sha256_bytes(expected.encode()),
+        "observed_acks": observations,
+        "status": "pass",
+        "provider_outcome": {"auth_failed": False, "quota_exceeded": False},
+        "started_at_utc": utc_text(observed_at - timedelta(minutes=1)),
+        "completed_at_utc": utc_text(observed_at + timedelta(minutes=1)),
+        "invocation": {
+            "provider": provider,
+            "exit_code": 0,
+            "actual_argv_projection": _fixture_argv_projection(provider, prompt),
+            "constructed_initial_environment_names": _fixture_environment_names(provider),
+            "observed_cli_version": pin["expected_cli_version"],
+            "observed_help_sha256": pin["expected_help_sha256"],
+            "observed_entrypoint_sha256": pin["expected_entrypoint_sha256"],
+            "observed_provider_exe_name": pin["expected_provider_exe_name"],
+        },
+        "producer_guard_assertion": guard,
+    }
+
+
+def write_contract_fixture(output_dir: Path) -> None:
+    """Generate sanitized deterministic bytes for cross-repo contract testing."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    generated_at = datetime(2026, 7, 17, 17, 0, tzinfo=UTC)
+    rows: list[dict[str, Any]] = []
+    for rung_index, (count, provider_counts) in enumerate(RUNGS.items()):
+        started = generated_at - timedelta(minutes=45 - rung_index * 10)
+        agents: list[dict[str, Any]] = []
+        provider_ordinal = 0
+        for provider, provider_count in provider_counts.items():
+            for ordinal in range(1, provider_count + 1):
+                provider_ordinal += 1
+                agents.append(
+                    _fixture_agent(
+                        provider,
+                        f"real{provider}-{ordinal}",
+                        rung=count,
+                        ordinal=provider_ordinal,
+                        observed_at=started + timedelta(minutes=2),
+                    )
+                )
+        rung_value = {
+            "schema": RUNG_SCHEMA,
+            "run_id": "SC_SCALE_" + sha256_bytes(f"fixture-run:{count}".encode())[:32],
+            "verdict": "PASS",
+            "agent_count": count,
+            "provider_counts": provider_counts,
+            "logical_simulation": False,
+            "visible_windows": True,
+            "started_at_utc": utc_text(started),
+            "completed_at_utc": utc_text(started + timedelta(minutes=5)),
+            "cli_invocation_accounting": {"cli_invocations_total": count},
+            "agents": agents,
+        }
+        path = output_dir / f"rung-{count}.json"
+        path.write_text(json.dumps(rung_value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        rows.append(
+            {
+                "agent_count": count,
+                "file": path.name,
+                "sha256": sha256_file(path),
+                "size_bytes": path.stat().st_size,
+            }
+        )
+    manifest = {
+        "schema": SCHEMA,
+        "generated_at": utc_text(generated_at),
+        "producer_context": {
+            "repository": "rblake2320/selfconnect",
+            "workflow": "Restricted Real-Agent Scale Producer",
+            "ref": "refs/heads/master",
+            "producer_run_id": 123456,
+            "producer_run_attempt": 1,
+            "actor": "restricted-producer",
+            "ecosystem_contract_sha": "b" * 40,
+            "core_head_sha": "a" * 40,
+        },
+        "requested_runner_config": _requested_runner_config(),
+        "code_identity": {
+            "core_remote": CORE_REMOTE,
+            "core_branch": CORE_BRANCH,
+            "core_head_sha": "a" * 40,
+            "fresh_detached_checkout": True,
+            "git_config_cleared": True,
+            "python_env_cleared": True,
+            "core_tree_sha256": sha256_bytes(b"fixture-core-tree"),
+            "producer_sha256": sha256_file(Path(__file__)),
+            "guard_module_sha256": sha256_bytes(b"fixture-guard-module"),
+        },
+        "provider_pins": provider_pins(),
+        "rungs": rows,
+    }
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    bundle_files = {
+        path.name: sha256_file(path)
+        for path in sorted(output_dir.glob("*.json"))
+        if path.name != "vector.json"
+    }
+    vector = {
+        "schema": "selfconnect.restricted_scale_contract_fixture.v1",
+        "generator_source_sha256": sha256_file(Path(__file__)),
+        "bundle_files": bundle_files,
+    }
+    (output_dir / "vector.json").write_text(
+        json.dumps(vector, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
 def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, Any]:
     if agent_count not in RUNGS:
         raise ProducerError("unsupported_rung")
     started = utc_now()
     run_id = "SC_SCALE_" + secrets.token_hex(16)
     processes: list[subprocess.Popen[bytes]] = []
-    spawn_roots: list[int] = []
+    spawn_roots: list[NativeProcessIdentity] = []
     launched_titles: list[str] = []
     agents: list[dict[str, Any]] = []
     states: list[dict[str, Any]] = []
@@ -979,7 +1236,7 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                 pre = _wait_for(lambda title=title: _find_exact_window(title), 30)
                 if pre["hwnd"] in original_hwnds:
                     raise ProducerError("stale_window_reused")
-                spawn_roots.append(int(ready_data["pid"]))
+                spawn_roots.append(capture_process_identity(int(ready_data["pid"])))
                 states.append(
                     {
                         "provider": provider,
@@ -1017,7 +1274,6 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                     30,
                 )
                 provider_pid = int(running_data["provider_pid"])
-                spawn_roots.append(provider_pid)
                 pre = state["pre"]
                 runtime = state["runtime"]
                 actual_argv_projection = _verify_provider_process(
@@ -1027,9 +1283,11 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                     expected_argv=state["expected_argv"],
                     expected_nonce=str(state["nonce"]),
                 )
-                actual_environment_names = running_data.get("actual_environment_names")
+                constructed_initial_environment_names = running_data.get(
+                    "constructed_initial_environment_names"
+                )
                 expected_environment_names = sorted(state["env"])
-                if actual_environment_names != expected_environment_names:
+                if constructed_initial_environment_names != expected_environment_names:
                     raise ProducerError("provider_process_environment_mismatch")
                 state["started_at"] = utc_now()
                 rows = _process_rows(int(pre["pid"]))
@@ -1041,7 +1299,9 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                     process_rows=rows,
                     provider_session_id=provider_session_id,
                     actual_argv_projection=actual_argv_projection,
-                    actual_environment_names=actual_environment_names,
+                    constructed_initial_environment_names=(
+                        constructed_initial_environment_names
+                    ),
                 )
 
             # This is the scale barrier: every role process is alive together.
@@ -1132,7 +1392,9 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                             "provider": provider,
                             "exit_code": 0,
                             "actual_argv_projection": state["actual_argv_projection"],
-                            "actual_environment_names": state["actual_environment_names"],
+                            "constructed_initial_environment_names": state[
+                                "constructed_initial_environment_names"
+                            ],
                             "observed_cli_version": pin["expected_cli_version"],
                             "observed_help_sha256": pin["expected_help_sha256"],
                             "observed_entrypoint_sha256": sha256_file(runtime.entrypoint),
@@ -1153,7 +1415,9 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
             )
             # Terminal roots are only eligible for termination after proving
             # that no pre-existing or concurrently opened terminal shares them.
-            spawn_roots.extend(launched_terminal_pids)
+            spawn_roots.extend(
+                capture_process_identity(pid) for pid in launched_terminal_pids
+            )
             validate_interval(started, completed, now=completed)
             result = {
                 "schema": RUNG_SCHEMA,
@@ -1173,7 +1437,7 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
             return result
         finally:
             try:
-                cleanup_process_tree(sorted(set(spawn_roots)))
+                cleanup_process_tree(spawn_roots)
             finally:
                 for process in processes:
                     if process.poll() is None:

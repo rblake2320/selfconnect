@@ -41,7 +41,8 @@ jobs:
           PYTHONHOME: ""
           PYTHONPATH: ""
           VIRTUAL_ENV: ""
-          ECOSYSTEM_CONTRACT_SHA: 93610d14414cd4e273a4192bfbfafd65a0bad67a
+          # Fail closed until the consumer PR merges; then pin its immutable main SHA.
+          ECOSYSTEM_CONTRACT_SHA: CONSUMER_MAIN_SHA_REQUIRED
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
