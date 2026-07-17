@@ -34,6 +34,25 @@ def test_provider_env_rejects_missing_common_child_environment() -> None:
         producer.provider_env("codex", {"PATH": "bin", "OPENAI_API_KEY": "secret"})
 
 
+def test_canonical_source_hash_is_newline_independent_and_strict(
+    tmp_path: producer.Path,
+) -> None:
+    lf = tmp_path / "lf.py"
+    crlf = tmp_path / "crlf.py"
+    cr = tmp_path / "cr.py"
+    invalid = tmp_path / "invalid.py"
+    lf.write_bytes(b"one\ntwo\n")
+    crlf.write_bytes(b"one\r\ntwo\r\n")
+    cr.write_bytes(b"one\rtwo\r")
+    invalid.write_bytes(b"one\n\xff")
+    expected = producer.sha256_bytes(b"one\ntwo\n")
+    assert producer.sha256_canonical_source(lf) == expected
+    assert producer.sha256_canonical_source(crlf) == expected
+    assert producer.sha256_canonical_source(cr) == expected
+    with pytest.raises(UnicodeDecodeError):
+        producer.sha256_canonical_source(invalid)
+
+
 @pytest.mark.parametrize(
     "provider,token",
     [
@@ -565,7 +584,15 @@ def test_committed_contract_fixture_is_generator_output(tmp_path: producer.Path)
     for name in expected_names:
         assert (generated / name).read_bytes() == (committed / name).read_bytes()
     vector = producer.json.loads((committed / "vector.json").read_text(encoding="utf-8"))
-    assert vector["generator_source_sha256"] == producer.sha256_file(producer.Path(producer.__file__))
+    manifest = producer.json.loads(
+        (committed / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert vector["generator_source_sha256"] == producer.sha256_canonical_source(
+        producer.Path(producer.__file__)
+    )
+    assert vector["generator_source_sha256"] == manifest["code_identity"][
+        "producer_sha256"
+    ]
     assert vector["bundle_files"] == {
         name: producer.sha256_file(committed / name)
         for name in sorted(expected_names - {"vector.json"})

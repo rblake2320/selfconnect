@@ -200,6 +200,13 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_canonical_source(path: Path) -> str:
+    """Hash UTF-8 source with platform checkout newlines canonicalized to LF."""
+    text = path.read_bytes().decode("utf-8", errors="strict")
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    return sha256_bytes(normalized.encode("utf-8"))
+
+
 def crypto_nonce() -> str:
     raw = secrets.token_bytes(32)
     if type(raw) is not bytes or len(raw) != 32:
@@ -1129,7 +1136,7 @@ def write_contract_fixture(output_dir: Path) -> None:
             "git_config_cleared": True,
             "python_env_cleared": True,
             "core_tree_sha256": sha256_bytes(b"fixture-core-tree"),
-            "producer_sha256": sha256_file(Path(__file__)),
+            "producer_sha256": sha256_canonical_source(Path(__file__)),
             "guard_module_sha256": sha256_bytes(b"fixture-guard-module"),
         },
         "provider_pins": provider_pins(),
@@ -1146,7 +1153,7 @@ def write_contract_fixture(output_dir: Path) -> None:
     }
     vector = {
         "schema": "selfconnect.restricted_scale_contract_fixture.v1",
-        "generator_source_sha256": sha256_file(Path(__file__)),
+        "generator_source_sha256": sha256_canonical_source(Path(__file__)),
         "bundle_files": bundle_files,
     }
     (output_dir / "vector.json").write_text(
