@@ -489,6 +489,13 @@ def _process_rows(root_pid: int) -> list[dict[str, int | str | None]]:
     return rows
 
 
+def _projected_pids(rows: Sequence[Mapping[str, int | str | None]]) -> set[int]:
+    try:
+        return {int(row["pid"]) for row in rows}
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ProducerError("process_tree_projection_invalid") from exc
+
+
 def _process_session_id(pid: int) -> int:
     import ctypes
 
@@ -499,13 +506,19 @@ def _process_session_id(pid: int) -> int:
 
 
 def _verify_provider_process(
-    pid: int, runtime: ProviderRuntime, *, expected_nonce: str | None = None
-) -> None:
+    pid: int,
+    runtime: ProviderRuntime,
+    *,
+    provider: str | None = None,
+    expected_argv: Sequence[str] | None = None,
+    expected_nonce: str | None = None,
+) -> list[str]:
     try:
         process = psutil.Process(pid)
         actual_exe = Path(process.exe()).resolve()
         expected_exe = Path(runtime.command_prefix[0]).resolve()
-        command_line = [item.lower() for item in process.cmdline()]
+        raw_command_line = process.cmdline()
+        command_line = [item.lower() for item in raw_command_line]
     except (psutil.Error, OSError) as exc:
         raise ProducerError("provider_process_unavailable") from exc
     if actual_exe != expected_exe:
@@ -516,6 +529,23 @@ def _verify_provider_process(
         raise ProducerError("provider_process_entrypoint_mismatch")
     if expected_nonce is not None and not any(expected_nonce in item for item in command_line):
         raise ProducerError("provider_process_role_mismatch")
+    if provider is None or expected_argv is None:
+        return []
+    expected_command = [*runtime.command_prefix, *expected_argv[1:]]
+    if len(raw_command_line) != len(expected_command):
+        raise ProducerError("provider_process_argv_mismatch")
+    for actual, expected in zip(raw_command_line, expected_command, strict=True):
+        if actual == expected:
+            continue
+        try:
+            if Path(actual).resolve() == Path(expected).resolve():
+                continue
+        except OSError:
+            pass
+        raise ProducerError("provider_process_argv_mismatch")
+    # The full native command line is checked above.  Only the non-secret,
+    # stable policy projection is emitted; prompts and temporary paths are not.
+    return list(PROVIDER_PROJECTIONS[provider])
 
 
 def _assert_concurrent_provider_barrier(states: Sequence[Mapping[str, Any]]) -> None:
@@ -656,6 +686,66 @@ def cleanup_process_tree(root_pids: Sequence[int], *, wait_s: float = 10.0) -> d
     return receipt
 
 
+def assert_disposable_terminal_host(
+    *,
+    preexisting_terminal_pids: set[int],
+    launched_terminal_pids: set[int],
+    launched_titles: set[str],
+    observed_terminal_windows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Prove that cleanup cannot terminate a pre-existing shared terminal host."""
+    if preexisting_terminal_pids or not launched_terminal_pids:
+        raise ProducerError("disposable_terminal_host_not_established")
+    if preexisting_terminal_pids & launched_terminal_pids:
+        raise ProducerError("disposable_terminal_host_not_established")
+    observed = {
+        (int(row.get("pid", 0)), str(row.get("title", "")))
+        for row in observed_terminal_windows
+        if str(row.get("exe_name", "")).lower() == TERMINAL_EXE.lower()
+    }
+    expected = {
+        (int(row.get("pid", 0)), str(row.get("title", "")))
+        for row in observed_terminal_windows
+        if int(row.get("pid", 0)) in launched_terminal_pids
+        and str(row.get("title", "")) in launched_titles
+    }
+    if not observed or observed != expected:
+        raise ProducerError("disposable_terminal_host_not_established")
+    return {
+        "preexisting_terminal_process_count": 0,
+        "launched_terminal_process_count": len(launched_terminal_pids),
+        "safe_to_terminate_launched_hosts": True,
+    }
+
+
+def build_ack_observations(
+    *,
+    stdout_line: str,
+    stdout_captured_at: datetime,
+    rendered_line: str,
+    rendered_captured_at: datetime,
+) -> dict[str, Any]:
+    """Describe stdout and its later terminal rendering without independence claims."""
+    stdout_event_id = secrets.token_hex(32)
+    return {
+        "process_stdout": {
+            "event_id": stdout_event_id,
+            "source": "process_stdout",
+            "provenance": "provider_stdout_pipe",
+            "sha256": sha256_bytes(stdout_line.encode()),
+            "captured_at_utc": utc_text(stdout_captured_at),
+        },
+        "rendered_terminal_copy": {
+            "event_id": secrets.token_hex(32),
+            "source": "rendered_terminal_copy",
+            "provenance": "uia_copy_of_provider_stdout",
+            "derivative_of_event_id": stdout_event_id,
+            "sha256": sha256_bytes(rendered_line.encode()),
+            "captured_at_utc": utc_text(rendered_captured_at),
+        },
+    }
+
+
 def _ps_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -670,7 +760,7 @@ def _write_agent_script(
     *,
     admin_policy: Path,
     runtime: ProviderRuntime,
-) -> tuple[Path, Path, Path, Path, Path]:
+) -> tuple[Path, Path, Path, Path, Path, list[str]]:
     title = f"SC_SCALE {provider} {role} {nonce}"
     ready, running, go, done = (
         workdir / f"{role}.{suffix}.json" for suffix in ("ready", "running", "go", "done")
@@ -681,18 +771,38 @@ def _write_agent_script(
     argument_text = _ps_quote(subprocess.list2cmdline(arguments))
     script = workdir / f"{role}.ps1"
     error_log = workdir / f"{role}.err.log"
+    environment_names = sorted(provider_env(provider, os.environ))
+    ps_environment_names = "@(" + ",".join(_ps_quote(name) for name in environment_names) + ")"
     text = f"""
 $ErrorActionPreference = 'Stop'
 $Host.UI.RawUI.WindowTitle = {_ps_quote(title)}
 @{{ pid = $PID }} | ConvertTo-Json -Compress | Set-Content -LiteralPath {_ps_quote(str(ready))}
 while (-not (Test-Path -LiteralPath {_ps_quote(str(go))})) {{ Start-Sleep -Milliseconds 100 }}
-$proc = Start-Process -FilePath {_ps_quote(executable)} `
-    -ArgumentList {argument_text} -NoNewWindow -PassThru `
-    -RedirectStandardOutput {_ps_quote(str(log))} `
-    -RedirectStandardError {_ps_quote(str(error_log))}
-@{{ provider_pid = $proc.Id }} | ConvertTo-Json -Compress | `
+$allowedNames = {ps_environment_names}
+$psi = [System.Diagnostics.ProcessStartInfo]::new()
+$psi.FileName = {_ps_quote(executable)}
+$psi.Arguments = {argument_text}
+$psi.UseShellExecute = $false
+$psi.CreateNoWindow = $true
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError = $true
+$psi.EnvironmentVariables.Clear()
+foreach ($name in $allowedNames) {{
+    $value = [Environment]::GetEnvironmentVariable($name, 'Process')
+    if ($null -eq $value) {{ throw "required provider environment missing: $name" }}
+    $psi.EnvironmentVariables[$name] = $value
+}}
+$proc = [System.Diagnostics.Process]::new()
+$proc.StartInfo = $psi
+if (-not $proc.Start()) {{ throw 'provider process did not start' }}
+$stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+$stderrTask = $proc.StandardError.ReadToEndAsync()
+@{{ provider_pid = $proc.Id; actual_environment_names = @($allowedNames | Sort-Object) }} | ConvertTo-Json -Compress | `
     Set-Content -LiteralPath {_ps_quote(str(running))}
 $proc.WaitForExit()
+$utf8 = [System.Text.UTF8Encoding]::new($false)
+[IO.File]::WriteAllText({_ps_quote(str(log))}, $stdoutTask.GetAwaiter().GetResult(), $utf8)
+[IO.File]::WriteAllText({_ps_quote(str(error_log))}, $stderrTask.GetAwaiter().GetResult(), $utf8)
 $Host.UI.RawUI.WindowTitle = {_ps_quote(title)}
 Get-Content -LiteralPath {_ps_quote(str(log))} | Write-Host
 @{{ provider_pid = $proc.Id; exit_code = $proc.ExitCode }} | ConvertTo-Json -Compress | `
@@ -700,7 +810,7 @@ Get-Content -LiteralPath {_ps_quote(str(log))} | Write-Host
 while ($true) {{ Start-Sleep -Seconds 3600 }}
 """
     script.write_text(text.strip() + "\n", encoding="utf-8")
-    return script, ready, running, done, error_log
+    return script, ready, running, done, error_log, argv
 
 
 def _wait_for(predicate: Callable[[], Any], timeout_s: float) -> Any:
@@ -721,12 +831,13 @@ def _readback_exact_ack(hwnd: int, expected: str) -> str | None:
     return _observed_exact_line(text, expected)
 
 
-def _workflow_context() -> dict[str, Any]:
+def _requested_runner_config() -> dict[str, Any]:
     required = {
         "repository": os.environ.get("GITHUB_REPOSITORY"),
         "workflow": os.environ.get("GITHUB_WORKFLOW"),
         "environment": os.environ.get("SCALE_PRODUCER_ENVIRONMENT"),
         "runner_group": os.environ.get("SCALE_RUNNER_GROUP"),
+        "job": os.environ.get("SCALE_PRODUCER_JOB"),
         "ref": os.environ.get("GITHUB_REF"),
     }
     expected = {
@@ -734,6 +845,7 @@ def _workflow_context() -> dict[str, Any]:
         "workflow": "Restricted Real-Agent Scale Producer",
         "environment": "scale-readiness-producer",
         "runner_group": "selfconnect-scale-ephemeral",
+        "job": "restricted-scale-producer",
         "ref": "refs/heads/master",
     }
     if required != expected:
@@ -752,12 +864,7 @@ def _workflow_context() -> dict[str, Any]:
         "producer_run_id": int(os.environ["GITHUB_RUN_ID"]),
         "producer_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
         "actor": os.environ["GITHUB_ACTOR"],
-        "ephemeral_runner": os.environ.get("SCALE_RUNNER_EPHEMERAL") == "true",
-        "dedicated_runner": os.environ.get("SCALE_RUNNER_DEDICATED") == "true",
-        "sensitive_repositories_present": (
-            os.environ.get("SENSITIVE_REPOSITORIES_PRESENT") == "true"
-        ),
-        "runner_image_sha256": image,
+        "requested_runner_image_sha256": image,
         "ecosystem_contract_sha": ecosystem_sha,
         "core_head_sha": core_sha,
     }
@@ -789,6 +896,13 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
         if sha256_file(admin_policy) != GEMINI_DENY_ALL_POLICY_SHA256:
             raise ProducerError("gemini_admin_policy_digest_mismatch")
         try:
+            preexisting_terminal_pids = {
+                process.pid
+                for process in psutil.process_iter(["name"])
+                if str(process.info.get("name", "")).lower() == TERMINAL_EXE.lower()
+            }
+            if preexisting_terminal_pids:
+                raise ProducerError("disposable_terminal_host_not_established")
             original_hwnds = {
                 row["hwnd"] for row in sc_cli.list_window_records(query="", limit=300)
             }
@@ -802,7 +916,7 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                 log = workdir / f"{role}.log"
                 env = provider_env(provider, os.environ)
                 runtime = resolve_provider_runtime(provider, env)
-                script, ready, running, done, error_log = _write_agent_script(
+                script, ready, running, done, error_log, expected_argv = _write_agent_script(
                     workdir,
                     provider,
                     role,
@@ -846,7 +960,7 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                 pre = _wait_for(lambda title=title: _find_exact_window(title), 30)
                 if pre["hwnd"] in original_hwnds:
                     raise ProducerError("stale_window_reused")
-                spawn_roots.append(int(pre["pid"]))
+                spawn_roots.append(int(ready_data["pid"]))
                 states.append(
                     {
                         "provider": provider,
@@ -861,6 +975,7 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                         "go": workdir / f"{role}.go.json",
                         "env": env,
                         "runtime": runtime,
+                        "expected_argv": expected_argv,
                         "title": title,
                         "ready_data": ready_data,
                         "pre": pre,
@@ -883,18 +998,31 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                     30,
                 )
                 provider_pid = int(running_data["provider_pid"])
+                spawn_roots.append(provider_pid)
                 pre = state["pre"]
                 runtime = state["runtime"]
-                _verify_provider_process(provider_pid, runtime, expected_nonce=str(state["nonce"]))
+                actual_argv_projection = _verify_provider_process(
+                    provider_pid,
+                    runtime,
+                    provider=str(state["provider"]),
+                    expected_argv=state["expected_argv"],
+                    expected_nonce=str(state["nonce"]),
+                )
+                actual_environment_names = running_data.get("actual_environment_names")
+                expected_environment_names = sorted(state["env"])
+                if actual_environment_names != expected_environment_names:
+                    raise ProducerError("provider_process_environment_mismatch")
                 state["started_at"] = utc_now()
                 rows = _process_rows(int(pre["pid"]))
-                if provider_pid not in {pid for pid, _name in rows}:
+                if provider_pid not in _projected_pids(rows):
                     raise ProducerError("provider_outside_spawn_tree")
                 provider_session_id = _process_session_id(provider_pid)
                 state.update(
                     provider_pid=provider_pid,
                     process_rows=rows,
                     provider_session_id=provider_session_id,
+                    actual_argv_projection=actual_argv_projection,
+                    actual_environment_names=actual_environment_names,
                 )
 
             # This is the scale barrier: every role process is alive together.
@@ -945,21 +1073,21 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                 diagnostic_text = text + error_log.read_text(encoding="utf-8", errors="replace")
                 stdout_line = _observed_exact_line(text, expected)
                 stdout_captured_at = utc_now()
-                uia_line = _wait_for(
+                rendered_line = _wait_for(
                     lambda hwnd=int(post["hwnd"]), expected=expected: (
                         _readback_exact_ack(hwnd, expected)
                     ),
                     10,
                 )
-                uia_captured_at = utc_now()
-                while uia_captured_at <= stdout_captured_at:
+                rendered_captured_at = utc_now()
+                while rendered_captured_at <= stdout_captured_at:
                     time.sleep(0.001)
-                    uia_captured_at = utc_now()
+                    rendered_captured_at = utc_now()
                 agent_completed_at = utc_now()
                 if (
                     done_data.get("exit_code") != 0
                     or stdout_line is None
-                    or uia_line is None
+                    or rendered_line is None
                     or _provider_failure_observed(diagnostic_text)
                 ):
                     raise ProducerError("provider_ack_failed")
@@ -973,22 +1101,12 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                         "expected_sha256": sha256_bytes(expected.encode()),
                         "started_at_utc": utc_text(state["started_at"]),
                         "completed_at_utc": utc_text(agent_completed_at),
-                        "observed_acks": {
-                            "process_stdout": {
-                                "event_id": secrets.token_hex(32),
-                                "source": "process_stdout",
-                                "provenance": "provider_stdout_pipe",
-                                "sha256": sha256_bytes(stdout_line.encode()),
-                                "captured_at_utc": utc_text(stdout_captured_at),
-                            },
-                            "uia_terminal": {
-                                "event_id": secrets.token_hex(32),
-                                "source": "uia_terminal",
-                                "provenance": "uia_text_capture",
-                                "sha256": sha256_bytes(uia_line.encode()),
-                                "captured_at_utc": utc_text(uia_captured_at),
-                            },
-                        },
+                        "observed_acks": build_ack_observations(
+                            stdout_line=stdout_line,
+                            stdout_captured_at=stdout_captured_at,
+                            rendered_line=rendered_line,
+                            rendered_captured_at=rendered_captured_at,
+                        ),
                         "status": "pass",
                         "provider_outcome": {"auth_failed": False, "quota_exceeded": False},
                         "invocation": {
@@ -997,6 +1115,8 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                             "requested_auth_mode": "api-key",
                             "credential_env_allowlist": [PROVIDERS[provider].credential],
                             "argv_policy": PROVIDER_PROJECTIONS[provider],
+                            "actual_argv_projection": state["actual_argv_projection"],
+                            "actual_environment_names": state["actual_environment_names"],
                             "observed_cli_version": pin["expected_cli_version"],
                             "observed_help_sha256": pin["expected_help_sha256"],
                             "observed_entrypoint_sha256": sha256_file(runtime.entrypoint),
@@ -1008,6 +1128,16 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                     }
                 )
             completed = utc_now()
+            launched_terminal_pids = {int(state["pre"]["pid"]) for state in states}
+            disposable_host_proof = assert_disposable_terminal_host(
+                preexisting_terminal_pids=preexisting_terminal_pids,
+                launched_terminal_pids=launched_terminal_pids,
+                launched_titles=set(launched_titles),
+                observed_terminal_windows=sc_cli.list_window_records(query="", limit=300),
+            )
+            # Terminal roots are only eligible for termination after proving
+            # that no pre-existing or concurrently opened terminal shares them.
+            spawn_roots.extend(launched_terminal_pids)
             validate_interval(started, completed, now=completed)
             result = {
                 "schema": RUNG_SCHEMA,
@@ -1017,6 +1147,7 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                 "provider_counts": RUNGS[agent_count],
                 "logical_simulation": False,
                 "visible_windows": True,
+                "disposable_terminal_host_proof": disposable_host_proof,
                 "started_at_utc": utc_text(started),
                 "completed_at_utc": utc_text(completed),
                 "cli_invocation_accounting": {"cli_invocations_total": len(agents)},
@@ -1026,10 +1157,6 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
             output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             return result
         finally:
-            for title in launched_titles:
-                row = _find_exact_window(title)
-                if row is not None:
-                    spawn_roots.append(int(row["pid"]))
             try:
                 cleanup_process_tree(sorted(set(spawn_roots)))
             finally:
@@ -1039,18 +1166,12 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
 
 
 def produce_bundle(output_dir: Path, *, timeout_s: float) -> None:
-    context = _workflow_context()
+    requested_runner_config = _requested_runner_config()
     identity = verify_checkout(ROOT)
     verify_provider_home_isolation(os.environ)
     pins = verify_provider_pins(os.environ)
     if not all(identity[name] for name in ("git_config_cleared", "python_env_cleared")):
         raise ProducerError("producer_environment_not_cleared")
-    if (
-        not context["ephemeral_runner"]
-        or not context["dedicated_runner"]
-        or context["sensitive_repositories_present"]
-    ):
-        raise ProducerError("producer_runner_not_isolated")
     if output_dir.exists():
         raise ProducerError("output_already_exists")
     output_dir.mkdir(parents=True)
@@ -1069,7 +1190,7 @@ def produce_bundle(output_dir: Path, *, timeout_s: float) -> None:
     manifest = {
         "schema": SCHEMA,
         "generated_at": utc_text(utc_now()),
-        "producer_context": context,
+        "requested_runner_config": requested_runner_config,
         "code_identity": identity,
         "provider_pins": pins,
         "rungs": rows,

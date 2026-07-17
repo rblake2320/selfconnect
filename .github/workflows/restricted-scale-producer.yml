@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       runner_image_sha256:
-        description: Approved ephemeral runner image digest
+        description: Requested runner image digest (not runtime attestation)
         required: true
         type: string
 
@@ -19,6 +19,7 @@ concurrency:
 
 jobs:
   produce:
+    name: restricted-scale-producer
     runs-on:
       group: selfconnect-scale-ephemeral
     environment: scale-readiness-producer
@@ -41,9 +42,7 @@ jobs:
           GIT_CONFIG_GLOBAL: NUL
           SCALE_PRODUCER_ENVIRONMENT: scale-readiness-producer
           SCALE_RUNNER_GROUP: selfconnect-scale-ephemeral
-          SCALE_RUNNER_EPHEMERAL: "true"
-          SCALE_RUNNER_DEDICATED: "true"
-          SENSITIVE_REPOSITORIES_PRESENT: "false"
+          SCALE_PRODUCER_JOB: restricted-scale-producer
           PYTHONHOME: ""
           PYTHONPATH: ""
           VIRTUAL_ENV: ""

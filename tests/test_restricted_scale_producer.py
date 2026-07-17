@@ -239,6 +239,12 @@ def test_guard_emits_recomputable_relational_process_projection() -> None:
     assert receipt["digest"] == producer.sha256_bytes(producer.canonical_json(claim))
 
 
+def test_projected_pid_reader_accepts_mapping_rows_and_rejects_malformed() -> None:
+    assert producer._projected_pids(_tree()) == {200, 250, 300}
+    with pytest.raises(producer.ProducerError, match="process_tree_projection_invalid"):
+        producer._projected_pids([{"parent_pid": None, "exe_name": "missing-pid"}])
+
+
 def test_provider_process_rejects_wrong_implementation_executable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -251,6 +257,34 @@ def test_provider_process_rejects_wrong_implementation_executable(
     runtime = producer.ProviderRuntime((r"C:\approved.exe",), producer.Path(r"C:\approved.exe"))
     with pytest.raises(producer.ProducerError, match="provider_process_executable_mismatch"):
         producer._verify_provider_process(10, runtime)
+
+
+def test_provider_process_projection_is_derived_from_native_command_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = producer.ProviderRuntime((r"C:\approved.exe",), producer.Path(r"C:\approved.exe"))
+    expected = producer.provider_argv("codex", "nonce-prompt")
+    fake = SimpleNamespace(
+        exe=lambda: r"C:\approved.exe",
+        cmdline=lambda: [r"C:\approved.exe", *expected[1:]],
+    )
+    monkeypatch.setattr(producer.psutil, "Process", lambda _pid: fake)
+    assert producer._verify_provider_process(
+        10,
+        runtime,
+        provider="codex",
+        expected_argv=expected,
+        expected_nonce="nonce-prompt",
+    ) == producer.PROVIDER_PROJECTIONS["codex"]
+    fake.cmdline = lambda: [r"C:\approved.exe", "exec", "nonce-prompt"]
+    with pytest.raises(producer.ProducerError, match="provider_process_argv_mismatch"):
+        producer._verify_provider_process(
+            10,
+            runtime,
+            provider="codex",
+            expected_argv=expected,
+            expected_nonce="nonce-prompt",
+        )
 
 
 def test_concurrency_barrier_rejects_agent_that_already_exited(
@@ -320,3 +354,103 @@ def test_cleanup_reports_no_remaining_processes(monkeypatch: pytest.MonkeyPatch)
     receipt = producer.cleanup_process_tree([44], wait_s=0)
     assert receipt["completed"] is True
     assert receipt["remaining_count"] == 0
+
+
+def test_disposable_terminal_proof_rejects_preexisting_or_unowned_window() -> None:
+    owned = {
+        "pid": 20,
+        "title": "SC_SCALE codex realcodex-1 n",
+        "exe_name": producer.TERMINAL_EXE,
+    }
+    with pytest.raises(producer.ProducerError, match="disposable_terminal_host_not_established"):
+        producer.assert_disposable_terminal_host(
+            preexisting_terminal_pids={20},
+            launched_terminal_pids={20},
+            launched_titles={str(owned["title"])},
+            observed_terminal_windows=[owned],
+        )
+    unowned = {"pid": 20, "title": "User terminal", "exe_name": producer.TERMINAL_EXE}
+    with pytest.raises(producer.ProducerError, match="disposable_terminal_host_not_established"):
+        producer.assert_disposable_terminal_host(
+            preexisting_terminal_pids=set(),
+            launched_terminal_pids={20},
+            launched_titles={str(owned["title"])},
+            observed_terminal_windows=[owned, unowned],
+        )
+    assert producer.assert_disposable_terminal_host(
+        preexisting_terminal_pids=set(),
+        launched_terminal_pids={20},
+        launched_titles={str(owned["title"])},
+        observed_terminal_windows=[owned],
+    )["safe_to_terminate_launched_hosts"] is True
+
+
+def test_rendered_terminal_ack_is_explicitly_derivative(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = iter(("a" * 64, "b" * 64))
+    monkeypatch.setattr(producer.secrets, "token_hex", lambda _size: next(ids))
+    first = datetime(2026, 7, 17, 1, tzinfo=UTC)
+    second = first + timedelta(milliseconds=1)
+    observations = producer.build_ack_observations(
+        stdout_line="ACK",
+        stdout_captured_at=first,
+        rendered_line="ACK",
+        rendered_captured_at=second,
+    )
+    assert set(observations) == {"process_stdout", "rendered_terminal_copy"}
+    assert observations["rendered_terminal_copy"]["derivative_of_event_id"] == (
+        observations["process_stdout"]["event_id"]
+    )
+    assert "independent" not in producer.canonical_json(observations).decode()
+
+
+def test_provider_wrapper_clears_environment_at_actual_child_process(
+    tmp_path: producer.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PATH", "bin")
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    runtime = producer.ProviderRuntime((r"C:\codex.exe",), producer.Path(r"C:\codex.exe"))
+    script, *_rest = producer._write_agent_script(
+        tmp_path,
+        "codex",
+        "realcodex-1",
+        "n" * 64,
+        "prompt",
+        tmp_path / "agent.log",
+        admin_policy=tmp_path / "deny.toml",
+        runtime=runtime,
+    )
+    text = script.read_text(encoding="utf-8")
+    assert "$psi.EnvironmentVariables.Clear()" in text
+    assert "actual_environment_names" in text
+    assert "Start-Process" not in text
+    assert "secret" not in text
+
+
+def test_requested_runner_config_does_not_assert_isolation_facts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = {
+        "GITHUB_REPOSITORY": "rblake2320/selfconnect",
+        "GITHUB_WORKFLOW": "Restricted Real-Agent Scale Producer",
+        "SCALE_PRODUCER_ENVIRONMENT": "scale-readiness-producer",
+        "SCALE_RUNNER_GROUP": "selfconnect-scale-ephemeral",
+        "SCALE_PRODUCER_JOB": "restricted-scale-producer",
+        "GITHUB_REF": "refs/heads/master",
+        "SCALE_RUNNER_IMAGE_SHA256": "a" * 64,
+        "ECOSYSTEM_CONTRACT_SHA": producer.ECOSYSTEM_CONTRACT_SHA,
+        "GITHUB_SHA": "b" * 40,
+        "GITHUB_RUN_ID": "1",
+        "GITHUB_RUN_ATTEMPT": "1",
+        "GITHUB_ACTOR": "owner",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    config = producer._requested_runner_config()
+    encoded = producer.canonical_json(config).decode()
+    assert config["job"] == "restricted-scale-producer"
+    assert config["requested_runner_image_sha256"] == "a" * 64
+    assert "ephemeral_runner" not in encoded
+    assert "dedicated_runner" not in encoded
+    assert "sensitive_repositories_present" not in encoded
