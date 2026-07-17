@@ -1,12 +1,17 @@
 """Unit tests for sc_tasks — lifecycle, locked claiming, retry, chain."""
 
 import json
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from sc_tasks import (
+    FileLock,
     GENESIS_HASH,
+    LockReleaseError,
     LockTimeout,
     TaskBoard,
     TaskState,
@@ -70,9 +75,68 @@ def test_claim_is_exclusive_across_threads(board):
     for th in threads:
         th.start()
     for th in threads:
-        th.join()
+        th.join(timeout=15.0)
+    stuck = [th.name for th in threads if th.is_alive()]
+    assert not stuck, f"claim workers did not terminate: {stuck}"
     assert len(claimed) == 6
     assert len(set(claimed)) == 6  # no double-claims
+
+
+def test_native_lock_file_persists_and_successor_acquires(tmp_path):
+    lock_path = tmp_path / "board.lock"
+    first = FileLock(lock_path, timeout=0.2).acquire()
+    first.release()
+    assert lock_path.exists()
+    successor = FileLock(lock_path, timeout=0.2).acquire()
+    successor.release()
+    assert lock_path.exists()
+
+
+def test_live_process_lock_is_not_broken_by_stale_age_and_recovers_on_exit(tmp_path):
+    lock_path = tmp_path / "process.lock"
+    code = (
+        "import os,sys,time\n"
+        "from pathlib import Path\n"
+        "from sc_tasks import FileLock\n"
+        "FileLock(Path(sys.argv[1]), timeout=1, stale_after=.001).acquire()\n"
+        "print('LOCKED', flush=True)\n"
+        "time.sleep(.4)\n"
+        "os._exit(0)\n"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", code, str(lock_path)],
+        cwd=Path(__file__).resolve().parents[1],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert proc.stdout is not None
+        assert proc.stdout.readline().strip() == "LOCKED"
+        with pytest.raises(LockTimeout):
+            FileLock(lock_path, timeout=0.05, stale_after=0.001).acquire()
+        assert proc.wait(timeout=3) == 0
+        recovered = FileLock(lock_path, timeout=0.5, stale_after=0.001).acquire()
+        recovered.release()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=3)
+
+
+def test_release_error_is_normalized_and_close_still_releases(tmp_path, monkeypatch):
+    lock_path = tmp_path / "release.lock"
+    owner = FileLock(lock_path, timeout=0.2).acquire()
+
+    def fail_unlock(_fd):
+        raise OSError("simulated native unlock failure")
+
+    monkeypatch.setattr(owner, "_unlock_fd", fail_unlock)
+    with pytest.raises(LockReleaseError, match="could not release") as caught:
+        owner.release()
+    assert isinstance(caught.value.__cause__, OSError)
+    successor = FileLock(lock_path, timeout=0.5).acquire()
+    successor.release()
 
 
 def test_dependencies_gate_claiming(board):

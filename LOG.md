@@ -1,5 +1,38 @@
 # Engineering Log
 
+## 2026-07-17 - Native Cross-Process Task Locks
+
+- Base: `c01708e30d7c048f1cfb696658c27b2f439e406a`.
+- Trigger: issue #23 reported that
+  `test_claim_is_exclusive_across_threads` could stop indefinitely on Windows.
+- Reproduction: the unchanged test hung in 2 of 11 bounded subprocess runs.
+  Faulthandler showed the test thread blocked in an unbounded join while the
+  remaining claimant threads waited in `FileLock.acquire`; the thread that had
+  owned the lock was no longer running.
+- Root cause: `FileLock.release` closed its descriptor, attempted one unlink,
+  and swallowed every `OSError`. A transient Windows sharing violation left an
+  orphan containing the still-live process PID. The stale-file algorithm also
+  allowed age-based deletion of a live POSIX owner and could strand a malformed
+  file after a failed owner-record write.
+- Change: replaced pathname creation/deletion ownership with native advisory
+  locking: `msvcrt.locking` on Windows and `fcntl.flock` on POSIX. The lock file
+  remains present; the kernel releases exclusivity when the descriptor closes
+  or the process exits. There is no stale-age unlink, owner-record write, or
+  compare-then-unlink race.
+- Evidence: bounded thread joins identify any recurrence; native-lock tests
+  cover a live process held beyond `stale_after`, automatic recovery after
+  process exit, persistent lock-file reuse, and normalized unlock errors.
+- Boundary: advisory locking protects cooperating SelfConnect processes. It is
+  not a hostile-filesystem or mandatory-locking claim. On POSIX, callers must
+  not retain the descriptor across `fork`, and the persistent lock directory
+  must not be reaped or have entries replaced: `flock` follows the inherited
+  open-file description/inode rather than enforcing pathname identity. A
+  process that ignores the advisory protocol can still modify the lock
+  pathname.
+- Rollback: revert the issue #23 pull-request commit. Restoring pathname unlink
+  ownership restores the reproduced orphan, live-owner, and malformed-file
+  failure classes.
+
 ## 2026-07-15 - Deterministic External-Target Smoke Probe
 
 - Base: `56d5ff1802dca5d4136bcc32fa37aa122d4944dc`.

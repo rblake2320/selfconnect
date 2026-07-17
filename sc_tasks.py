@@ -10,7 +10,7 @@ pattern from sc_identity).
 Layout under a task root directory:
 
     <root>/tasks/<task_id>.json     one file per task (atomic replace)
-    <root>/locks/<name>.lock        cross-process locks (O_EXCL + stale detect)
+    <root>/locks/<name>.lock        cross-process native advisory locks
     <root>/events.jsonl             hash-chained event log
 
 No Win32, no network — safe to import anywhere (hooks, remote nodes, tests).
@@ -19,6 +19,7 @@ No Win32, no network — safe to import anywhere (hooks, remote nodes, tests).
 from __future__ import annotations
 
 import hashlib
+import errno
 import json
 import os
 import time
@@ -78,6 +79,10 @@ class LockTimeout(RuntimeError):
     """Raised when a file lock cannot be acquired in time."""
 
 
+class LockReleaseError(RuntimeError):
+    """Raised when an owned file lock cannot be released safely."""
+
+
 @dataclass
 class Task:
     task_id: str
@@ -111,11 +116,12 @@ class Task:
 
 
 class FileLock:
-    """Cross-process lock via O_CREAT|O_EXCL with stale-lock breaking.
+    """Cross-process lock backed by the operating system.
 
-    Lock file holds "<pid>:<unix_ts>". A lock older than ``stale_after``
-    seconds, or whose owning pid is dead, is broken. Works on Windows and
-    POSIX; no dependencies beyond stdlib (+psutil if available for pid check).
+    Windows uses ``msvcrt.locking`` and POSIX uses ``fcntl.flock``. The lock
+    file is intentionally persistent; descriptor close releases the kernel
+    lock on normal exit and process death. ``stale_after`` remains accepted for
+    API compatibility but is not used to break a live kernel lock.
     """
 
     def __init__(self, path: Path, timeout: float = LOCK_TIMEOUT_SECONDS,
@@ -125,52 +131,69 @@ class FileLock:
         self.stale_after = stale_after
         self._fd: Optional[int] = None
 
-    def _pid_alive(self, pid: int) -> bool:
-        try:
-            import psutil
-            return psutil.pid_exists(pid)
-        except Exception:
-            return True  # assume alive; stale_after still applies
+    @staticmethod
+    def _lock_fd(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        if os.name == "nt":
+            import msvcrt
 
-    def _try_break_stale(self) -> None:
-        try:
-            raw = self.path.read_text(encoding="utf-8").strip()
-            pid_s, ts_s = raw.split(":", 1)
-            pid, ts = int(pid_s), float(ts_s)
-        except (OSError, ValueError):
-            return  # unreadable or vanished — let acquire retry
-        expired = (time.time() - ts) > self.stale_after
-        if expired or not self._pid_alive(pid):
-            try:
-                self.path.unlink()
-            except OSError:
-                pass
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    @staticmethod
+    def _unlock_fd(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_UN)
+
+    @staticmethod
+    def _is_contention(exc: OSError) -> bool:
+        return exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}
 
     def acquire(self) -> FileLock:
-        deadline = time.time() + self.timeout
+        deadline = time.monotonic() + self.timeout
         self.path.parent.mkdir(parents=True, exist_ok=True)
         while True:
+            fd = os.open(str(self.path), os.O_CREAT | os.O_RDWR, 0o600)
             try:
-                self._fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                os.write(self._fd, f"{os.getpid()}:{time.time()}".encode())
-                return self
-            except FileExistsError:
-                self._try_break_stale()
-                if time.time() >= deadline:
+                self._lock_fd(fd)
+            except OSError as exc:
+                os.close(fd)
+                if not self._is_contention(exc):
+                    raise
+                if time.monotonic() >= deadline:
                     raise LockTimeout(f"could not acquire {self.path}") from None
                 time.sleep(LOCK_POLL_SECONDS)
+                continue
+            self._fd = fd
+            return self
 
     def release(self) -> None:
-        if self._fd is not None:
-            try:
-                os.close(self._fd)
-            except OSError:
-                pass
-            self._fd = None
+        fd = self._fd
+        if fd is None:
+            return
+        self._fd = None
+        failure: OSError | None = None
         try:
-            self.path.unlink()
-        except OSError:
-            pass
+            self._unlock_fd(fd)
+        except OSError as exc:
+            failure = exc
+        finally:
+            try:
+                os.close(fd)
+            except OSError as exc:
+                failure = failure or exc
+        if failure is not None:
+            raise LockReleaseError(f"could not release {self.path}") from failure
 
     def __enter__(self) -> FileLock:
         return self.acquire()
@@ -468,6 +491,7 @@ __all__ = [
     "GENESIS_HASH",
     "TERMINAL_STATES",
     "FileLock",
+    "LockReleaseError",
     "LockTimeout",
     "Task",
     "TaskBoard",

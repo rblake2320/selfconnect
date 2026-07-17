@@ -1,5 +1,42 @@
 # Decision Record
 
+## 2026-07-17 - Use Native Advisory Locks for Task Claims
+
+### Decision
+
+Use the operating system's cross-process advisory lock on a persistent file:
+`msvcrt.locking` on Windows and `fcntl.flock` on POSIX. Never use pathname
+deletion, PID age, or a written owner record as the exclusivity authority.
+
+### Why
+
+Pathname locks require a safe stale-break operation, but portable unlink APIs
+cannot condition deletion on inode identity. Age-based breaking can delete a
+live owner, PID reuse weakens liveness checks, failed/partial record writes can
+strand malformed locks, and compare-then-unlink races can delete a successor.
+Native locks already provide the needed lifecycle: descriptor close and
+process death release the kernel-held lock without deleting the pathname.
+
+### Consequences
+
+- Lock files persist after release and can be reused safely.
+- `stale_after` remains an accepted compatibility parameter but never permits
+  breaking a live native lock.
+- Process death releases the lock without a stale-record parser.
+- Unlock/close failures surface as `LockReleaseError`; they are not reported as
+  successful release.
+- The mechanism is advisory and local-filesystem scoped, not a distributed or
+  hostile-filesystem locking guarantee.
+- On POSIX, a process must not fork while holding a task lock unless the child
+  closes the inherited descriptor immediately. `flock` follows the inherited
+  open-file description, so a child can otherwise retain or release the
+  parent's lock. SelfConnect's supported Windows and spawn-based process paths
+  do not use this fork pattern.
+- The lock directory must be stable and excluded from temporary-file reapers or
+  manual pathname replacement. POSIX `flock` protects the opened inode, not the
+  pathname; replacing the persistent lock file could create a second lock
+  authority. SelfConnect never unlinks these files.
+
 ## 2026-07-15 - Test Discovery Against an Exact External Window
 
 ### Decision
