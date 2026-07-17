@@ -2,11 +2,6 @@ name: Restricted Real-Agent Scale Producer
 
 on:
   workflow_dispatch:
-    inputs:
-      runner_image_sha256:
-        description: Requested runner image digest (not runtime attestation)
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -46,7 +41,6 @@ jobs:
           PYTHONHOME: ""
           PYTHONPATH: ""
           VIRTUAL_ENV: ""
-          SCALE_RUNNER_IMAGE_SHA256: ${{ inputs.runner_image_sha256 }}
           ECOSYSTEM_CONTRACT_SHA: 93610d14414cd4e273a4192bfbfafd65a0bad67a
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

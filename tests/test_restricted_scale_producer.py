@@ -7,14 +7,19 @@ import pytest
 from experiments.fabric_v2 import restricted_scale_producer as producer
 
 
+def _source_env(**extra: str) -> dict[str, str]:
+    source = {name: f"value-{name.lower()}" for name in producer.COMMON_ENV}
+    source.update(extra)
+    return source
+
+
 def test_provider_env_never_leaks_gemini_key_to_other_providers() -> None:
-    source = {
-        "PATH": "bin",
-        "OPENAI_API_KEY": "openai",
-        "ANTHROPIC_API_KEY": "anthropic",
-        "GEMINI_API_KEY": "gemini",
-        "PYTHONPATH": "unsafe",
-    }
+    source = _source_env(
+        OPENAI_API_KEY="openai",
+        ANTHROPIC_API_KEY="anthropic",
+        GEMINI_API_KEY="gemini",
+        PYTHONPATH="unsafe",
+    )
     assert "GEMINI_API_KEY" not in producer.provider_env("codex", source)
     assert "GEMINI_API_KEY" not in producer.provider_env("claude", source)
     assert set(producer.provider_env("gemini", source)) & {
@@ -22,6 +27,11 @@ def test_provider_env_never_leaks_gemini_key_to_other_providers() -> None:
         "ANTHROPIC_API_KEY",
         "GEMINI_API_KEY",
     } == {"GEMINI_API_KEY"}
+
+
+def test_provider_env_rejects_missing_common_child_environment() -> None:
+    with pytest.raises(producer.ProducerError, match="provider_common_environment_missing"):
+        producer.provider_env("codex", {"PATH": "bin", "OPENAI_API_KEY": "secret"})
 
 
 @pytest.mark.parametrize(
@@ -87,12 +97,11 @@ def test_provider_policy_digests_match_frozen_consumer_contract() -> None:
 def test_provider_pin_check_rejects_unpinned_help_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = {
-        "PATH": "bin",
-        "OPENAI_API_KEY": "openai",
-        "ANTHROPIC_API_KEY": "anthropic",
-        "GEMINI_API_KEY": "gemini",
-    }
+    source = _source_env(
+        OPENAI_API_KEY="openai",
+        ANTHROPIC_API_KEY="anthropic",
+        GEMINI_API_KEY="gemini",
+    )
     monkeypatch.setattr(
         producer,
         "resolve_provider_runtime",
@@ -275,7 +284,7 @@ def test_provider_process_projection_is_derived_from_native_command_line(
         provider="codex",
         expected_argv=expected,
         expected_nonce="nonce-prompt",
-    ) == producer.PROVIDER_PROJECTIONS["codex"]
+    ) == [r"C:\approved.exe".split("\\")[-1], *expected[1:]]
     fake.cmdline = lambda: [r"C:\approved.exe", "exec", "nonce-prompt"]
     with pytest.raises(producer.ProducerError, match="provider_process_argv_mismatch"):
         producer._verify_provider_process(
@@ -408,7 +417,8 @@ def test_rendered_terminal_ack_is_explicitly_derivative(
 def test_provider_wrapper_clears_environment_at_actual_child_process(
     tmp_path: producer.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("PATH", "bin")
+    for name, value in _source_env().items():
+        monkeypatch.setenv(name, value)
     monkeypatch.setenv("OPENAI_API_KEY", "secret")
     runtime = producer.ProviderRuntime((r"C:\codex.exe",), producer.Path(r"C:\codex.exe"))
     script, *_rest = producer._write_agent_script(
@@ -438,7 +448,6 @@ def test_requested_runner_config_does_not_assert_isolation_facts(
         "SCALE_RUNNER_GROUP": "selfconnect-scale-ephemeral",
         "SCALE_PRODUCER_JOB": "restricted-scale-producer",
         "GITHUB_REF": "refs/heads/master",
-        "SCALE_RUNNER_IMAGE_SHA256": "a" * 64,
         "ECOSYSTEM_CONTRACT_SHA": producer.ECOSYSTEM_CONTRACT_SHA,
         "GITHUB_SHA": "b" * 40,
         "GITHUB_RUN_ID": "1",
@@ -447,10 +456,23 @@ def test_requested_runner_config_does_not_assert_isolation_facts(
     }
     for name, value in values.items():
         monkeypatch.setenv(name, value)
+    context = producer._workflow_context()
     config = producer._requested_runner_config()
     encoded = producer.canonical_json(config).decode()
-    assert config["job"] == "restricted-scale-producer"
-    assert config["requested_runner_image_sha256"] == "a" * 64
+    assert config == {
+        "environment": "scale-readiness-producer",
+        "runner_group": "selfconnect-scale-ephemeral",
+    }
+    assert set(context) == {
+        "repository",
+        "workflow",
+        "ref",
+        "producer_run_id",
+        "producer_run_attempt",
+        "actor",
+        "ecosystem_contract_sha",
+        "core_head_sha",
+    }
     assert "ephemeral_runner" not in encoded
     assert "dedicated_runner" not in encoded
     assert "sensitive_repositories_present" not in encoded

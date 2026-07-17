@@ -224,7 +224,10 @@ def validate_interval(started: datetime, completed: datetime, *, now: datetime) 
 
 def provider_env(provider: str, source: Mapping[str, str]) -> dict[str, str]:
     policy = PROVIDERS[provider]
-    env = {key: value for key, value in source.items() if key.upper() in COMMON_ENV}
+    source_by_upper = {key.upper(): value for key, value in source.items()}
+    if COMMON_ENV - set(source_by_upper):
+        raise ProducerError("provider_common_environment_missing")
+    env = {key: source_by_upper[key] for key in sorted(COMMON_ENV)}
     credential = source.get(policy.credential)
     if not credential:
         raise ProducerError(f"{provider}_credential_missing")
@@ -543,9 +546,19 @@ def _verify_provider_process(
         except OSError:
             pass
         raise ProducerError("provider_process_argv_mismatch")
-    # The full native command line is checked above.  Only the non-secret,
-    # stable policy projection is emitted; prompts and temporary paths are not.
-    return list(PROVIDER_PROJECTIONS[provider])
+    # The full native command line is checked above. Emit a portable projection:
+    # executable basenames plus exact arguments, with only the temporary policy
+    # directory removed. The nonce-bound prompt remains present and verifiable.
+    projection = [Path(raw_command_line[0]).name]
+    offset = 1
+    if len(runtime.command_prefix) > 1:
+        projection.append(Path(raw_command_line[1]).name)
+        offset = 2
+    projection.extend(raw_command_line[offset:])
+    if provider == "gemini":
+        policy_index = projection.index("--admin-policy") + 1
+        projection[policy_index] = Path(projection[policy_index]).name
+    return projection
 
 
 def _assert_concurrent_provider_barrier(states: Sequence[Mapping[str, Any]]) -> None:
@@ -738,7 +751,7 @@ def build_ack_observations(
         "rendered_terminal_copy": {
             "event_id": secrets.token_hex(32),
             "source": "rendered_terminal_copy",
-            "provenance": "uia_copy_of_provider_stdout",
+            "provenance": "terminal_render_of_captured_stdout",
             "derivative_of_event_id": stdout_event_id,
             "sha256": sha256_bytes(rendered_line.encode()),
             "captured_at_utc": utc_text(rendered_captured_at),
@@ -831,7 +844,7 @@ def _readback_exact_ack(hwnd: int, expected: str) -> str | None:
     return _observed_exact_line(text, expected)
 
 
-def _requested_runner_config() -> dict[str, Any]:
+def _workflow_context() -> dict[str, Any]:
     required = {
         "repository": os.environ.get("GITHUB_REPOSITORY"),
         "workflow": os.environ.get("GITHUB_WORKFLOW"),
@@ -850,23 +863,29 @@ def _requested_runner_config() -> dict[str, Any]:
     }
     if required != expected:
         raise ProducerError("producer_context_invalid")
-    image = os.environ.get("SCALE_RUNNER_IMAGE_SHA256", "").lower()
     ecosystem_sha = os.environ.get("ECOSYSTEM_CONTRACT_SHA", "").lower()
     core_sha = os.environ.get("GITHUB_SHA", "").lower()
     if (
-        not SHA256_RE.fullmatch(image)
-        or ecosystem_sha != ECOSYSTEM_CONTRACT_SHA
+        ecosystem_sha != ECOSYSTEM_CONTRACT_SHA
         or not SHA1_RE.fullmatch(core_sha)
     ):
         raise ProducerError("producer_context_invalid")
     return {
-        **required,
+        "repository": required["repository"],
+        "workflow": required["workflow"],
+        "ref": required["ref"],
         "producer_run_id": int(os.environ["GITHUB_RUN_ID"]),
         "producer_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
         "actor": os.environ["GITHUB_ACTOR"],
-        "requested_runner_image_sha256": image,
         "ecosystem_contract_sha": ecosystem_sha,
         "core_head_sha": core_sha,
+    }
+
+
+def _requested_runner_config() -> dict[str, str]:
+    return {
+        "environment": "scale-readiness-producer",
+        "runner_group": "selfconnect-scale-ephemeral",
     }
 
 
@@ -1112,9 +1131,6 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                         "invocation": {
                             "provider": provider,
                             "exit_code": 0,
-                            "requested_auth_mode": "api-key",
-                            "credential_env_allowlist": [PROVIDERS[provider].credential],
-                            "argv_policy": PROVIDER_PROJECTIONS[provider],
                             "actual_argv_projection": state["actual_argv_projection"],
                             "actual_environment_names": state["actual_environment_names"],
                             "observed_cli_version": pin["expected_cli_version"],
@@ -1129,7 +1145,7 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                 )
             completed = utc_now()
             launched_terminal_pids = {int(state["pre"]["pid"]) for state in states}
-            disposable_host_proof = assert_disposable_terminal_host(
+            assert_disposable_terminal_host(
                 preexisting_terminal_pids=preexisting_terminal_pids,
                 launched_terminal_pids=launched_terminal_pids,
                 launched_titles=set(launched_titles),
@@ -1147,7 +1163,6 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                 "provider_counts": RUNGS[agent_count],
                 "logical_simulation": False,
                 "visible_windows": True,
-                "disposable_terminal_host_proof": disposable_host_proof,
                 "started_at_utc": utc_text(started),
                 "completed_at_utc": utc_text(completed),
                 "cli_invocation_accounting": {"cli_invocations_total": len(agents)},
@@ -1166,6 +1181,7 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
 
 
 def produce_bundle(output_dir: Path, *, timeout_s: float) -> None:
+    context = _workflow_context()
     requested_runner_config = _requested_runner_config()
     identity = verify_checkout(ROOT)
     verify_provider_home_isolation(os.environ)
@@ -1190,6 +1206,7 @@ def produce_bundle(output_dir: Path, *, timeout_s: float) -> None:
     manifest = {
         "schema": SCHEMA,
         "generated_at": utc_text(utc_now()),
+        "producer_context": context,
         "requested_runner_config": requested_runner_config,
         "code_identity": identity,
         "provider_pins": pins,

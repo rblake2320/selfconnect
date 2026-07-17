@@ -7,12 +7,14 @@ readiness.
 
 ## Evidence semantics
 
-- `requested_runner_config` records workflow requests and identifiers. A runner
-  group name or requested image digest is not runtime attestation and is not
+- `producer_context` records factual GitHub workflow/run identity.
+  `requested_runner_config` contains only the requested environment and runner
+  group. A runner group name is not runtime attestation and is not
   evidence that the machine is ephemeral, dedicated, or free of sensitive data.
 - `actual_argv_projection` is emitted only after the native provider process
   command line exactly matches the pinned executable and restricted invocation.
-  Prompts and temporary paths are checked but omitted from the evidence.
+  It retains the nonce-bound prompt and normalizes only executable and temporary
+  policy paths to basenames.
 - `actual_environment_names` is the exact sorted name set used to construct the
   provider child's `ProcessStartInfo` environment after clearing inherited
   variables. Values and credentials are never emitted.
