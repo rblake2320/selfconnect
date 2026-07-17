@@ -1,0 +1,68 @@
+name: Restricted Real-Agent Scale Producer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: restricted-scale-producer
+  cancel-in-progress: false
+
+jobs:
+  produce:
+    name: restricted-scale-producer
+    runs-on:
+      group: selfconnect-scale-ephemeral
+    environment: scale-readiness-producer
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          clean: true
+      - name: Detach and clear ambient configuration
+        shell: pwsh
+        run: |
+          git checkout --detach $env:GITHUB_SHA
+          git config --local --unset-all http.https://github.com/.extraheader 2>$null
+          Remove-Item Env:PYTHONHOME,Env:PYTHONPATH,Env:VIRTUAL_ENV -ErrorAction SilentlyContinue
+      - name: Run restricted producer
+        shell: pwsh
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: NUL
+          SCALE_PRODUCER_ENVIRONMENT: scale-readiness-producer
+          SCALE_RUNNER_GROUP: selfconnect-scale-ephemeral
+          SCALE_PRODUCER_JOB: restricted-scale-producer
+          PYTHONHOME: ""
+          PYTHONPATH: ""
+          VIRTUAL_ENV: ""
+          # Reviewed selfconnect-ecosystem consumer contract on main.
+          ECOSYSTEM_CONTRACT_SHA: f07b4a72ca900da531a8596168600977a6678427
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python experiments\fabric_v2\restricted_scale_producer.py `
+            --output-dir (Join-Path $env:RUNNER_TEMP 'scale-evidence')
+          Compress-Archive -Path (Join-Path $env:RUNNER_TEMP 'scale-evidence\*') `
+            -DestinationPath (Join-Path $env:RUNNER_TEMP 'scale-evidence.zip')
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: ${{ runner.temp }}/scale-evidence.zip
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: restricted-scale-evidence
+          path: ${{ runner.temp }}/scale-evidence.zip
+          if-no-files-found: error
+          retention-days: 30
+      - name: Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'scale-evidence') -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'scale-evidence.zip') -Force -ErrorAction SilentlyContinue

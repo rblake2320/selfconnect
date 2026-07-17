@@ -1,0 +1,2272 @@
+{
+  "agent_count": 20,
+  "agents": [
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "e9ac8d3c6b393877531c98cd660f92c55e73c05a3b6a3f02c92f7582adbda39f",
+      "invocation": {
+        "actual_argv_projection": [
+          "claude.exe",
+          "--print",
+          "--bare",
+          "--safe-mode",
+          "--permission-mode",
+          "plan",
+          "--tools",
+          "",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=claude role=realclaude-1 nonce=74c3a3dbe9f0058a0b551867efe17df8bc688677b2be76b06e9afac4a7dad016"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "ANTHROPIC_API_KEY",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "2.1.183 (Claude Code)",
+        "observed_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+        "observed_help_sha256": "6c5e44dd5a1c5b04f7deb4d734ac6d2585561509c6a2d5deaed6914665e03b29",
+        "observed_provider_exe_name": "claude.exe",
+        "provider": "claude"
+      },
+      "nonce": "74c3a3dbe9f0058a0b551867efe17df8bc688677b2be76b06e9afac4a7dad016",
+      "nonce_sha256": "147edbcda4281b72ee3387a42b9f24cb0175aaadf2f1b6f6bb5ef8ac4b048a36",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "3101861c52ee1f9bf68f66cdfdf1b07dcb4fc68ff9d6317cbe7e6dbb69f07c6f",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "e9ac8d3c6b393877531c98cd660f92c55e73c05a3b6a3f02c92f7582adbda39f",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "3101861c52ee1f9bf68f66cdfdf1b07dcb4fc68ff9d6317cbe7e6dbb69f07c6f",
+          "event_id": "edfba07fb3f3329fe44b0ed88a757eb89ee3be20faf10e68c2dd715a9cf4e846",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "e9ac8d3c6b393877531c98cd660f92c55e73c05a3b6a3f02c92f7582adbda39f",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20010
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20010,
+              "pid": 20011
+            },
+            {
+              "exe_name": "claude.exe",
+              "parent_pid": 20011,
+              "pid": 20012
+            }
+          ],
+          "process_tree_sha256": "37884aa34e0fa180683d7f512438a959c8a44b9d8e609e3c3062ecc119b91986",
+          "provider_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20012,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "3e4af75b74c6c6e503c8ddeb9a0fe6f4250f824c6bf5a2ea4306e11ed3625caf",
+          "tree_root_pid": 20010,
+          "window_pid": 20010
+        },
+        "digest": "f3021b334721b148e2163600536a70b0fc5a49b5ee22fcce7826540e82d345ad"
+      },
+      "provider": "claude",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realclaude-1",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "fbef9af69bb94d7d7209397f50295e409c4b8b69e04f389103bba647e0ea587d",
+      "invocation": {
+        "actual_argv_projection": [
+          "claude.exe",
+          "--print",
+          "--bare",
+          "--safe-mode",
+          "--permission-mode",
+          "plan",
+          "--tools",
+          "",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=claude role=realclaude-2 nonce=fdf96e123ed9e87a72a9605b67669db3b2a23dfe765d6c82946974b490fa7e0d"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "ANTHROPIC_API_KEY",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "2.1.183 (Claude Code)",
+        "observed_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+        "observed_help_sha256": "6c5e44dd5a1c5b04f7deb4d734ac6d2585561509c6a2d5deaed6914665e03b29",
+        "observed_provider_exe_name": "claude.exe",
+        "provider": "claude"
+      },
+      "nonce": "fdf96e123ed9e87a72a9605b67669db3b2a23dfe765d6c82946974b490fa7e0d",
+      "nonce_sha256": "d6f25681e9d0eaeca0b99c13ee27c0d20f9200607226ef6262910b12be0a5d80",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "34afa8520ddee02ca1555334a9c77e3ea33a206dcc4452b9de28c4e0347f80a7",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "fbef9af69bb94d7d7209397f50295e409c4b8b69e04f389103bba647e0ea587d",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "34afa8520ddee02ca1555334a9c77e3ea33a206dcc4452b9de28c4e0347f80a7",
+          "event_id": "034fe3082b71ebe9b08628eb0a076a3e77dfb638df910a57eff045407a761d56",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "fbef9af69bb94d7d7209397f50295e409c4b8b69e04f389103bba647e0ea587d",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20020
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20020,
+              "pid": 20021
+            },
+            {
+              "exe_name": "claude.exe",
+              "parent_pid": 20021,
+              "pid": 20022
+            }
+          ],
+          "process_tree_sha256": "c05989d928a5567fe7f1c642dd0f44753e430c971adadaeeeaee522cfa6857e0",
+          "provider_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20022,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "c35159d4c133f0c6c3999aa9e7770e0a17d12a05d45a7cf806f3a2c4183c19cb",
+          "tree_root_pid": 20020,
+          "window_pid": 20020
+        },
+        "digest": "5723a86666cc5cee8d77708c48d8646890b8700263bc1d34e8b448c03a07735e"
+      },
+      "provider": "claude",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realclaude-2",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "d99725ac6b9541c29fe69ab9b2b88f92045f0a51328d0c11b42c83ba6073897c",
+      "invocation": {
+        "actual_argv_projection": [
+          "claude.exe",
+          "--print",
+          "--bare",
+          "--safe-mode",
+          "--permission-mode",
+          "plan",
+          "--tools",
+          "",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=claude role=realclaude-3 nonce=709276c9d9b59df21e3b8a879c2d0f2a762f8fb6ace772b1c15887dc2a667f35"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "ANTHROPIC_API_KEY",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "2.1.183 (Claude Code)",
+        "observed_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+        "observed_help_sha256": "6c5e44dd5a1c5b04f7deb4d734ac6d2585561509c6a2d5deaed6914665e03b29",
+        "observed_provider_exe_name": "claude.exe",
+        "provider": "claude"
+      },
+      "nonce": "709276c9d9b59df21e3b8a879c2d0f2a762f8fb6ace772b1c15887dc2a667f35",
+      "nonce_sha256": "67bd08151aeb138a3635d6688eda3daea35991e120f6e526866f35aaa4c74eb4",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "4bbad029e162a251e2c3f1810d93551fe25c6ab40a2de698817fc06aaec602a7",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "d99725ac6b9541c29fe69ab9b2b88f92045f0a51328d0c11b42c83ba6073897c",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "4bbad029e162a251e2c3f1810d93551fe25c6ab40a2de698817fc06aaec602a7",
+          "event_id": "f26584e22ef20361132a4975ec42e73ba8314ec6a97d7c1c41a474b0886e9350",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "d99725ac6b9541c29fe69ab9b2b88f92045f0a51328d0c11b42c83ba6073897c",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20030
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20030,
+              "pid": 20031
+            },
+            {
+              "exe_name": "claude.exe",
+              "parent_pid": 20031,
+              "pid": 20032
+            }
+          ],
+          "process_tree_sha256": "1e4d232c3a5f40e82b3672657fc309a1a6c80880cf8f99478a5d25719dfe6e8c",
+          "provider_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20032,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "0315b43e54085ef4db9a969c956cbb82ef98c7e897c2ef8e5665062dc5e0ae4f",
+          "tree_root_pid": 20030,
+          "window_pid": 20030
+        },
+        "digest": "28d3be1c97a9b97446a915c3f201a17f4d109b2f65ce9ec8b8e005804a75ce21"
+      },
+      "provider": "claude",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realclaude-3",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "7c2002620c6d51ed2560e9f6ce5ba4c329d9c26e0df6114eab77251cc953c61d",
+      "invocation": {
+        "actual_argv_projection": [
+          "claude.exe",
+          "--print",
+          "--bare",
+          "--safe-mode",
+          "--permission-mode",
+          "plan",
+          "--tools",
+          "",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=claude role=realclaude-4 nonce=9f6dcaf7d078af0b22b8abe2d37684614a176dbca2731d9a22ed74f0010e92bd"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "ANTHROPIC_API_KEY",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "2.1.183 (Claude Code)",
+        "observed_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+        "observed_help_sha256": "6c5e44dd5a1c5b04f7deb4d734ac6d2585561509c6a2d5deaed6914665e03b29",
+        "observed_provider_exe_name": "claude.exe",
+        "provider": "claude"
+      },
+      "nonce": "9f6dcaf7d078af0b22b8abe2d37684614a176dbca2731d9a22ed74f0010e92bd",
+      "nonce_sha256": "df59540d205f9d9a9df91a24be17bdbbe3460d1a26d9efd2210bdf41cea76512",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "03fc676732722adc79f001cfa286d2a949ebb39a55a9f018b4c881fbb2440bf2",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "7c2002620c6d51ed2560e9f6ce5ba4c329d9c26e0df6114eab77251cc953c61d",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "03fc676732722adc79f001cfa286d2a949ebb39a55a9f018b4c881fbb2440bf2",
+          "event_id": "aeb9ff7a1b1012b43cb6cde0c2598ada76268a58bd5abbce7811c1ad5e2423cf",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "7c2002620c6d51ed2560e9f6ce5ba4c329d9c26e0df6114eab77251cc953c61d",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20040
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20040,
+              "pid": 20041
+            },
+            {
+              "exe_name": "claude.exe",
+              "parent_pid": 20041,
+              "pid": 20042
+            }
+          ],
+          "process_tree_sha256": "0eb8ff68d832eec2773b69908c59cfff959a55fc82b67eb663c5c48f50ecdcd7",
+          "provider_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20042,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "aa4f2556a36e1a71a87c42fd9959d86086873099be0ddfa38a53446c5b20815d",
+          "tree_root_pid": 20040,
+          "window_pid": 20040
+        },
+        "digest": "82a75255539ce6182e4d139701fd55cee25025adb5d4cd70a069263e7433b224"
+      },
+      "provider": "claude",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realclaude-4",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "7badc44232ca55471b7faff93b19fe776ed5646154c6edf348312069cec06073",
+      "invocation": {
+        "actual_argv_projection": [
+          "claude.exe",
+          "--print",
+          "--bare",
+          "--safe-mode",
+          "--permission-mode",
+          "plan",
+          "--tools",
+          "",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=claude role=realclaude-5 nonce=9caed3327eb243943c3c78f4f198ccd6541b445fac9e849a0265b1f5b6e3d1af"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "ANTHROPIC_API_KEY",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "2.1.183 (Claude Code)",
+        "observed_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+        "observed_help_sha256": "6c5e44dd5a1c5b04f7deb4d734ac6d2585561509c6a2d5deaed6914665e03b29",
+        "observed_provider_exe_name": "claude.exe",
+        "provider": "claude"
+      },
+      "nonce": "9caed3327eb243943c3c78f4f198ccd6541b445fac9e849a0265b1f5b6e3d1af",
+      "nonce_sha256": "e8c26d3644fb3abf7133dd014b332251b11a3603e9289cd172408ec87bd0d3e0",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "880ca6b429295b6533ecbf46a4acd257eed3c70233f2e2b07a52f49b96a26d54",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "7badc44232ca55471b7faff93b19fe776ed5646154c6edf348312069cec06073",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "880ca6b429295b6533ecbf46a4acd257eed3c70233f2e2b07a52f49b96a26d54",
+          "event_id": "3cb7d74c012b55b7f474f39e8809e304aa3be041500c749b6323506dcd224ea1",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "7badc44232ca55471b7faff93b19fe776ed5646154c6edf348312069cec06073",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20050
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20050,
+              "pid": 20051
+            },
+            {
+              "exe_name": "claude.exe",
+              "parent_pid": 20051,
+              "pid": 20052
+            }
+          ],
+          "process_tree_sha256": "b6ed82b581c20255426f61b34c840f70ac5ffadf4cf155a5196df82f5e53b09f",
+          "provider_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20052,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "3e5503f4e554bfe77b9afe1af95f7871678a88eb2465a87d2848701a0911f2f2",
+          "tree_root_pid": 20050,
+          "window_pid": 20050
+        },
+        "digest": "99844ed10a64c4cb957bdca50e7e884d7d3a6292e15ad39e827c1afefb484bcf"
+      },
+      "provider": "claude",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realclaude-5",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "eb2ab505c758bd3d3e4e9b316400727067e5b304854b948f0d9db2d5dbb52bfe",
+      "invocation": {
+        "actual_argv_projection": [
+          "claude.exe",
+          "--print",
+          "--bare",
+          "--safe-mode",
+          "--permission-mode",
+          "plan",
+          "--tools",
+          "",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=claude role=realclaude-6 nonce=debfdcb7c36d027ec57ba6396a5ed71de7e156dbc7ffffc60c45848137a53652"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "ANTHROPIC_API_KEY",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "2.1.183 (Claude Code)",
+        "observed_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+        "observed_help_sha256": "6c5e44dd5a1c5b04f7deb4d734ac6d2585561509c6a2d5deaed6914665e03b29",
+        "observed_provider_exe_name": "claude.exe",
+        "provider": "claude"
+      },
+      "nonce": "debfdcb7c36d027ec57ba6396a5ed71de7e156dbc7ffffc60c45848137a53652",
+      "nonce_sha256": "3d8f0d387c46e3983f4625b6274fd8596c0ee84afa83de81f4bf330b252ab2fe",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "dd5aa47ba52ee548645a8051568080dd48579dacf6735e310808e18b26beb628",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "eb2ab505c758bd3d3e4e9b316400727067e5b304854b948f0d9db2d5dbb52bfe",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "dd5aa47ba52ee548645a8051568080dd48579dacf6735e310808e18b26beb628",
+          "event_id": "48d7217c4255a622d94f2fa30a8a74f1064f1656ca6539ac465d285cd1f7a4aa",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "eb2ab505c758bd3d3e4e9b316400727067e5b304854b948f0d9db2d5dbb52bfe",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20060
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20060,
+              "pid": 20061
+            },
+            {
+              "exe_name": "claude.exe",
+              "parent_pid": 20061,
+              "pid": 20062
+            }
+          ],
+          "process_tree_sha256": "f209120266e35ec81d207f7fd0a29501692293071e5b9c5665fb12e65f90b350",
+          "provider_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20062,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "8af46a095dbd7512b0bf3d8ac3312031eedbb06acbea9f93325be1450ffb66d4",
+          "tree_root_pid": 20060,
+          "window_pid": 20060
+        },
+        "digest": "6b6d70e7316237057ea101ded894503e20f0e36a3ad5eee57afc27594550e485"
+      },
+      "provider": "claude",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realclaude-6",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "f1cc3d55404cd6b19618264b03b4216d8474f6b7eda8573a58d2209d5732096f",
+      "invocation": {
+        "actual_argv_projection": [
+          "claude.exe",
+          "--print",
+          "--bare",
+          "--safe-mode",
+          "--permission-mode",
+          "plan",
+          "--tools",
+          "",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=claude role=realclaude-7 nonce=a9aee23a0be8bdcb3bffa0ffc2b4cea5935a9450191d1e17305d80e380764792"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "ANTHROPIC_API_KEY",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "2.1.183 (Claude Code)",
+        "observed_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+        "observed_help_sha256": "6c5e44dd5a1c5b04f7deb4d734ac6d2585561509c6a2d5deaed6914665e03b29",
+        "observed_provider_exe_name": "claude.exe",
+        "provider": "claude"
+      },
+      "nonce": "a9aee23a0be8bdcb3bffa0ffc2b4cea5935a9450191d1e17305d80e380764792",
+      "nonce_sha256": "88169a9d3d8d588b4959efabe6e1cce599265e54cee4b247faeedc0154c36200",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "57b040942649aec09024780665509e96bad6ef12f9d5e881e8cc3c4a4e22360a",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "f1cc3d55404cd6b19618264b03b4216d8474f6b7eda8573a58d2209d5732096f",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "57b040942649aec09024780665509e96bad6ef12f9d5e881e8cc3c4a4e22360a",
+          "event_id": "f23a5e213d724ae77787d37c4528b07417e6a68813fd6c8ced5a5664127120db",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "f1cc3d55404cd6b19618264b03b4216d8474f6b7eda8573a58d2209d5732096f",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20070
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20070,
+              "pid": 20071
+            },
+            {
+              "exe_name": "claude.exe",
+              "parent_pid": 20071,
+              "pid": 20072
+            }
+          ],
+          "process_tree_sha256": "6d13f034443242efe08f8cfc9bcbbee50ee44c91238496bd072676816d37659d",
+          "provider_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20072,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "70c3386c220206361c7c51b8b07a8c71b16d3e25109374d8deb0ade7dd276051",
+          "tree_root_pid": 20070,
+          "window_pid": 20070
+        },
+        "digest": "a8e4a8f754b13955ee320d0c3c8e82a69b2ea45212d94cf5af44bcba24e5a965"
+      },
+      "provider": "claude",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realclaude-7",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "0ac4fd5e0268b90bfe534428cd6c5ebb422f588b79c28ef6a67c8313fff7d971",
+      "invocation": {
+        "actual_argv_projection": [
+          "codex.exe",
+          "exec",
+          "--sandbox",
+          "read-only",
+          "--ephemeral",
+          "--ignore-user-config",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=codex role=realcodex-1 nonce=6045a39b71a712d8d763661b67e8077f7c9cfdd138634b53808de50a52614a79"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OPENAI_API_KEY",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "codex-cli 0.144.4",
+        "observed_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+        "observed_help_sha256": "9f86f0115238ddde2514587e5f95b0ab0aa6b89495e5912878d49ad26038aa19",
+        "observed_provider_exe_name": "codex.exe",
+        "provider": "codex"
+      },
+      "nonce": "6045a39b71a712d8d763661b67e8077f7c9cfdd138634b53808de50a52614a79",
+      "nonce_sha256": "b3ec0f2b8bd6abd265f32308fa47c0c05fb31dea93fc20607f4b0f8887f577e7",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "50417e4c32dbe60269343ff08efe92a528b7369994aabb2d14d52187e0438794",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "0ac4fd5e0268b90bfe534428cd6c5ebb422f588b79c28ef6a67c8313fff7d971",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "50417e4c32dbe60269343ff08efe92a528b7369994aabb2d14d52187e0438794",
+          "event_id": "16d29f9192f6713aa634c0e9f3094b2a11d1954cdec1c8768ea184e4a2ae5300",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "0ac4fd5e0268b90bfe534428cd6c5ebb422f588b79c28ef6a67c8313fff7d971",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20080
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20080,
+              "pid": 20081
+            },
+            {
+              "exe_name": "codex.exe",
+              "parent_pid": 20081,
+              "pid": 20082
+            }
+          ],
+          "process_tree_sha256": "57028d424ab0d68e201a2a4a50a5faae3fb141dc37ca536913f03aa4849bcfc0",
+          "provider_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20082,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "ece6ad7f696544e228e5979fbd420af014010ba41a917503540098710ede5b8b",
+          "tree_root_pid": 20080,
+          "window_pid": 20080
+        },
+        "digest": "35d78ef36f0db1b14dc0302971f39d771b00a0c6c779d75c9283feab3c3b27f3"
+      },
+      "provider": "codex",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realcodex-1",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "e72a603c3cc71e0c8cfd80395f86e9ade71cacdee6f1dc97f2a87074796ee8dc",
+      "invocation": {
+        "actual_argv_projection": [
+          "codex.exe",
+          "exec",
+          "--sandbox",
+          "read-only",
+          "--ephemeral",
+          "--ignore-user-config",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=codex role=realcodex-2 nonce=6df110419655ab98ed4ccd78fab0f1b0c8e1e511db2fcc066d0ac3ebdf3d790b"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OPENAI_API_KEY",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "codex-cli 0.144.4",
+        "observed_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+        "observed_help_sha256": "9f86f0115238ddde2514587e5f95b0ab0aa6b89495e5912878d49ad26038aa19",
+        "observed_provider_exe_name": "codex.exe",
+        "provider": "codex"
+      },
+      "nonce": "6df110419655ab98ed4ccd78fab0f1b0c8e1e511db2fcc066d0ac3ebdf3d790b",
+      "nonce_sha256": "195cec12ffff521478cb5930b208e2f638a4e99b94e9318ddb9c2dc32c6808ab",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "fbcea257a905e5ffbc30a2ee3bd644516605109db712d81d8ebcb216a85573bb",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "e72a603c3cc71e0c8cfd80395f86e9ade71cacdee6f1dc97f2a87074796ee8dc",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "fbcea257a905e5ffbc30a2ee3bd644516605109db712d81d8ebcb216a85573bb",
+          "event_id": "7f4ff7d12cbe0fcc523ccd267abbc1b65d150719d6b8acda5d0a732b7bdaf90f",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "e72a603c3cc71e0c8cfd80395f86e9ade71cacdee6f1dc97f2a87074796ee8dc",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20090
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20090,
+              "pid": 20091
+            },
+            {
+              "exe_name": "codex.exe",
+              "parent_pid": 20091,
+              "pid": 20092
+            }
+          ],
+          "process_tree_sha256": "cec55cdb60d510437c5e5c48ecabe6dd08d57a0a352db5a350be36b7b4bd4b6d",
+          "provider_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20092,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "992b6fea8a42df897113a18866e61506153264ef94d614f9fa587398435c85f3",
+          "tree_root_pid": 20090,
+          "window_pid": 20090
+        },
+        "digest": "bdac3ea233b86b4ad7b30398d5ec3f25930f28c908b4406f7f518d938a1c7b95"
+      },
+      "provider": "codex",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realcodex-2",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "9ba8514b86489e05e3e0c384902faa008232bd654eb74206f2a3a8f870afcc83",
+      "invocation": {
+        "actual_argv_projection": [
+          "codex.exe",
+          "exec",
+          "--sandbox",
+          "read-only",
+          "--ephemeral",
+          "--ignore-user-config",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=codex role=realcodex-3 nonce=180862f05f7e809c234412930b2c3b1eec1eb23f74082bcc9d77aa92aa1b25ac"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OPENAI_API_KEY",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "codex-cli 0.144.4",
+        "observed_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+        "observed_help_sha256": "9f86f0115238ddde2514587e5f95b0ab0aa6b89495e5912878d49ad26038aa19",
+        "observed_provider_exe_name": "codex.exe",
+        "provider": "codex"
+      },
+      "nonce": "180862f05f7e809c234412930b2c3b1eec1eb23f74082bcc9d77aa92aa1b25ac",
+      "nonce_sha256": "ca53f811650e54487a66e27c9735ee07c1a901a1b96d4f470eb670745ebd0a79",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "efe2feec9b17a8e0801640a084c986250bda3b3b839ec6f9a9680ed425146eee",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "9ba8514b86489e05e3e0c384902faa008232bd654eb74206f2a3a8f870afcc83",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "efe2feec9b17a8e0801640a084c986250bda3b3b839ec6f9a9680ed425146eee",
+          "event_id": "ff197ab69857d0a49dbafd7e71084b9069ada1c81c66e118a3eb202761c7b6b2",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "9ba8514b86489e05e3e0c384902faa008232bd654eb74206f2a3a8f870afcc83",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20100
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20100,
+              "pid": 20101
+            },
+            {
+              "exe_name": "codex.exe",
+              "parent_pid": 20101,
+              "pid": 20102
+            }
+          ],
+          "process_tree_sha256": "f0352c1cddb09c2ac37610822456ca230ed661bca8186a29430e85f7f7111cce",
+          "provider_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20102,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "67cd0092b38e15dbd5b0f801cacc35eab8c6076a0e31bcb7f9c910df91320829",
+          "tree_root_pid": 20100,
+          "window_pid": 20100
+        },
+        "digest": "db6b9450d160bc5d81887353745f4df28fedd8456a328205e7f1ff1c20e58bda"
+      },
+      "provider": "codex",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realcodex-3",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "3e29a36ff87b5aa47d3dd0c9fd961d30dfa005a516b6590a003750a2f10f69b0",
+      "invocation": {
+        "actual_argv_projection": [
+          "codex.exe",
+          "exec",
+          "--sandbox",
+          "read-only",
+          "--ephemeral",
+          "--ignore-user-config",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=codex role=realcodex-4 nonce=c29c8bec9ff94c2cc057d0aad5faec7dc9f8746f69bfce707c984c80574e1b4a"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OPENAI_API_KEY",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "codex-cli 0.144.4",
+        "observed_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+        "observed_help_sha256": "9f86f0115238ddde2514587e5f95b0ab0aa6b89495e5912878d49ad26038aa19",
+        "observed_provider_exe_name": "codex.exe",
+        "provider": "codex"
+      },
+      "nonce": "c29c8bec9ff94c2cc057d0aad5faec7dc9f8746f69bfce707c984c80574e1b4a",
+      "nonce_sha256": "6b169bea52af1aa859c61d9b497b8993170ca5d2b91c26f114af8743cf816720",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "410346b986a2c7a4aadc0fe4aa881012393bfb692cf8f986a9946c1076715e0a",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "3e29a36ff87b5aa47d3dd0c9fd961d30dfa005a516b6590a003750a2f10f69b0",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "410346b986a2c7a4aadc0fe4aa881012393bfb692cf8f986a9946c1076715e0a",
+          "event_id": "db5f5c8172e30c70e0440a32b7e59d04f6543b5372b3efe60dee14352abaf258",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "3e29a36ff87b5aa47d3dd0c9fd961d30dfa005a516b6590a003750a2f10f69b0",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20110
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20110,
+              "pid": 20111
+            },
+            {
+              "exe_name": "codex.exe",
+              "parent_pid": 20111,
+              "pid": 20112
+            }
+          ],
+          "process_tree_sha256": "898d96d3152517cf4f0124beda96fbd808bc978278306171ece72f364d89fb4f",
+          "provider_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20112,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "f35bcc1f5a1d166059c35075c95015702ec349cb77da9218a1f3f313215e6e05",
+          "tree_root_pid": 20110,
+          "window_pid": 20110
+        },
+        "digest": "54417118179f3ce87cf3642299985f0357f65dc305109f0ebffc8a03ff9da140"
+      },
+      "provider": "codex",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realcodex-4",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "98ab4328b65e3349e6f94d0e8640c63ef8fcea292097c5483a83239d8b739603",
+      "invocation": {
+        "actual_argv_projection": [
+          "codex.exe",
+          "exec",
+          "--sandbox",
+          "read-only",
+          "--ephemeral",
+          "--ignore-user-config",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=codex role=realcodex-5 nonce=824e1847c82b4fa17bdbc53f24497409ba4837921d486d7ab49408db2ac6f68c"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OPENAI_API_KEY",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "codex-cli 0.144.4",
+        "observed_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+        "observed_help_sha256": "9f86f0115238ddde2514587e5f95b0ab0aa6b89495e5912878d49ad26038aa19",
+        "observed_provider_exe_name": "codex.exe",
+        "provider": "codex"
+      },
+      "nonce": "824e1847c82b4fa17bdbc53f24497409ba4837921d486d7ab49408db2ac6f68c",
+      "nonce_sha256": "e598fe47e079b75699bbfffcc8b850f4834e9c7c2aa634e08e775b3763b1b132",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "6edb85205d07efa758dc482f28a880579c12bcd5b70f86f8e275d1c81326d205",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "98ab4328b65e3349e6f94d0e8640c63ef8fcea292097c5483a83239d8b739603",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "6edb85205d07efa758dc482f28a880579c12bcd5b70f86f8e275d1c81326d205",
+          "event_id": "f3ebb08608365aba811cecc4db9ccb9916fa771f2be76feb7a879aa637b4fe18",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "98ab4328b65e3349e6f94d0e8640c63ef8fcea292097c5483a83239d8b739603",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20120
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20120,
+              "pid": 20121
+            },
+            {
+              "exe_name": "codex.exe",
+              "parent_pid": 20121,
+              "pid": 20122
+            }
+          ],
+          "process_tree_sha256": "6442907f6344f777d9bfd905742a2e9d75e9fb0eeda0d747d93ee395cc967e4a",
+          "provider_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20122,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "b1e19d1f3f31cc5db747f2e7783cbaf1c586779990c93feafd3a019973f7df16",
+          "tree_root_pid": 20120,
+          "window_pid": 20120
+        },
+        "digest": "d11dc0cbe6137fc9ff62084a4a186a97b8161d62ca0098df06457f6cce2da59f"
+      },
+      "provider": "codex",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realcodex-5",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "7f170ec149ebe27694f99a71d4a8101a2efa5165db0e5656dd2f56eb91333a4d",
+      "invocation": {
+        "actual_argv_projection": [
+          "codex.exe",
+          "exec",
+          "--sandbox",
+          "read-only",
+          "--ephemeral",
+          "--ignore-user-config",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=codex role=realcodex-6 nonce=86118d3653b11305a81c46889ffcef47550a3ef93fd55986906609a8a7c8745c"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OPENAI_API_KEY",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "codex-cli 0.144.4",
+        "observed_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+        "observed_help_sha256": "9f86f0115238ddde2514587e5f95b0ab0aa6b89495e5912878d49ad26038aa19",
+        "observed_provider_exe_name": "codex.exe",
+        "provider": "codex"
+      },
+      "nonce": "86118d3653b11305a81c46889ffcef47550a3ef93fd55986906609a8a7c8745c",
+      "nonce_sha256": "b84c589dece3efaffd077fa89a6b38e291aec30058eea6a2987c79d364fff1c4",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "3bd2de206db89f5b88c7dcf4c5355e407410ded829b6172601ee77733e5e656c",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "7f170ec149ebe27694f99a71d4a8101a2efa5165db0e5656dd2f56eb91333a4d",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "3bd2de206db89f5b88c7dcf4c5355e407410ded829b6172601ee77733e5e656c",
+          "event_id": "c4221c805e443cfee3898e821123dd37ad429a8ca5d1c52836f66b878edb66b5",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "7f170ec149ebe27694f99a71d4a8101a2efa5165db0e5656dd2f56eb91333a4d",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20130
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20130,
+              "pid": 20131
+            },
+            {
+              "exe_name": "codex.exe",
+              "parent_pid": 20131,
+              "pid": 20132
+            }
+          ],
+          "process_tree_sha256": "0e5afd0427855d93f2c5dcd9a902b19d56911e7a1eeca537cf2ca564bf829b1e",
+          "provider_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20132,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "c38d5331fd794bc5dbcdc6dcd5f3044c7b98c3120c68cc3159ac3d727f877a3b",
+          "tree_root_pid": 20130,
+          "window_pid": 20130
+        },
+        "digest": "f6f54b4f549dcbf034d090a0a4df3a218958987dd866aee5b0fdd807d1125e2e"
+      },
+      "provider": "codex",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realcodex-6",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "d39f4e7f9e2d85b4d4bb99e14457a4d8465fa047d269e8f76eab5fe5603ff788",
+      "invocation": {
+        "actual_argv_projection": [
+          "codex.exe",
+          "exec",
+          "--sandbox",
+          "read-only",
+          "--ephemeral",
+          "--ignore-user-config",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=codex role=realcodex-7 nonce=e6aa2d375c11ec29464c0443c273d70c4e52c450fb5a17fde61090ec4ea30c54"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OPENAI_API_KEY",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "codex-cli 0.144.4",
+        "observed_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+        "observed_help_sha256": "9f86f0115238ddde2514587e5f95b0ab0aa6b89495e5912878d49ad26038aa19",
+        "observed_provider_exe_name": "codex.exe",
+        "provider": "codex"
+      },
+      "nonce": "e6aa2d375c11ec29464c0443c273d70c4e52c450fb5a17fde61090ec4ea30c54",
+      "nonce_sha256": "f8348f7778160f40dd37ddfe20cc34fb1a9b9b7736e03846010f375257090a2e",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "4c8847b11b6a8733624eea26ebbd121654115d25022ecbf11e57c8bb547a5ba7",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "d39f4e7f9e2d85b4d4bb99e14457a4d8465fa047d269e8f76eab5fe5603ff788",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "4c8847b11b6a8733624eea26ebbd121654115d25022ecbf11e57c8bb547a5ba7",
+          "event_id": "fc92a97ea35e293714f6661861aab776856df4d2a307b9cd1e93ffc9c49d472f",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "d39f4e7f9e2d85b4d4bb99e14457a4d8465fa047d269e8f76eab5fe5603ff788",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20140
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20140,
+              "pid": 20141
+            },
+            {
+              "exe_name": "codex.exe",
+              "parent_pid": 20141,
+              "pid": 20142
+            }
+          ],
+          "process_tree_sha256": "17d579e1326cad1c6a861f6979d9d189a94516f1b1882ed4f6a53b3c0d16ba99",
+          "provider_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20142,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "0b630610ec80b3cacb77ec8b11ff2f24c0852b52d5e34e6ce235026ba19ade4e",
+          "tree_root_pid": 20140,
+          "window_pid": 20140
+        },
+        "digest": "416ca9c47dd689ebd626c5c6c4133ac15c6f7285a98fb0d27001c50f09100c71"
+      },
+      "provider": "codex",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realcodex-7",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "e00a5469d9d3d318947570bed5c1c0f25d1dfb18a89a74482a482ec353ec8d81",
+      "invocation": {
+        "actual_argv_projection": [
+          "node.exe",
+          "gemini.js",
+          "--prompt",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=gemini role=realgemini-1 nonce=79ff29bc232bbd7b77d767ee377a81aef0374e45557818af1d7a2b96a317c0fb",
+          "--approval-mode",
+          "plan",
+          "--sandbox",
+          "--admin-policy",
+          "gemini-deny-all.toml"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "GEMINI_API_KEY",
+          "GEMINI_CLI_NO_RELAUNCH",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "0.46.0",
+        "observed_entrypoint_sha256": "6970329338ab5726d015b4ed847b1d2fd960244baefc86cbeacd3786b677dddc",
+        "observed_help_sha256": "b5c6e1af180f48adb3700982e7b06e905f29d2965f047eaeebd0b5c4f676b632",
+        "observed_provider_exe_name": "node.exe",
+        "provider": "gemini"
+      },
+      "nonce": "79ff29bc232bbd7b77d767ee377a81aef0374e45557818af1d7a2b96a317c0fb",
+      "nonce_sha256": "dfd5bb0bdf5f6c91607d974f3db4b17eb47eec572867e5e1b588f770ecc861cd",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "a3d346e42348adb1e3e53d43a53e89206ef24df4bc61068082f81367a14ea59d",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "e00a5469d9d3d318947570bed5c1c0f25d1dfb18a89a74482a482ec353ec8d81",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "a3d346e42348adb1e3e53d43a53e89206ef24df4bc61068082f81367a14ea59d",
+          "event_id": "27e922853b69580d76db7701b3796e66e1d3dffd15c4faff8484abc4ecbee0f6",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "e00a5469d9d3d318947570bed5c1c0f25d1dfb18a89a74482a482ec353ec8d81",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20150
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20150,
+              "pid": 20151
+            },
+            {
+              "exe_name": "node.exe",
+              "parent_pid": 20151,
+              "pid": 20152
+            }
+          ],
+          "process_tree_sha256": "526ba72a83ad6eec494c274cdd2e6747ee1a7b516d6a5ddcf7344d9fb418d2cd",
+          "provider_entrypoint_sha256": "6970329338ab5726d015b4ed847b1d2fd960244baefc86cbeacd3786b677dddc",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20152,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "89391d003ff1863b2ced1c404f5762a011ebd27f10742f4f66dfc22111a61c74",
+          "tree_root_pid": 20150,
+          "window_pid": 20150
+        },
+        "digest": "552ff0a0d0d3a06f7522ad3327968e39f247b03c2bbbf3b4b9880ebbb9ba8a16"
+      },
+      "provider": "gemini",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realgemini-1",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "c295afed948dc38c2d7a57cdd876c25a13aff02c595203f29fed5a8efce076fe",
+      "invocation": {
+        "actual_argv_projection": [
+          "node.exe",
+          "gemini.js",
+          "--prompt",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=gemini role=realgemini-2 nonce=4dcd1201b795794dd37fe94499100b09bd75ecef5acc7941391acc53bc93526e",
+          "--approval-mode",
+          "plan",
+          "--sandbox",
+          "--admin-policy",
+          "gemini-deny-all.toml"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "GEMINI_API_KEY",
+          "GEMINI_CLI_NO_RELAUNCH",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "0.46.0",
+        "observed_entrypoint_sha256": "6970329338ab5726d015b4ed847b1d2fd960244baefc86cbeacd3786b677dddc",
+        "observed_help_sha256": "b5c6e1af180f48adb3700982e7b06e905f29d2965f047eaeebd0b5c4f676b632",
+        "observed_provider_exe_name": "node.exe",
+        "provider": "gemini"
+      },
+      "nonce": "4dcd1201b795794dd37fe94499100b09bd75ecef5acc7941391acc53bc93526e",
+      "nonce_sha256": "50233362d26339f1153005215a6e695b8323eefa87043bbfb3af8dfcc7f57417",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "085d3a99956530143cc8d9651f62827558b69c20fc122f1fce972e057c465972",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "c295afed948dc38c2d7a57cdd876c25a13aff02c595203f29fed5a8efce076fe",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "085d3a99956530143cc8d9651f62827558b69c20fc122f1fce972e057c465972",
+          "event_id": "69ba2a3085489e20c638fa30a922ba37f8c2694a3e98fa37ea079313739bbeb7",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "c295afed948dc38c2d7a57cdd876c25a13aff02c595203f29fed5a8efce076fe",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20160
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20160,
+              "pid": 20161
+            },
+            {
+              "exe_name": "node.exe",
+              "parent_pid": 20161,
+              "pid": 20162
+            }
+          ],
+          "process_tree_sha256": "6016defbe6ec49f211a4d771beac48523392c08b308385d616498d3e7d152ae2",
+          "provider_entrypoint_sha256": "6970329338ab5726d015b4ed847b1d2fd960244baefc86cbeacd3786b677dddc",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20162,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "3aa2c2eac5a5a6234c094bfbc3d7ce953790c38a5354a270301f868644a9b1fc",
+          "tree_root_pid": 20160,
+          "window_pid": 20160
+        },
+        "digest": "ab5f04dce852fd4eac27f0deb9e948ae9dd9485b1b6bf0bd8c6a514cf7f5f924"
+      },
+      "provider": "gemini",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realgemini-2",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "ebed7a8f327ae62057c2ebab719ceee297937b6e348ab9224b3f23f511cb14ff",
+      "invocation": {
+        "actual_argv_projection": [
+          "node.exe",
+          "gemini.js",
+          "--prompt",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=gemini role=realgemini-3 nonce=0e4566077be172db94460c8079ea5c44eb1b57247ec8ab940a4ecb13a926e06f",
+          "--approval-mode",
+          "plan",
+          "--sandbox",
+          "--admin-policy",
+          "gemini-deny-all.toml"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "GEMINI_API_KEY",
+          "GEMINI_CLI_NO_RELAUNCH",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "0.46.0",
+        "observed_entrypoint_sha256": "6970329338ab5726d015b4ed847b1d2fd960244baefc86cbeacd3786b677dddc",
+        "observed_help_sha256": "b5c6e1af180f48adb3700982e7b06e905f29d2965f047eaeebd0b5c4f676b632",
+        "observed_provider_exe_name": "node.exe",
+        "provider": "gemini"
+      },
+      "nonce": "0e4566077be172db94460c8079ea5c44eb1b57247ec8ab940a4ecb13a926e06f",
+      "nonce_sha256": "0e8753c3ebd81024d3d99287e6b37a665fd39bd9a3ccc6551cd52250fda96d63",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "2d448fff7a5f51839b0e20075e5e185359b8f614d1ea693b5d72b5482a41fbee",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "ebed7a8f327ae62057c2ebab719ceee297937b6e348ab9224b3f23f511cb14ff",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "2d448fff7a5f51839b0e20075e5e185359b8f614d1ea693b5d72b5482a41fbee",
+          "event_id": "b11e62a9373169ff218051c820503fa1b9cbbeb3b844c8021e921ed1f58ab9ad",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "ebed7a8f327ae62057c2ebab719ceee297937b6e348ab9224b3f23f511cb14ff",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20170
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20170,
+              "pid": 20171
+            },
+            {
+              "exe_name": "node.exe",
+              "parent_pid": 20171,
+              "pid": 20172
+            }
+          ],
+          "process_tree_sha256": "a5fa030ac08d345bb6eaa18450712ed158b86974d8225eb90d3381a96189d178",
+          "provider_entrypoint_sha256": "6970329338ab5726d015b4ed847b1d2fd960244baefc86cbeacd3786b677dddc",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20172,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "e2a85bcc3881e6a7aca083a2cd36664576e1930cb569f2e37f3b79929752ae23",
+          "tree_root_pid": 20170,
+          "window_pid": 20170
+        },
+        "digest": "924ee444dc6b8cd24a462463b1eed212fcca65026b2d80c2588220b10e963345"
+      },
+      "provider": "gemini",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realgemini-3",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "e0495440fd8e12165ee179e0731c4aa89606ce23572a9a87c4fd83dacef5f407",
+      "invocation": {
+        "actual_argv_projection": [
+          "node.exe",
+          "gemini.js",
+          "--prompt",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=gemini role=realgemini-4 nonce=2114e3f0be2fe5d238b5fa34b6be45342fc0eeeae33559379f64b3c689b69f68",
+          "--approval-mode",
+          "plan",
+          "--sandbox",
+          "--admin-policy",
+          "gemini-deny-all.toml"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "GEMINI_API_KEY",
+          "GEMINI_CLI_NO_RELAUNCH",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "0.46.0",
+        "observed_entrypoint_sha256": "6970329338ab5726d015b4ed847b1d2fd960244baefc86cbeacd3786b677dddc",
+        "observed_help_sha256": "b5c6e1af180f48adb3700982e7b06e905f29d2965f047eaeebd0b5c4f676b632",
+        "observed_provider_exe_name": "node.exe",
+        "provider": "gemini"
+      },
+      "nonce": "2114e3f0be2fe5d238b5fa34b6be45342fc0eeeae33559379f64b3c689b69f68",
+      "nonce_sha256": "1b71e08317ae71fe7e19aa5dcdadee5fd1f4fd4f89d7eb435821b313b3cca28b",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "8ba31ae34e6a35b2be83a7e583e4ce9e1d4ff31753d91d5ac9a912015f72949d",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "e0495440fd8e12165ee179e0731c4aa89606ce23572a9a87c4fd83dacef5f407",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "8ba31ae34e6a35b2be83a7e583e4ce9e1d4ff31753d91d5ac9a912015f72949d",
+          "event_id": "f8b1bb40f1c3039ac7afc31682f3dd1efe5d5aaca0e81aa85efb7545c4c06fe4",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "e0495440fd8e12165ee179e0731c4aa89606ce23572a9a87c4fd83dacef5f407",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20180
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20180,
+              "pid": 20181
+            },
+            {
+              "exe_name": "node.exe",
+              "parent_pid": 20181,
+              "pid": 20182
+            }
+          ],
+          "process_tree_sha256": "7b464eccf923c0b7d15dfc2c1cf30786f904c72d00ac06d092f828b079cdfc5d",
+          "provider_entrypoint_sha256": "6970329338ab5726d015b4ed847b1d2fd960244baefc86cbeacd3786b677dddc",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20182,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "32c94169c3996a0acd2366410374528fd960e61d6f41effbf4db2b7d806b3b60",
+          "tree_root_pid": 20180,
+          "window_pid": 20180
+        },
+        "digest": "fe9362955328878fa76bffbd5cda8ff0ba5b1965fdda180bb0d7cfb30dd007a0"
+      },
+      "provider": "gemini",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realgemini-4",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "3c2f7238b7672fedcd144cc1ed8ebe0ce97056efe1b33b21872c9cc7b0ac70dd",
+      "invocation": {
+        "actual_argv_projection": [
+          "node.exe",
+          "gemini.js",
+          "--prompt",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=gemini role=realgemini-5 nonce=0cb1a20675f003ced78d318caea7a3949e405b4d63e0b2e6f7b1800aec068f23",
+          "--approval-mode",
+          "plan",
+          "--sandbox",
+          "--admin-policy",
+          "gemini-deny-all.toml"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "GEMINI_API_KEY",
+          "GEMINI_CLI_NO_RELAUNCH",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "0.46.0",
+        "observed_entrypoint_sha256": "6970329338ab5726d015b4ed847b1d2fd960244baefc86cbeacd3786b677dddc",
+        "observed_help_sha256": "b5c6e1af180f48adb3700982e7b06e905f29d2965f047eaeebd0b5c4f676b632",
+        "observed_provider_exe_name": "node.exe",
+        "provider": "gemini"
+      },
+      "nonce": "0cb1a20675f003ced78d318caea7a3949e405b4d63e0b2e6f7b1800aec068f23",
+      "nonce_sha256": "dee86b669c8959a314727c4efecc28e0d3883a56b4cdc27ba464755e847c1964",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "f9a9c9b92a9105c3e3ef4c97a4fe4539ab27af7407fea0c5051a4fc189bb498b",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "3c2f7238b7672fedcd144cc1ed8ebe0ce97056efe1b33b21872c9cc7b0ac70dd",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "f9a9c9b92a9105c3e3ef4c97a4fe4539ab27af7407fea0c5051a4fc189bb498b",
+          "event_id": "fd1fedd7e6a3771b2db4d7cb4de9bd32663f5c2157fbbfb32a45f559206f8a62",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "3c2f7238b7672fedcd144cc1ed8ebe0ce97056efe1b33b21872c9cc7b0ac70dd",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20190
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20190,
+              "pid": 20191
+            },
+            {
+              "exe_name": "node.exe",
+              "parent_pid": 20191,
+              "pid": 20192
+            }
+          ],
+          "process_tree_sha256": "68fbcd2dea009c7a4d268ee93af645d81e7c41e034ca27d6cd0e99594d9b5672",
+          "provider_entrypoint_sha256": "6970329338ab5726d015b4ed847b1d2fd960244baefc86cbeacd3786b677dddc",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20192,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "c74c95e8d0c5825100dda214932757b14d55014aace453b95ddf7daeb42f0de5",
+          "tree_root_pid": 20190,
+          "window_pid": 20190
+        },
+        "digest": "7b4c99aee5cab900bb1b07f9658d50e2b7c7b99dafde8fe814faf608e641f208"
+      },
+      "provider": "gemini",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realgemini-5",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    },
+    {
+      "completed_at_utc": "2026-07-17T16:38:00+00:00",
+      "expected_sha256": "1e657a6fef11625442767b0e9b1c034fc1fecee12a550c2937bd4f4e276fd686",
+      "invocation": {
+        "actual_argv_projection": [
+          "node.exe",
+          "gemini.js",
+          "--prompt",
+          "Reply with exactly this one line and nothing else: ACK_REAL_VENDOR provider=gemini role=realgemini-6 nonce=676f3aa2cb2671b9d55409072fbe9eb15b47f3005d4f6c5b307ddb013402b44e",
+          "--approval-mode",
+          "plan",
+          "--sandbox",
+          "--admin-policy",
+          "gemini-deny-all.toml"
+        ],
+        "constructed_initial_environment_names": [
+          "ALLUSERSPROFILE",
+          "APPDATA",
+          "CI",
+          "COMSPEC",
+          "GEMINI_API_KEY",
+          "GEMINI_CLI_NO_RELAUNCH",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "NO_COLOR",
+          "NUMBER_OF_PROCESSORS",
+          "OS",
+          "PATH",
+          "PATHEXT",
+          "PROCESSOR_ARCHITECTURE",
+          "PROGRAMDATA",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "SYSTEMDRIVE",
+          "SYSTEMROOT",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "exit_code": 0,
+        "observed_cli_version": "0.46.0",
+        "observed_entrypoint_sha256": "6970329338ab5726d015b4ed847b1d2fd960244baefc86cbeacd3786b677dddc",
+        "observed_help_sha256": "b5c6e1af180f48adb3700982e7b06e905f29d2965f047eaeebd0b5c4f676b632",
+        "observed_provider_exe_name": "node.exe",
+        "provider": "gemini"
+      },
+      "nonce": "676f3aa2cb2671b9d55409072fbe9eb15b47f3005d4f6c5b307ddb013402b44e",
+      "nonce_sha256": "28be6dd07c0cf5f730c09d1157231db63ea6062676c502cdf30e607cc105e08a",
+      "observed_acks": {
+        "process_stdout": {
+          "captured_at_utc": "2026-07-17T16:37:00+00:00",
+          "event_id": "c6bc2d688c4348aad00f795028c92ff1999e9d072ac0362523897a20993556b9",
+          "provenance": "provider_stdout_pipe",
+          "sha256": "1e657a6fef11625442767b0e9b1c034fc1fecee12a550c2937bd4f4e276fd686",
+          "source": "process_stdout"
+        },
+        "rendered_terminal_copy": {
+          "captured_at_utc": "2026-07-17T16:37:01+00:00",
+          "derivative_of_event_id": "c6bc2d688c4348aad00f795028c92ff1999e9d072ac0362523897a20993556b9",
+          "event_id": "4e4800454f12ce25971d52525bab8f9aab3771fa657e2a34984a2e028bab6143",
+          "provenance": "terminal_render_of_captured_stdout",
+          "sha256": "1e657a6fef11625442767b0e9b1c034fc1fecee12a550c2937bd4f4e276fd686",
+          "source": "rendered_terminal_copy"
+        }
+      },
+      "producer_guard_assertion": {
+        "claim": {
+          "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+          "exe_name": "WindowsTerminal.exe",
+          "post_guard_ok": true,
+          "pre_guard_ok": true,
+          "process_tree_projection": [
+            {
+              "exe_name": "WindowsTerminal.exe",
+              "parent_pid": null,
+              "pid": 20200
+            },
+            {
+              "exe_name": "powershell.exe",
+              "parent_pid": 20200,
+              "pid": 20201
+            },
+            {
+              "exe_name": "node.exe",
+              "parent_pid": 20201,
+              "pid": 20202
+            }
+          ],
+          "process_tree_sha256": "67ea22dc6c884c5ce05289e8c386c9e20571348f5f4a26ec0832fdb07696e44a",
+          "provider_entrypoint_sha256": "6970329338ab5726d015b4ed847b1d2fd960244baefc86cbeacd3786b677dddc",
+          "provider_in_spawn_tree": true,
+          "provider_pid": 20202,
+          "same_session": true,
+          "session_id": 3,
+          "spawn_alive_during_guard": true,
+          "title_sha256": "a2a1ab1bc9c97774fdc0f50fba45bdab40ee01de5196df453532d96a810866e3",
+          "tree_root_pid": 20200,
+          "window_pid": 20200
+        },
+        "digest": "ddd8f1cd3a2e4f82e20b0990d6d30591fc0d5082308665d2972883f75c2d4418"
+      },
+      "provider": "gemini",
+      "provider_outcome": {
+        "auth_failed": false,
+        "quota_exceeded": false
+      },
+      "role": "realgemini-6",
+      "started_at_utc": "2026-07-17T16:36:00+00:00",
+      "status": "pass"
+    }
+  ],
+  "cli_invocation_accounting": {
+    "cli_invocations_total": 20
+  },
+  "completed_at_utc": "2026-07-17T16:40:00+00:00",
+  "logical_simulation": false,
+  "provider_counts": {
+    "claude": 7,
+    "codex": 7,
+    "gemini": 6
+  },
+  "run_id": "SC_SCALE_5956b4ce336bf68a335823653be3dc53",
+  "schema": "selfconnect.restricted_scale_result.v2",
+  "started_at_utc": "2026-07-17T16:35:00+00:00",
+  "verdict": "PASS",
+  "visible_windows": true
+}
