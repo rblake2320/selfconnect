@@ -1,0 +1,75 @@
+{
+  "code_identity": {
+    "core_branch": "master",
+    "core_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "core_remote": "https://github.com/rblake2320/selfconnect",
+    "core_tree_sha256": "8ee6b24908bc8a77c22320e9c93187c79923313e7611ac4730374a05b6e038ab",
+    "fresh_detached_checkout": true,
+    "git_config_cleared": true,
+    "guard_module_sha256": "7afff59af60f25217a3dbe6a485201d7e2855e09abf73b0c27bd49fc276ae06a",
+    "producer_sha256": "b50f4f687711caf1565f1a4323eed741090de4347a9db7075910d5091bf1aa70",
+    "python_env_cleared": true
+  },
+  "generated_at": "2026-07-17T17:00:00+00:00",
+  "producer_context": {
+    "actor": "restricted-producer",
+    "core_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ecosystem_contract_sha": "f07b4a72ca900da531a8596168600977a6678427",
+    "producer_run_attempt": 1,
+    "producer_run_id": 123456,
+    "ref": "refs/heads/master",
+    "repository": "rblake2320/selfconnect",
+    "workflow": "Restricted Real-Agent Scale Producer"
+  },
+  "provider_pins": {
+    "claude": {
+      "expected_cli_version": "2.1.183 (Claude Code)",
+      "expected_entrypoint_sha256": "ba6e71d0e39b33c42a519bd10fc6d79b04d62cedcc918b3991ff863462261eb0",
+      "expected_help_sha256": "6c5e44dd5a1c5b04f7deb4d734ac6d2585561509c6a2d5deaed6914665e03b29",
+      "expected_provider_exe_name": "claude.exe",
+      "required_policy_projection_sha256": "2a0d78a6685bca211a77b2d06acdca5efe6bfe54f366e5500832c45dc9ae6f12",
+      "required_tool_policy_sha256": null
+    },
+    "codex": {
+      "expected_cli_version": "codex-cli 0.144.4",
+      "expected_entrypoint_sha256": "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5",
+      "expected_help_sha256": "9f86f0115238ddde2514587e5f95b0ab0aa6b89495e5912878d49ad26038aa19",
+      "expected_provider_exe_name": "codex.exe",
+      "required_policy_projection_sha256": "008845ea35aa87cdf84f1f87d287213e877a4e7caac8cfa1899ab37d81716d7b",
+      "required_tool_policy_sha256": null
+    },
+    "gemini": {
+      "expected_cli_version": "0.46.0",
+      "expected_entrypoint_sha256": "6970329338ab5726d015b4ed847b1d2fd960244baefc86cbeacd3786b677dddc",
+      "expected_help_sha256": "b5c6e1af180f48adb3700982e7b06e905f29d2965f047eaeebd0b5c4f676b632",
+      "expected_provider_exe_name": "node.exe",
+      "required_policy_projection_sha256": "183a476458c2db6d5530e088ee742b28ec460cd5d35e9347eef7c1b1ef6965a2",
+      "required_tool_policy_sha256": "ff0198012262e2a478eb9d26ebe175924079cc7d16379ef809d18c012649029a"
+    }
+  },
+  "requested_runner_config": {
+    "environment": "scale-readiness-producer",
+    "runner_group": "selfconnect-scale-ephemeral"
+  },
+  "rungs": [
+    {
+      "agent_count": 10,
+      "file": "rung-10.json",
+      "sha256": "d1f9192deb48429657b369634fedb65659ff9b6ee7691ca092666b95a15cc57d",
+      "size_bytes": 44397
+    },
+    {
+      "agent_count": 15,
+      "file": "rung-15.json",
+      "sha256": "90190984bea50e769c348b986332c21961c13bb27e9b3cfa82698679dba05dfe",
+      "size_bytes": 65774
+    },
+    {
+      "agent_count": 20,
+      "file": "rung-20.json",
+      "sha256": "a4ab16c887e94e767b897484e8569c3ed0633790a20cbfcb10c42ec0917df2c6",
+      "size_bytes": 87491
+    }
+  ],
+  "schema": "selfconnect.scale_readiness_evidence.v2"
+}

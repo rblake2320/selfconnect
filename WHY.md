@@ -119,3 +119,28 @@ not sufficient evidence.
 - `delivery_verified` remains false for raw transport acceptance.
 - Independent readback, ACK, or receiver effect is needed for delivery claims.
 - Incompatible explicit transport requests fail closed.
+
+## 2026-07-17 - Pin the Scale Consumer Before Enabling the Producer
+
+### Decision
+
+The restricted producer accepts only the immutable ecosystem main commit
+`f07b4a72ca900da531a8596168600977a6678427` as its consumer contract. Source
+identity uses strict UTF-8 and newline-canonical bytes so Windows checkout line
+endings do not change the evidence identity.
+
+### Why
+
+The consumer must exist on protected main before a producer can cite it. A
+feature-branch SHA can disappear or change review state, while a placeholder
+only proves the workflow cannot run. Canonical source bytes prevent the same
+source from producing different identities on LF and CRLF checkouts.
+
+### Consequences
+
+- Code, workflow environment, fixture manifest, and tests share one consumer
+  pin.
+- Changing the producer source regenerates the fixture identity by design.
+- The fixture proves deterministic contract compatibility only. Live readiness
+  still requires a protected runner, provider credentials, GitHub attestation,
+  successful 10/15/20 execution, and consumer acceptance.
