@@ -1,6 +1,8 @@
 """Unit tests for sc_tasks — lifecycle, locked claiming, retry, chain."""
 
 import json
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -80,77 +82,61 @@ def test_claim_is_exclusive_across_threads(board):
     assert len(set(claimed)) == 6  # no double-claims
 
 
-def test_claim_recovers_from_transient_lock_release_sharing_violation(
-    board, monkeypatch
-):
-    """A Windows reader may briefly prevent deletion of the board lock."""
-    for i in range(6):
-        board.create(f"task-{i}")
-
-    original_unlink = Path.unlink
-    injected = threading.Event()
-
-    def fail_first_board_lock_unlink(path, *args, **kwargs):
-        if path.name == "board.lock" and not injected.is_set():
-            injected.set()
-            raise PermissionError("simulated Windows sharing violation")
-        return original_unlink(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "unlink", fail_first_board_lock_unlink)
-    claimed: list[str] = []
-    claimed_lock = threading.Lock()
-    errors: list[BaseException] = []
-
-    def worker(agent):
-        try:
-            while True:
-                try:
-                    task = board.claim(agent)
-                except LockTimeout:
-                    continue
-                if task is None:
-                    return
-                with claimed_lock:
-                    claimed.append(task.task_id)
-        except BaseException as exc:  # noqa: BLE001 - surface worker failures
-            errors.append(exc)
-
-    threads = [threading.Thread(target=worker, args=(f"agent-{i}",)) for i in range(4)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=15.0)
-
-    stuck = [thread.name for thread in threads if thread.is_alive()]
-    assert injected.is_set(), "release-sharing violation was not injected"
-    assert not stuck, f"claim workers did not terminate: {stuck}"
-    assert not errors, [f"{type(exc).__name__}: {exc}" for exc in errors]
-    assert len(claimed) == 6
-    assert len(set(claimed)) == 6
-    assert not (board.locks_dir / "board.lock").exists()
-
-
-def test_abandoned_same_process_lock_is_recoverable_after_release_failure(
-    tmp_path, monkeypatch
-):
+def test_native_lock_file_persists_and_successor_acquires(tmp_path):
     lock_path = tmp_path / "board.lock"
-    failed_lock = FileLock(lock_path, timeout=0.05, stale_after=300.0).acquire()
-    original_unlink = Path.unlink
-
-    def persistently_block_unlink(path, *args, **kwargs):
-        if path == lock_path:
-            raise PermissionError("simulated persistent Windows sharing violation")
-        return original_unlink(path, *args, **kwargs)
-
-    with monkeypatch.context() as blocked:
-        blocked.setattr(Path, "unlink", persistently_block_unlink)
-        with pytest.raises(LockReleaseError, match="could not release"):
-            failed_lock.release()
-
+    first = FileLock(lock_path, timeout=0.2).acquire()
+    first.release()
     assert lock_path.exists()
-    successor = FileLock(lock_path, timeout=0.5, stale_after=300.0).acquire()
+    successor = FileLock(lock_path, timeout=0.2).acquire()
     successor.release()
-    assert not lock_path.exists()
+    assert lock_path.exists()
+
+
+def test_live_process_lock_is_not_broken_by_stale_age_and_recovers_on_exit(tmp_path):
+    lock_path = tmp_path / "process.lock"
+    code = (
+        "import os,sys,time\n"
+        "from pathlib import Path\n"
+        "from sc_tasks import FileLock\n"
+        "FileLock(Path(sys.argv[1]), timeout=1, stale_after=.001).acquire()\n"
+        "print('LOCKED', flush=True)\n"
+        "time.sleep(.4)\n"
+        "os._exit(0)\n"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", code, str(lock_path)],
+        cwd=Path(__file__).resolve().parents[1],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert proc.stdout is not None
+        assert proc.stdout.readline().strip() == "LOCKED"
+        with pytest.raises(LockTimeout):
+            FileLock(lock_path, timeout=0.05, stale_after=0.001).acquire()
+        assert proc.wait(timeout=3) == 0
+        recovered = FileLock(lock_path, timeout=0.5, stale_after=0.001).acquire()
+        recovered.release()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=3)
+
+
+def test_release_error_is_normalized_and_close_still_releases(tmp_path, monkeypatch):
+    lock_path = tmp_path / "release.lock"
+    owner = FileLock(lock_path, timeout=0.2).acquire()
+
+    def fail_unlock(_fd):
+        raise OSError("simulated native unlock failure")
+
+    monkeypatch.setattr(owner, "_unlock_fd", fail_unlock)
+    with pytest.raises(LockReleaseError, match="could not release") as caught:
+        owner.release()
+    assert isinstance(caught.value.__cause__, OSError)
+    successor = FileLock(lock_path, timeout=0.5).acquire()
+    successor.release()
 
 
 def test_dependencies_gate_claiming(board):

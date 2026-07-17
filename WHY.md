@@ -1,42 +1,32 @@
 # Decision Record
 
-## 2026-07-17 - Make File-Lock Release Verifiable and Recoverable
+## 2026-07-17 - Use Native Advisory Locks for Task Claims
 
 ### Decision
 
-Give every `FileLock` acquisition a unique owner record, track records owned by
-this process, verify the record before deletion, and retry transient Windows
-sharing violations to a monotonic deadline. If deletion remains impossible,
-raise `LockReleaseError` and mark the owner record inactive so a later claimant
-can recover the orphan once filesystem access returns.
+Use the operating system's cross-process advisory lock on a persistent file:
+`msvcrt.locking` on Windows and `fcntl.flock` on POSIX. Never use pathname
+deletion, PID age, or a written owner record as the exclusivity authority.
 
 ### Why
 
-Closing a file descriptor does not remove its pathname. On Windows, another
-reader can briefly prevent deletion. Treating that failure as success leaves a
-lock file whose PID is still alive even though its owning critical section has
-ended. PID liveness alone therefore cannot distinguish an active same-process
-lock from an abandoned one, and callers that retry `LockTimeout` can loop
-forever.
-
-Blind unlink retries are also unsafe: if a lock pathname were replaced between
-attempts, an old holder could delete a successor's lock. Comparing the unique
-owner record before every delete keeps recovery scoped to the acquisition that
-is actually being released.
+Pathname locks require a safe stale-break operation, but portable unlink APIs
+cannot condition deletion on inode identity. Age-based breaking can delete a
+live owner, PID reuse weakens liveness checks, failed/partial record writes can
+strand malformed locks, and compare-then-unlink races can delete a successor.
+Native locks already provide the needed lifecycle: descriptor close and
+process death release the kernel-held lock without deleting the pathname.
 
 ### Consequences
 
-- Transient Windows sharing violations no longer strand the board lock.
-- Persistent release failure is explicit and bounded rather than reported as
-  success.
-- A later same-process claimant can identify an abandoned token without waiting
-  for the five-minute age threshold.
-- Legacy two-field lock records remain readable and retain the prior PID/age
-  stale policy; only new tokenized records receive immediate same-process
-  abandonment detection.
-- A filesystem that continuously blocks lock deletion remains unavailable and
-  produces a bounded error; this mechanism is not a distributed lock or a
-  hostile-filesystem availability guarantee.
+- Lock files persist after release and can be reused safely.
+- `stale_after` remains an accepted compatibility parameter but never permits
+  breaking a live native lock.
+- Process death releases the lock without a stale-record parser.
+- Unlock/close failures surface as `LockReleaseError`; they are not reported as
+  successful release.
+- The mechanism is advisory and local-filesystem scoped, not a distributed or
+  hostile-filesystem locking guarantee.
 
 ## 2026-07-15 - Test Discovery Against an Exact External Window
 

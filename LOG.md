@@ -1,6 +1,6 @@
 # Engineering Log
 
-## 2026-07-17 - Cross-Thread Claim Lock Release Recovery
+## 2026-07-17 - Native Cross-Process Task Locks
 
 - Base: `c01708e30d7c048f1cfb696658c27b2f439e406a`.
 - Trigger: issue #23 reported that
@@ -10,25 +10,24 @@
   remaining claimant threads waited in `FileLock.acquire`; the thread that had
   owned the lock was no longer running.
 - Root cause: `FileLock.release` closed its descriptor, attempted one unlink,
-  and swallowed every `OSError`. A transient Windows sharing violation while a
-  contender or scanner read the lock file therefore left an orphan containing
-  the still-live process PID. Stale detection treated that PID as an active
-  owner, and the test's `LockTimeout` retry loop never terminated.
-- Change: lock records now include a unique acquisition token registered in
-  process. Release verifies ownership and retries deletion to a monotonic
-  deadline. A persistent failure raises `LockReleaseError` and retires the
-  in-process ownership record, allowing a later claimant to recognize and
-  remove the same-process orphan after the sharing conflict clears. Claim-test
-  joins are bounded and report stuck thread names.
-- Evidence: deterministic transient- and persistent-unlink regressions pass;
-  500/500 four-thread contention rounds passed; focused task tests passed
-  12/12; full suite passed 623 with 9 environment-bound skips; Ruff passed.
-- Boundary: an external actor that continuously denies deletion can still make
-  acquisition fail with a bounded lock error. This change prevents silent
-  success and indefinite same-process retry; it does not claim availability
-  against a permanently hostile filesystem.
-- Rollback: revert the issue #23 pull-request commit. Restoring the prior
-  swallow-on-release behavior restores the orphan-lock hang.
+  and swallowed every `OSError`. A transient Windows sharing violation left an
+  orphan containing the still-live process PID. The stale-file algorithm also
+  allowed age-based deletion of a live POSIX owner and could strand a malformed
+  file after a failed owner-record write.
+- Change: replaced pathname creation/deletion ownership with native advisory
+  locking: `msvcrt.locking` on Windows and `fcntl.flock` on POSIX. The lock file
+  remains present; the kernel releases exclusivity when the descriptor closes
+  or the process exits. There is no stale-age unlink, owner-record write, or
+  compare-then-unlink race.
+- Evidence: bounded thread joins identify any recurrence; native-lock tests
+  cover a live process held beyond `stale_after`, automatic recovery after
+  process exit, persistent lock-file reuse, and normalized unlock errors.
+- Boundary: advisory locking protects cooperating SelfConnect processes. It is
+  not a hostile-filesystem or mandatory-locking claim. A process that ignores
+  the advisory protocol can still modify the lock pathname.
+- Rollback: revert the issue #23 pull-request commit. Restoring pathname unlink
+  ownership restores the reproduced orphan, live-owner, and malformed-file
+  failure classes.
 
 ## 2026-07-15 - Deterministic External-Target Smoke Probe
 
