@@ -125,3 +125,20 @@
   and diff checks passed. No workflow or provider dispatch occurred.
 - Rollback: revert the producer PR. Do not restore a feature-branch consumer
   SHA or the former placeholder as an executable release contract.
+
+## 2026-07-18 - Restricted Scale Cleanup Publication Gate
+
+- Moved portable `PASS` rung publication after owned process-tree and launcher
+  cleanup completes; an incomplete cleanup now leaves no rung or manifest that
+  can be consumed as completed evidence.
+- Added strict, atomic cleanup-control receipts bound to the exact portable rung
+  digest. The workflow attests and uploads these controls separately so the
+  frozen five-file ecosystem consumer contract remains unchanged.
+- Added bounded launcher termination/kill waits and adversarial tests for hung
+  launchers, malformed cleanup receipts, and publication suppression.
+- Validation: 42 focused producer tests and 824 repository tests passed with 10
+  environment-dependent skips; Ruff, compilation, SDK smoke 72/72, and all
+  non-cleanliness release-audit checks passed. No provider or model was run.
+- Boundary: this is mechanism and workflow evidence only. It is not a completed
+  10/15/20 run and does not close the credential, runner, attestation, consumer,
+  or independent-review gates in issue #21.

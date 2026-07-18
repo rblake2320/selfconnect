@@ -37,6 +37,8 @@ import sc_cli
 
 SCHEMA = "selfconnect.scale_readiness_evidence.v2"
 RUNG_SCHEMA = "selfconnect.restricted_scale_result.v2"
+CONTROL_SCHEMA = "selfconnect.restricted_scale_cleanup_control.v1"
+CONTROL_MANIFEST_SCHEMA = "selfconnect.restricted_scale_cleanup_manifest.v1"
 CORE_REMOTE = "https://github.com/rblake2320/selfconnect"
 CORE_BRANCH = "master"
 # Immutable selfconnect-ecosystem main commit containing the reviewed consumer
@@ -771,6 +773,135 @@ def cleanup_process_tree(
     return receipt
 
 
+def cleanup_rung_processes(
+    root_identities: Sequence[NativeProcessIdentity],
+    launchers: Sequence[subprocess.Popen[bytes]],
+    *,
+    wait_s: float = 10.0,
+) -> dict[str, Any]:
+    tree_error: ProducerError | None = None
+    try:
+        tree = cleanup_process_tree(root_identities, wait_s=wait_s)
+    except ProducerError as exc:
+        tree_error = exc
+        tree = {"target_count": 0, "identity_mismatch_count": 0}
+    live_launchers = [process for process in launchers if process.poll() is None]
+    for process in live_launchers:
+        try:
+            process.terminate()
+        except OSError:
+            pass
+    remaining: list[subprocess.Popen[bytes]] = []
+    terminate_deadline = time.monotonic() + wait_s
+    for process in live_launchers:
+        try:
+            process.wait(timeout=max(0.0, terminate_deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+            except OSError:
+                pass
+            remaining.append(process)
+    kill_deadline = time.monotonic() + wait_s
+    still_running: list[subprocess.Popen[bytes]] = []
+    for process in remaining:
+        if process.poll() is not None:
+            continue
+        try:
+            process.wait(timeout=max(0.0, kill_deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            still_running.append(process)
+    receipt = {
+        "requested": True,
+        "completed": tree_error is None and not still_running,
+        "target_count": tree["target_count"] + len(live_launchers),
+        "remaining_count": len(still_running),
+        "identity_mismatch_count": tree["identity_mismatch_count"],
+        "launcher_target_count": len(live_launchers),
+        "completed_at_utc": utc_text(utc_now()),
+    }
+    if tree_error is not None or still_running:
+        raise ProducerError("cleanup_incomplete") from tree_error
+    return receipt
+
+
+def _atomic_write_bytes(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(16)}.tmp")
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _publish_cleaned_rung(
+    *,
+    output: Path,
+    control_output: Path,
+    result: Mapping[str, Any],
+    cleanup_receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    required_cleanup_keys = {
+        "requested",
+        "completed",
+        "target_count",
+        "remaining_count",
+        "identity_mismatch_count",
+        "launcher_target_count",
+        "completed_at_utc",
+    }
+    if (
+        set(cleanup_receipt) != required_cleanup_keys
+        or cleanup_receipt.get("requested") is not True
+        or cleanup_receipt.get("completed") is not True
+        or cleanup_receipt.get("remaining_count") != 0
+    ):
+        raise ProducerError("cleanup_receipt_invalid")
+    for key in (
+        "target_count",
+        "remaining_count",
+        "identity_mismatch_count",
+        "launcher_target_count",
+    ):
+        value = cleanup_receipt.get(key)
+        if type(value) is not int or value < 0:
+            raise ProducerError("cleanup_receipt_invalid")
+    cleanup_completed = parse_utc(cleanup_receipt.get("completed_at_utc"))
+    if (
+        result.get("schema") != RUNG_SCHEMA
+        or result.get("verdict") != "PASS"
+        or result.get("agent_count") not in RUNGS
+        or cleanup_completed < parse_utc(result.get("completed_at_utc"))
+    ):
+        raise ProducerError("cleanup_receipt_invalid")
+    if output.exists() or control_output.exists():
+        raise ProducerError("rung_output_already_exists")
+    rung_payload = (
+        json.dumps(dict(result), indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    control = {
+        "schema": CONTROL_SCHEMA,
+        "run_id": result.get("run_id"),
+        "agent_count": result.get("agent_count"),
+        "rung_file": output.name,
+        "rung_sha256": sha256_bytes(rung_payload),
+        "cleanup": dict(cleanup_receipt),
+    }
+    control_payload = (json.dumps(control, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+    # Cleanup is complete before either PASS artifact becomes visible. The
+    # portable rung remains byte-compatible with the frozen ecosystem consumer;
+    # its cleanup control is attested as a separate workflow artifact.
+    _atomic_write_bytes(control_output, control_payload)
+    _atomic_write_bytes(output, rung_payload)
+    return control
+
+
 def assert_disposable_terminal_host(
     *,
     preexisting_terminal_pids: set[int],
@@ -1161,7 +1292,13 @@ def write_contract_fixture(output_dir: Path) -> None:
     )
 
 
-def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, Any]:
+def run_rung(
+    agent_count: int,
+    output: Path,
+    control_output: Path,
+    *,
+    timeout_s: float,
+) -> dict[str, Any]:
     if agent_count not in RUNGS:
         raise ProducerError("unsupported_rung")
     started = utc_now()
@@ -1172,6 +1309,8 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
     agents: list[dict[str, Any]] = []
     states: list[dict[str, Any]] = []
     nonces: set[str] = set()
+    result: dict[str, Any] | None = None
+    cleanup_receipt: dict[str, Any] | None = None
     with tempfile.TemporaryDirectory(prefix="selfconnect-restricted-scale-") as temp_name:
         workdir = Path(temp_name)
         admin_policy = workdir / "gemini-deny-all.toml"
@@ -1439,19 +1578,21 @@ def run_rung(agent_count: int, output: Path, *, timeout_s: float) -> dict[str, A
                 "cli_invocation_accounting": {"cli_invocations_total": len(agents)},
                 "agents": agents,
             }
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            return result
         finally:
-            try:
-                cleanup_process_tree(spawn_roots)
-            finally:
-                for process in processes:
-                    if process.poll() is None:
-                        process.terminate()
+            cleanup_receipt = cleanup_rung_processes(spawn_roots, processes)
+
+    if result is None or cleanup_receipt is None:
+        raise ProducerError("rung_not_finalized")
+    _publish_cleaned_rung(
+        output=output,
+        control_output=control_output,
+        result=result,
+        cleanup_receipt=cleanup_receipt,
+    )
+    return result
 
 
-def produce_bundle(output_dir: Path, *, timeout_s: float) -> None:
+def produce_bundle(output_dir: Path, control_dir: Path, *, timeout_s: float) -> None:
     context = _workflow_context()
     requested_runner_config = _requested_runner_config()
     identity = verify_checkout(ROOT)
@@ -1459,19 +1600,35 @@ def produce_bundle(output_dir: Path, *, timeout_s: float) -> None:
     pins = verify_provider_pins(os.environ)
     if not all(identity[name] for name in ("git_config_cleared", "python_env_cleared")):
         raise ProducerError("producer_environment_not_cleared")
-    if output_dir.exists():
+    paths_overlap = (
+        output_dir == control_dir
+        or output_dir in control_dir.parents
+        or control_dir in output_dir.parents
+    )
+    if paths_overlap or output_dir.exists() or control_dir.exists():
         raise ProducerError("output_already_exists")
     output_dir.mkdir(parents=True)
+    control_dir.mkdir(parents=True)
     rows = []
+    control_rows = []
     for count in RUNGS:
         path = output_dir / f"rung-{count}.json"
-        run_rung(count, path, timeout_s=timeout_s)
+        control_path = control_dir / f"cleanup-rung-{count}.json"
+        run_rung(count, path, control_path, timeout_s=timeout_s)
         rows.append(
             {
                 "agent_count": count,
                 "file": path.name,
                 "sha256": sha256_file(path),
                 "size_bytes": path.stat().st_size,
+            }
+        )
+        control_rows.append(
+            {
+                "agent_count": count,
+                "file": control_path.name,
+                "sha256": sha256_file(control_path),
+                "size_bytes": control_path.stat().st_size,
             }
         )
     manifest = {
@@ -1483,18 +1640,33 @@ def produce_bundle(output_dir: Path, *, timeout_s: float) -> None:
         "provider_pins": pins,
         "rungs": rows,
     }
-    (output_dir / "manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    manifest_payload = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+    _atomic_write_bytes(output_dir / "manifest.json", manifest_payload)
+    control_manifest = {
+        "schema": CONTROL_MANIFEST_SCHEMA,
+        "evidence_manifest_sha256": sha256_bytes(manifest_payload),
+        "cleanup_receipts": control_rows,
+    }
+    _atomic_write_bytes(
+        control_dir / "manifest.json",
+        (json.dumps(control_manifest, indent=2, sort_keys=True) + "\n").encode("utf-8"),
     )
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--control-dir", type=Path, required=True)
     parser.add_argument("--timeout", type=float, default=1200.0)
     args = parser.parse_args(argv)
     try:
-        produce_bundle(args.output_dir.resolve(), timeout_s=args.timeout)
+        produce_bundle(
+            args.output_dir.resolve(),
+            args.control_dir.resolve(),
+            timeout_s=args.timeout,
+        )
     except (ProducerError, OSError, ValueError, psutil.Error) as exc:
         print(json.dumps({"schema": SCHEMA, "ok": False, "status": str(exc)}))
         return 2

@@ -48,16 +48,28 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python experiments\fabric_v2\restricted_scale_producer.py `
-            --output-dir (Join-Path $env:RUNNER_TEMP 'scale-evidence')
+            --output-dir (Join-Path $env:RUNNER_TEMP 'scale-evidence') `
+            --control-dir (Join-Path $env:RUNNER_TEMP 'scale-control')
           Compress-Archive -Path (Join-Path $env:RUNNER_TEMP 'scale-evidence\*') `
             -DestinationPath (Join-Path $env:RUNNER_TEMP 'scale-evidence.zip')
+          Compress-Archive -Path (Join-Path $env:RUNNER_TEMP 'scale-control\*') `
+            -DestinationPath (Join-Path $env:RUNNER_TEMP 'scale-control.zip')
       - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: ${{ runner.temp }}/scale-evidence.zip
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: ${{ runner.temp }}/scale-control.zip
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: restricted-scale-evidence
           path: ${{ runner.temp }}/scale-evidence.zip
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: restricted-scale-cleanup-control
+          path: ${{ runner.temp }}/scale-control.zip
           if-no-files-found: error
           retention-days: 30
       - name: Cleanup
@@ -66,3 +78,5 @@ jobs:
         run: |
           Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'scale-evidence') -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'scale-evidence.zip') -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'scale-control') -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'scale-control.zip') -Force -ErrorAction SilentlyContinue

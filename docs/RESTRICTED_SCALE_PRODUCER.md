@@ -38,6 +38,14 @@ revalidates that identity before both terminate and kill. A PID that has exited
 and been reused is skipped, and completed provider PIDs are never queued as
 cleanup roots.
 
+A rung is not published as `PASS` until this cleanup completes with zero owned
+processes remaining. The workflow emits and separately attests a cleanup-control
+archive whose receipts bind each cleanup result to the exact SHA-256 digest of
+its portable rung. Cleanup control remains separate because the pinned ecosystem
+consumer intentionally accepts exactly the frozen five-file evidence bundle.
+An incomplete cleanup fails the producer before a rung or manifest can be
+finalized.
+
 This prevents the producer from killing a user's shared Windows Terminal. It
 does not prove that the wider machine or runner image is disposable.
 
