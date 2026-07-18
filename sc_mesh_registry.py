@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -26,6 +27,10 @@ from sc_tasks import FileLock
 REGISTRY_VERSION = 1
 EVENT_LOG_VERSION = 1
 EVENT_GENESIS_HASH = "0" * 64
+STRICT_EVENT_EVIDENCE_BOUNDARY = (
+    "strict fsync plus hash chaining detects replacement after observation; local administrators, "
+    "same-account writers, and off-host compromise require external WORM anchoring"
+)
 DEFAULT_MESH = "default"
 DEFAULT_PROFILE = "explore"
 VALID_PROFILES = {"explore", "governed"}
@@ -286,7 +291,9 @@ def append_event(
     """Append a durable mesh event.
 
     The registry is current state; this JSONL file is the history that survives
-    role replacement, terminal closure, and migration.
+    role replacement, terminal closure, and migration. Strict mode is durable
+    and tamper-evident, not tamper-resistant against the documented local-admin
+    boundary; anchor its head off-host when that threat is in scope.
     """
     path = Path(event_log_path) if event_log_path else default_event_log_path(registry_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -295,6 +302,17 @@ def append_event(
     event_data = dict(data or {})
     if strict_idempotency_key:
         event_data["strict_idempotency_key"] = strict_idempotency_key
+
+    intended = {
+        "event_type": event_type, "mesh": mesh, "role": role, "birth_id": birth_id,
+        "generation": generation, "agent": agent, "hwnd": hwnd, "task": task,
+        "status": status, "profile": profile, "summary": summary, "data": event_data,
+    }
+    intended_digest = hashlib.sha256(
+        json.dumps(intended, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    ).hexdigest()
+    if strict_idempotency_key:
+        event_data["strict_intended_sha256"] = intended_digest
 
     def build_record(prev_event_hash: str) -> dict[str, Any]:
         record = {
@@ -331,6 +349,10 @@ def append_event(
                         continue
                     existing = json.loads(line)
                     if existing.get("data", {}).get("strict_idempotency_key") == strict_idempotency_key:
+                        if not hmac.compare_digest(
+                            str(existing.get("data", {}).get("strict_intended_sha256", "")), intended_digest,
+                        ):
+                            raise EventLogIntegrityError("strict idempotency key reused for a different event")
                         return {"ok": True, "path": str(path), "event": existing, "idempotent_replay": True}
             record = build_record(str(verified["head_hash"]))
             with path.open("a", encoding="utf-8") as fh:

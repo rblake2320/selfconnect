@@ -29,15 +29,15 @@ pytestmark = pytest.mark.skipif(
 
 def test_real_receiver_hashes_unicode_stdin_and_returns_signed_ack(tmp_path):
     title = f"SC_GUARDED_{os.getpid()}_{time.time_ns()}"
-    pipe = rf"\\.\pipe\selfconnect_guarded_{os.getpid()}_{time.time_ns()}"
+    pipe = guarded.make_private_pipe_address()
     key = os.urandom(32)
     ready = tmp_path / "ready.txt"
     receiver_script = tmp_path / "receiver.py"
     receiver_script.write_text(
         """
-import ctypes, hashlib, os, threading, time
+import ctypes, hashlib, os, sys, threading, time, traceback
 from pathlib import Path
-from sc_guarded_submit import AckKeyRing, ProcessingAckServer
+from sc_guarded_submit import AckKeyRing, ProcessingAckServer, SubprocessAckProcessor
 
 ctypes.windll.kernel32.SetConsoleTitleW(os.environ['SC_TITLE'])
 hwnd = ctypes.windll.kernel32.GetConsoleWindow()
@@ -50,11 +50,16 @@ def hold_focus():
 threading.Thread(target=hold_focus, daemon=True).start()
 actual = input()
 stop_focus.set()
+os.environ['SC_ACTUAL_DIGEST'] = hashlib.sha256(actual.encode('utf-8')).hexdigest()
+adapter = Path(os.environ['SC_READY']).with_suffix('.adapter.py')
+adapter.write_text("import json,os,sys\\np=json.load(sys.stdin)\\nprint(json.dumps({'admission_id':p['admission_id'],'mode':p['mode'],'decision':'accepted','input_sha256':os.environ['SC_ACTUAL_DIGEST']}))\\n", encoding='ascii')
 keyring = AckKeyRing({os.environ['SC_KEY_ID']: bytes.fromhex(os.environ['SC_KEY'])})
-server = ProcessingAckServer(os.environ['SC_PIPE'], keyring, os.environ['SC_KEY_ID'])
-server.serve_once(
-    lambda _request: ('accepted', hashlib.sha256(actual.encode('utf-8')).hexdigest()),
-)
+server = ProcessingAckServer(os.environ['SC_PIPE'], keyring, os.environ['SC_KEY_ID'], os.environ['SC_ADMISSION'])
+try:
+    server.serve_once(SubprocessAckProcessor([sys.executable, str(adapter)]))
+except Exception:
+    Path(os.environ['SC_ERROR']).write_text(traceback.format_exc(), encoding='utf-8')
+    raise
 """,
         encoding="utf-8",
     )
@@ -64,6 +69,8 @@ server.serve_once(
     env.update({
         "SC_TITLE": title, "SC_PIPE": pipe, "SC_KEY": key.hex(),
         "SC_KEY_ID": key_id, "SC_READY": str(ready),
+        "SC_ADMISSION": str(tmp_path / "receiver-admission.sqlite3"),
+        "SC_ERROR": str(tmp_path / "receiver-error.txt"),
     })
     root = str(Path(__file__).parents[1])
     env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
@@ -93,7 +100,11 @@ server.serve_once(
             replay_path=tmp_path / "replay.sqlite3",
             event_log_path=tmp_path / "events.jsonl",
         )
-        assert result["ok"] is True, result
+        error_path = tmp_path / "receiver-error.txt"
+        assert result["ok"] is True, (
+            json.dumps(result, default=str, sort_keys=True)
+            + ("\n" + error_path.read_text(encoding="utf-8") if error_path.exists() else "")
+        )
         assert result["input_sha256"] == hashlib.sha256(text.encode("utf-8")).hexdigest()
         assert process.wait(timeout=10) == 0
 
@@ -155,7 +166,25 @@ server.serve_once(
                         event_log_path=tmp_path / "events.jsonl",
                     )["ok"],
                     "stale_closed_hwnd_refused": stale["state"] == "refused",
-                    "finalization_store": "sqlite synchronous=FULL pending->audited",
+                    "sender_finalization_store": "sqlite synchronous=FULL pending->audited with authenticated envelope recovery",
+                    "receiver_admission_store": "sqlite synchronous=FULL admit->processing lease->completed signed result",
+                },
+                "pipe_security": {
+                    "scope": "current logon SID, local clients only",
+                    "first_instance": True,
+                    "client_token_logon_sid_checked": True,
+                    "overlapped_total_deadline": True,
+                },
+                "processor": {
+                    "governed_killable_subprocess": True,
+                    "digest_is_adapter_attestation": True,
+                    "durable_admission_idempotency_required": True,
+                },
+                "claim_boundaries": {
+                    "issue_22_open": True,
+                    "production_readiness_claimed": False,
+                    "windows_terminal_per_tab_claimed": False,
+                    "logical_sender_is_process_identity_claim": False,
                 },
                 "secrets_or_raw_input_included": False,
             }

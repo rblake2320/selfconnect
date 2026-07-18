@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import contextlib
 import inspect
 import json
 import math
 import os
 import struct
+import sqlite3
+import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -91,7 +95,7 @@ def _submit(tmp_path: Path, **overrides):
             "delivery_verified": False,
         }),
         focus=overrides.pop("focus", lambda hwnd: {"ok": True, "hwnd": hwnd}),
-        enter=overrides.pop("enter", lambda hwnd: {"ok": True, "hwnd": hwnd, "events_inserted": 2}),
+        enter=overrides.pop("enter", lambda target: {"ok": True, "hwnd": target.hwnd, "events_inserted": 2}),
         receive_ack=overrides.pop("receive_ack", receive),
         finalize_ack=overrides.pop("finalize_ack", finalizer.finalize),
         audit_append=overrides.pop("audit_append", sc_mesh_registry.append_event),
@@ -166,7 +170,7 @@ def test_identity_toctou_refuses_before_every_side_effect_boundary(tmp_path, fie
     snapshots = [TARGET] * changed_at + [changed] * (4 - changed_at)
     entered = []
     result = _submit(tmp_path, snapshots=snapshots, enter=lambda hwnd: entered.append(hwnd) or {"ok": True})
-    assert result["state"] == "refused"
+    assert result["state"] == ("refused" if changed_at == 0 else "ambiguous")
     assert result["delivery_verified"] is False
     assert entered == []
     assert result["guard"]["mismatches"] == [field]
@@ -183,8 +187,8 @@ def test_identity_change_immediately_after_enter_is_ambiguous(tmp_path):
     ("authority", "failure", "state", "prefix"),
     [
         ("snapshot", OSError("guard"), "refused", "target_guard_exception_before_typing"),
-        ("send_body", OSError("body"), "refused", "body_transport_exception"),
-        ("focus", OSError("focus"), "refused", "focus_exception"),
+        ("send_body", OSError("body"), "ambiguous", "body_staged_exception"),
+        ("focus", OSError("focus"), "ambiguous", "body_staged_focus_exception"),
         ("enter", OSError("enter"), "ambiguous", "hardware_enter_exception"),
         ("receive_ack", OSError("ack"), "ambiguous", "peer_ack_failed"),
         ("finalize_ack", OSError("db"), "ambiguous", "peer_ack_failed"),
@@ -220,14 +224,14 @@ def test_audit_exceptions_are_classified_without_success(tmp_path, failed_event,
     assert result["error"].startswith(prefix)
 
 
-def test_partial_body_is_refused_before_focus(tmp_path):
+def test_partial_body_is_ambiguous_before_focus(tmp_path):
     focused = []
     result = _submit(
         tmp_path,
         send_body=lambda *_args: {"ok": True, "chars_requested": len(TEXT), "chars_accepted": len(TEXT) - 1},
         focus=lambda hwnd: focused.append(hwnd),
     )
-    assert result["state"] == "refused"
+    assert result["state"] == "ambiguous"
     assert focused == []
 
 
@@ -290,7 +294,7 @@ def test_authenticated_duplicate_json_fields_are_rejected():
 
 @pytest.mark.skipif(os.name != "nt", reason="real named-pipe deadline requires Windows")
 def test_named_pipe_connect_uses_total_deadline():
-    pipe = rf"\\.\pipe\selfconnect_missing_{os.getpid()}_{time.time_ns()}"
+    pipe = guarded.make_private_pipe_address()
     client = guarded.RawJsonNamedPipeClient(pipe, KEYRING)
     request = guarded.PeerAckRequest(
         guarded.REQUEST_SCHEMA, KEY_ID, MESSAGE_ID, CHALLENGE,
@@ -308,6 +312,7 @@ def test_bool_or_nonfinite_ack_timestamp_rejected(timestamp):
         "schema": guarded.ACK_SCHEMA, "key_id": KEY_ID, "message_id": MESSAGE_ID,
         "challenge": CHALLENGE, "ack_nonce": ACK_NONCE,
         "input_sha256": hashlib.sha256(TEXT.encode()).hexdigest(),
+        "processed_input_sha256": hashlib.sha256(TEXT.encode()).hexdigest(),
         "sender": RECEIVER, "receiver": SENDER, "decision": "accepted", "issued_at": timestamp,
     }
     raw = guarded._wire_encode(body, key_id=KEY_ID, key=KEY)
@@ -368,6 +373,206 @@ def test_strict_idempotent_audit_append_does_not_duplicate(tmp_path):
     assert second["idempotent_replay"] is True
     assert first["event"]["event_hash"] == second["event"]["event_hash"]
     assert sc_mesh_registry.verify_events(event_log_path=path)["events_checked"] == 1
+
+
+def test_strict_idempotency_key_rejects_conflicting_intended_event(tmp_path):
+    path = tmp_path / "events.jsonl"
+    sc_mesh_registry.append_event(
+        "ack", status="accepted", data={"digest": "a"}, event_log_path=path,
+        strict=True, strict_idempotency_key="ack:1", repo_snapshot={},
+    )
+    with pytest.raises(sc_mesh_registry.EventLogIntegrityError, match="different event"):
+        sc_mesh_registry.append_event(
+            "ack", status="rejected", data={"digest": "b"}, event_log_path=path,
+            strict=True, strict_idempotency_key="ack:1", repo_snapshot={},
+        )
+
+
+def _request_wire(*, issued_at: float = 1.0) -> tuple[guarded.PeerAckRequest, bytes]:
+    request = guarded.PeerAckRequest(
+        guarded.REQUEST_SCHEMA, KEY_ID, MESSAGE_ID, CHALLENGE,
+        hashlib.sha256(TEXT.encode()).hexdigest(), SENDER, RECEIVER, issued_at,
+    )
+    return request, guarded._wire_encode(guarded._request_body(request), key_id=KEY_ID, key=KEY)
+
+
+def test_receiver_admission_is_single_claimant_and_recovers_completed_result(tmp_path):
+    store = guarded.DurableReceiverAdmissionStore(tmp_path / "receiver.sqlite3")
+    request, raw = _request_wire()
+    admissions = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        admissions = list(pool.map(lambda _index: store.admit(request, raw), range(8)))
+    assert len({item[0] for item in admissions}) == 1
+    admission_id = admissions[0][0]
+    deadline = time.monotonic() + 2
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        owners = list(pool.map(lambda _index: store.claim(admission_id, deadline), range(8)))
+    owner = next(item for item in owners if item is not None)
+    assert sum(item is not None for item in owners) == 1
+    response = b"authenticated-result"
+    store.complete(admission_id, owner, "accepted", request.input_sha256, response)
+    assert store.admit(request, raw) == (admission_id, "completed", response)
+
+
+def test_receiver_processing_lease_takeover_requires_recovery_path(tmp_path):
+    store = guarded.DurableReceiverAdmissionStore(tmp_path / "receiver.sqlite3")
+    request, raw = _request_wire()
+    admission_id, state, _ = store.admit(request, raw)
+    assert state == "admitted"
+    owner = store.claim(admission_id, time.monotonic() + 0.05)
+    assert owner is not None
+    with contextlib.closing(sqlite3.connect(store.path)) as connection:
+        connection.execute("UPDATE receiver_admission SET lease_expires_tick=-1 WHERE admission_id=?", (admission_id,))
+        connection.commit()
+    admission_id2, state2, _ = store.admit(request, raw)
+    assert (admission_id2, state2) == (admission_id, "processing")
+    assert store.claim(admission_id, time.monotonic() + 1) is not None
+
+
+def test_receiver_rejects_same_admission_binding_with_changed_authenticated_body(tmp_path):
+    store = guarded.DurableReceiverAdmissionStore(tmp_path / "receiver.sqlite3")
+    request, raw = _request_wire(issued_at=1.0)
+    store.admit(request, raw)
+    changed, changed_raw = _request_wire(issued_at=2.0)
+    with pytest.raises(guarded.AckReplayError, match="binding conflict"):
+        store.admit(changed, changed_raw)
+
+
+def test_finalizer_migrates_legacy_schema_and_closes_connections(tmp_path):
+    path = tmp_path / "legacy.sqlite3"
+    with contextlib.closing(sqlite3.connect(path)) as connection:
+        connection.execute(
+            "CREATE TABLE peer_ack_finalization (sender TEXT, receiver TEXT, message_id TEXT, challenge TEXT, "
+            "ack_nonce TEXT, input_sha256 TEXT, ack_sha256 TEXT, state TEXT, created_at REAL, audited_at REAL)"
+        )
+        connection.commit()
+    guarded.DurableAckFinalizer(path)
+    with contextlib.closing(sqlite3.connect(path)) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(peer_ack_finalization)")}
+        assert {"raw_ack", "key_id", "decision", "issued_at"} <= columns
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    replacement = tmp_path / "replacement.sqlite3"
+    os.replace(path, replacement)
+    assert replacement.exists()
+
+
+def test_public_pending_reconciliation_is_audit_only_and_idempotent(tmp_path):
+    store = guarded.DurableAckFinalizer(tmp_path / "finalize.sqlite3")
+    request, _ = _request_wire(issued_at=1.0)
+    raw = _ack(request, issued_at=1.0)
+    ack = guarded.verify_peer_ack(
+        raw, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID, challenge=CHALLENGE,
+        input_sha256=request.input_sha256, sender=RECEIVER, receiver=SENDER, now=1.0,
+    )
+    with pytest.raises(OSError):
+        store.finalize(ack, raw, lambda _digest: (_ for _ in ()).throw(OSError("audit unavailable")))
+    assert len(guarded.list_pending_acks(tmp_path / "finalize.sqlite3")) == 1
+    assert guarded.reconcile_pending_acks(tmp_path / "finalize.sqlite3", tmp_path / "events.jsonl") == 1
+    assert guarded.reconcile_pending_acks(tmp_path / "finalize.sqlite3", tmp_path / "events.jsonl") == 0
+    events = sc_mesh_registry.load_events(event_log_path=tmp_path / "events.jsonl")["events"]
+    assert events[0]["data"]["recovery"] == "audit_only_no_physical_submit"
+
+
+def test_rotation_active_overlap_expiry_and_revocation():
+    ring = guarded.AckKeyRing({
+        "old": guarded.AckKey(OLD_KEY, not_before=10, expires_at=30),
+        "new": guarded.AckKey(KEY, not_before=20, expires_at=40),
+        "revoked": guarded.AckKey(b"r" * 32, not_before=0, expires_at=40, revoked=True),
+    })
+    assert ring.active_key_ids(now=25) == ("old", "new")
+    with pytest.raises(guarded.AckVerificationError, match="inactive"):
+        ring.resolve("old", now=30)
+    with pytest.raises(guarded.AckVerificationError, match="inactive"):
+        ring.resolve("revoked", now=25)
+
+
+def test_request_rotation_authenticates_old_key_and_binds_new_response_key():
+    request = guarded.PeerAckRequest(
+        guarded.REQUEST_SCHEMA, OLD_KEY_ID, MESSAGE_ID, CHALLENGE,
+        hashlib.sha256(TEXT.encode()).hexdigest(), SENDER, RECEIVER, time.time(), KEY_ID,
+    )
+    raw = guarded._wire_encode(guarded._request_body(request), key_id=OLD_KEY_ID, key=OLD_KEY)
+    assert guarded._validate_request(raw, keyring=KEYRING, max_age_seconds=300) == request
+
+
+def test_signed_rejection_binds_adapter_attested_digest_separately():
+    requested = hashlib.sha256(TEXT.encode()).hexdigest()
+    processed = "44" * 32
+    raw = guarded.sign_peer_ack(
+        keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID, challenge=CHALLENGE,
+        ack_nonce=ACK_NONCE, input_sha256=requested, processed_input_sha256=processed,
+        sender=RECEIVER, receiver=SENDER, decision="rejected",
+    )
+    ack = guarded.verify_peer_ack(
+        raw, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID, challenge=CHALLENGE,
+        input_sha256=requested, sender=RECEIVER, receiver=SENDER,
+    )
+    assert ack.decision == "rejected" and ack.processed_input_sha256 == processed
+
+
+def test_governed_subprocess_is_killed_at_total_deadline(tmp_path):
+    adapter = tmp_path / "hung.py"
+    adapter.write_text("import time\ntime.sleep(60)\n", encoding="ascii")
+    processor = guarded.SubprocessAckProcessor([sys.executable, str(adapter)])
+    request, _ = _request_wire(issued_at=time.time())
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="killed"):
+        processor.process(request, "aa" * 32, time.monotonic() + 0.1)
+    assert time.monotonic() - started < 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="real private named pipe requires Windows")
+def test_private_overlapped_pipe_loopback_and_governed_processor(tmp_path):
+    pipe = guarded.make_private_pipe_address()
+    request = guarded.PeerAckRequest(
+        guarded.REQUEST_SCHEMA, KEY_ID, MESSAGE_ID, CHALLENGE,
+        hashlib.sha256(TEXT.encode()).hexdigest(), SENDER, RECEIVER, time.time(), KEY_ID,
+    )
+    adapter = tmp_path / "adapter.py"
+    adapter.write_text(
+        "import json,sys\np=json.load(sys.stdin)\nr=p['request']\n"
+        "print(json.dumps({'admission_id':p['admission_id'],'mode':p['mode'],"
+        "'decision':'accepted','input_sha256':r['input_sha256']}))\n",
+        encoding="ascii",
+    )
+    processor = guarded.SubprocessAckProcessor([sys.executable, str(adapter)])
+
+    server = guarded.ProcessingAckServer(pipe, KEYRING, KEY_ID, tmp_path / "admission.sqlite3")
+    errors = []
+
+    def serve():
+        try:
+            server.serve_once(processor, timeout=2)
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=serve)
+    thread.start()
+    raw_ack = guarded.RawJsonNamedPipeClient(pipe, KEYRING).receive(request, 2)
+    thread.join(timeout=3)
+    assert not thread.is_alive() and errors == []
+    ack = guarded.verify_peer_ack(
+        raw_ack, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID, challenge=CHALLENGE,
+        input_sha256=request.input_sha256, sender=RECEIVER, receiver=SENDER,
+    )
+    assert ack.decision == "accepted"
+
+    # A lost first response redelivery returns the durable signed result and
+    # never launches a second physical processor.
+    replay_errors = []
+    replay_server = guarded.ProcessingAckServer(pipe, KEYRING, KEY_ID, tmp_path / "admission.sqlite3")
+
+    def replay_serve():
+        try:
+            replay_server.serve_once(guarded.SubprocessAckProcessor(["definitely-must-not-run.exe"]), timeout=2)
+        except Exception as exc:
+            replay_errors.append(exc)
+
+    replay_thread = threading.Thread(target=replay_serve)
+    replay_thread.start()
+    replay_ack = guarded.RawJsonNamedPipeClient(pipe, KEYRING).receive(request, 2)
+    replay_thread.join(timeout=3)
+    assert replay_errors == [] and replay_ack == raw_ack
 
 
 def test_strict_event_append_serializes_concurrent_writers(tmp_path):

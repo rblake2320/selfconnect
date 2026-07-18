@@ -1129,11 +1129,56 @@ def _send_char_sendinput(ch: str) -> bool:
     return inserted == len(units) * 2
 
 
-def hardware_enter_checked(expected_hwnd: int) -> dict[str, object]:
-    """Inject one physical Enter only while ``expected_hwnd`` is foreground."""
+def _enter_target_identity(expected_hwnd: int, process_handle: int) -> dict[str, object]:
+    """Resolve the identity tied to a held process handle at the actuation edge."""
+    import psutil
+
+    pid = int(kernel32.GetProcessId(process_handle))
+    window_pid = _get_pid(expected_hwnd)
+    process = psutil.Process(pid)
+    return {
+        "hwnd": int(expected_hwnd),
+        "pid": pid,
+        "exe_name": process.name(),
+        "class_name": _get_class_name(expected_hwnd),
+        "title": _get_window_title(expected_hwnd),
+        "exe_path": process.exe(),
+        "process_start_time_ns": int(process.create_time() * 1_000_000_000),
+        "window_pid_matches_handle": window_pid == pid,
+    }
+
+
+def hardware_enter_checked(expected_hwnd: int, *, expected_identity: dict[str, object] | None = None) -> dict[str, object]:
+    """Validate a held target process immediately around one physical Enter.
+
+    The irreducible boundary is the kernel scheduling interval inside SendInput:
+    foreground can change after the last user-mode check. The post-check detects
+    that case and reports ambiguity; it cannot retract already inserted events.
+    """
     expected_hwnd = int(expected_hwnd)
+    process_handle = 0
+    identity_before: dict[str, object] | None = None
+    if expected_identity is not None:
+        expected_pid = int(expected_identity.get("pid", 0))
+        process_handle = int(kernel32.OpenProcess(0x00100000 | 0x1000, False, expected_pid) or 0)
+        if not process_handle:
+            return {"ok": False, "hwnd": expected_hwnd, "events_requested": 2, "events_inserted": 0,
+                    "error": "target_process_handle_unavailable", "winerror": int(kernel32.GetLastError())}
+        try:
+            identity_before = _enter_target_identity(expected_hwnd, process_handle)
+        except Exception as exc:
+            kernel32.CloseHandle(process_handle)
+            return {"ok": False, "hwnd": expected_hwnd, "events_requested": 2, "events_inserted": 0,
+                    "error": f"target_identity_unavailable:{type(exc).__name__}", "winerror": int(kernel32.GetLastError())}
+        comparable = {key: value for key, value in identity_before.items() if key != "window_pid_matches_handle"}
+        if not identity_before["window_pid_matches_handle"] or comparable != expected_identity:
+            kernel32.CloseHandle(process_handle)
+            return {"ok": False, "hwnd": expected_hwnd, "events_requested": 2, "events_inserted": 0,
+                    "identity_before": identity_before, "error": "target_identity_changed_before_enter", "winerror": 0}
     observed = int(user32.GetForegroundWindow() or 0)
     if observed != expected_hwnd:
+        if process_handle:
+            kernel32.CloseHandle(process_handle)
         return {
             "ok": False,
             "hwnd": expected_hwnd,
@@ -1152,15 +1197,28 @@ def hardware_enter_checked(expected_hwnd: int) -> dict[str, object]:
         inputs[index].u.ki.dwFlags = flag
         inputs[index].u.ki.time = 0
         inputs[index].u.ki.dwExtraInfo = extra
-    inserted = int(user32.SendInput(2, inputs, ctypes.sizeof(INPUT)))
-    foreground_after = int(user32.GetForegroundWindow() or 0)
-    ok = inserted == 2 and foreground_after == expected_hwnd
+    try:
+        inserted = int(user32.SendInput(2, inputs, ctypes.sizeof(INPUT)))
+        foreground_after = int(user32.GetForegroundWindow() or 0)
+        identity_after = _enter_target_identity(expected_hwnd, process_handle) if process_handle else None
+    finally:
+        if process_handle:
+            kernel32.CloseHandle(process_handle)
+    identity_stable = identity_after is None or (
+        identity_after.get("window_pid_matches_handle") is True
+        and {key: value for key, value in identity_after.items() if key != "window_pid_matches_handle"} == expected_identity
+    )
+    ok = inserted == 2 and foreground_after == expected_hwnd and identity_stable
     return {
         "ok": ok,
         "hwnd": expected_hwnd,
         "foreground_hwnd": foreground_after,
         "events_requested": 2,
         "events_inserted": inserted,
+        "identity_before": identity_before,
+        "identity_after": identity_after,
+        "identity_stable": identity_stable,
+        "irreducible_race_bound": "foreground may change inside SendInput; post-check makes that outcome ambiguous",
         "error": "" if ok else "hardware_enter_ambiguous",
         "winerror": 0 if ok else int(kernel32.GetLastError()),
     }
