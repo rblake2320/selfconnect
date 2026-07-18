@@ -327,6 +327,17 @@ def test_security_api_uses_pointer_width_handles_and_explicit_prototypes():
     assert advapi32.SetFileSecurityW.argtypes == [wintypes.LPCWSTR, wintypes.DWORD, guarded.ctypes.c_void_p]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Win32 pipe ABI attestation requires Windows")
+def test_pipe_api_configuration_is_one_time_under_concurrency():
+    guarded._configure_pipe_api()
+    overlapped_type = guarded._OVERLAPPED
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda _index: guarded._configure_pipe_api(), range(64)))
+    assert guarded._OVERLAPPED is overlapped_type
+    pointer_type = guarded.ctypes.windll.kernel32.GetOverlappedResult.argtypes[1]
+    assert pointer_type._type_ is overlapped_type
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Win32 OVERLAPPED lifetime requires Windows")
 def test_cancelled_overlapped_io_retains_closure_and_buffers_until_completion(monkeypatch):
     kernel32 = guarded.ctypes.windll.kernel32
@@ -765,29 +776,31 @@ def test_request_rotation_authenticates_old_key_and_binds_new_response_key():
 
 
 @pytest.mark.parametrize("stage", ["body", "focus", "enter"])
-def test_submit_uses_one_total_deadline_across_all_physical_stages(tmp_path, stage):
+def test_submit_uses_one_total_deadline_across_all_physical_stages(tmp_path, stage, monkeypatch):
     calls = []
+    clock = [0.0]
+    monkeypatch.setattr(guarded.time, "monotonic", lambda: clock[0])
 
     def body(_window, text, _transport):
         calls.append("body")
         if stage == "body":
-            time.sleep(0.2)
+            clock[0] = 2.0
         return {"ok": True, "chars_requested": len(text), "chars_accepted": len(text)}
 
     def focus(hwnd):
         calls.append("focus")
         if stage == "focus":
-            time.sleep(0.2)
+            clock[0] = 2.0
         return {"ok": True, "hwnd": hwnd}
 
     def enter(target):
         calls.append("enter")
         if stage == "enter":
-            time.sleep(0.2)
+            clock[0] = 2.0
         return {"ok": True, "hwnd": target.hwnd, "events_inserted": 2}
 
     result = _submit(
-        tmp_path, ack_timeout=0.1, send_body=body, focus=focus, enter=enter,
+        tmp_path, ack_timeout=1.0, send_body=body, focus=focus, enter=enter,
         receive_ack=lambda *_args: calls.append("ack") or b"",
     )
     assert result["state"] == "ambiguous"

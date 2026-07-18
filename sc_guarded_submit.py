@@ -51,6 +51,7 @@ _BIDI_CONTROLS = {
     0x2066, 0x2067, 0x2068, 0x2069,
 }
 _OVERLAPPED: Any = None
+_PIPE_API_LOCK = threading.Lock()
 _PENDING_IO: list[tuple[Any, ...]] = []
 _PENDING_IO_LOCK = threading.Lock()
 
@@ -1170,6 +1171,12 @@ def _open_pipe(address: str, deadline: float) -> int:
 
 
 def _configure_pipe_api() -> None:
+    with _PIPE_API_LOCK:
+        if _OVERLAPPED is None:
+            _configure_pipe_api_locked()
+
+
+def _configure_pipe_api_locked() -> None:
     from ctypes import wintypes
 
     kernel32 = ctypes.windll.kernel32
@@ -1216,7 +1223,8 @@ def _configure_pipe_api() -> None:
     class OVERLAPPED(ctypes.Structure):
         _fields_ = [("Internal", ctypes.c_size_t), ("InternalHigh", ctypes.c_size_t),
                     ("Offset", wintypes.DWORD), ("OffsetHigh", wintypes.DWORD), ("hEvent", wintypes.HANDLE)]
-    globals()["_OVERLAPPED"] = OVERLAPPED
+    global _OVERLAPPED
+    _OVERLAPPED = OVERLAPPED
     kernel32.CancelIoEx.restype = wintypes.BOOL
     kernel32.CancelIoEx.argtypes = [wintypes.HANDLE, ctypes.POINTER(OVERLAPPED)]
     kernel32.GetOverlappedResult.restype = wintypes.BOOL
