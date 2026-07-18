@@ -11,13 +11,21 @@ the guarded-submit operation and acknowledgement:
 - retained `TabItem` plus its opaque UIA RuntimeId;
 - selected state;
 - focused text-capable TermControl RuntimeId;
-- peer `birth_id`.
+- caller-asserted peer `birth_id`, digest-bound into the operation and ACK.
 
 The guard calls `SelectionItem.Select`, then verifies the retained element with
 `IUIAutomation::CompareElements`. It checks immediately before each native
 input batch and immediately after the batch. Drift before a native call is a
 refusal. Drift after a native call is ambiguous because input may already have
 taken effect.
+
+The TermControl check fails closed unless exactly one text-capable candidate
+contains the UIA focused element. It does not fall back to document length or
+another heuristic when focus is absent or ambiguous.
+
+The birth-ID binding prevents an ACK for a different asserted peer from
+matching the operation digest. This module does not independently attest that
+birth ID against the live mesh registry.
 
 ## Live Evidence
 
@@ -28,6 +36,8 @@ that have the same visible title. It proves:
 - a real command-palette tab reorder preserves the retained element identity;
 - selecting the wrong tab is denied and explicit reselection restores it;
 - moving focus between split panes changes TermControl identity and is denied;
+- moving the Windows Terminal window to the background leaves no provable
+  focused TermControl and is denied;
 - a tab change after one `PostMessageW` call is reported as ambiguous;
 - a closed retained tab is denied;
 - a replacement tab with the same title does not satisfy the stale identity.
@@ -58,4 +68,3 @@ Microsoft references:
 - UIA AutomationId limits: https://learn.microsoft.com/dotnet/framework/ui-automation/use-the-automationid-property
 - SelectionItem.Select: https://learn.microsoft.com/dotnet/api/system.windows.automation.selectionitempattern.select
 - Windows Terminal actions: https://learn.microsoft.com/windows/terminal/customize-settings/actions
-

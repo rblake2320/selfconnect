@@ -1811,15 +1811,20 @@ def _guarded_submit_impl(
             body = authorities.send_body(first_window, text, transport, operation_deadline)
         else:
             accepted_count = 0
+            native_batch_started = False
             batch_transport = None
             last_checkpoint = initial_tab_guard
             for index, character in enumerate(text):
+                native_batch_started = False
                 tab_checkpoint(f"before_body_batch_{index}", select=False)
+                native_batch_started = True
                 batch = authorities.send_body(first_window, character, transport, operation_deadline)
                 if not isinstance(batch, dict):
                     raise TerminalTabGuardError("body transport batch result is malformed")
                 batch_accepted = int(batch.get("chars_accepted", -1))
                 if batch.get("ok") is not True or int(batch.get("chars_requested", -1)) != 1 or batch_accepted != 1:
+                    if batch_accepted == 0:
+                        native_batch_started = False
                     body = {
                         **batch,
                         "ok": False,
@@ -1835,6 +1840,7 @@ def _guarded_submit_impl(
                 elif transport_name != batch_transport:
                     raise TerminalTabGuardError("body transport changed across tab-guarded batches")
                 last_checkpoint = tab_checkpoint(f"after_body_batch_{index}", select=False)
+                native_batch_started = False
             else:
                 body = {
                     "ok": True,
@@ -1855,7 +1861,9 @@ def _guarded_submit_impl(
             )
         body_evidence.update({"chars_requested": len(text), "chars_accepted": locals().get("accepted_count", "unknown")})
         return audit_failure(
-            "ambiguous" if locals().get("accepted_count", 0) else "refused",
+            "ambiguous"
+            if locals().get("native_batch_started", False) or locals().get("accepted_count", 0)
+            else "refused",
             f"terminal_tab_or_body_batch_failed:{type(exc).__name__}",
             chars_accepted=locals().get("accepted_count", "unknown"),
         )

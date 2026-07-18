@@ -34,8 +34,12 @@ class _Selection:
     def Select(self):
         for item in self.root.tabs:
             item.selected = False
+        for term in self.root.terms:
+            term.focused = False
         self.element.selected = True
         self.root.term = self.element.term
+        self.element.term.focused = True
+        self.root.focused_element = self.element.term
 
     def QueryInterface(self, _interface):
         return self
@@ -58,13 +62,15 @@ class _TextPattern:
 
 
 class _Element:
-    def __init__(self, rid, *, selected=False, text=None, token=None):
+    def __init__(self, rid, *, selected=False, text=None, token=None, focused=False):
         self.rid = tuple(rid)
         self.selected = selected
         self.text = text
         self.token = token or object()
+        self.focused = focused
         self.term = None
         self.root = None
+        self.parent = None
 
     def GetRuntimeId(self):
         return self.rid
@@ -81,6 +87,10 @@ class _Element:
             return _TextPattern(self.text)
         raise RuntimeError("pattern unavailable")
 
+    @property
+    def CurrentHasKeyboardFocus(self):
+        return self.focused
+
 
 class _Root:
     def __init__(self, hwnd, pid, tabs):
@@ -89,7 +99,9 @@ class _Root:
         self.tabs = list(tabs)
         for item in self.tabs:
             item.root = self
+        self.terms = [item.term for item in self.tabs]
         self.term = next(item.term for item in self.tabs if item.selected)
+        self.focused_element = self.term
 
     def GetCurrentPropertyValue(self, property_id):
         return {30020: self.hwnd, 30002: self.pid}[property_id]
@@ -99,7 +111,7 @@ class _Root:
         if (property_id, value) == (30003, 50019):
             return _Array(self.tabs)
         if (property_id, value) == (30040, True):
-            return _Array([self.term])
+            return _Array(self.terms)
         raise AssertionError(condition)
 
 
@@ -118,6 +130,18 @@ class _Uia:
     def CompareElements(self, left, right):
         return left.token is right.token
 
+    def GetFocusedElement(self):
+        return self.root.focused_element
+
+    @property
+    def ControlViewWalker(self):
+        return _Walker()
+
+
+class _Walker:
+    def GetParentElement(self, element):
+        return element.parent
+
 
 class _Module:
     IUIAutomationSelectionItemPattern = object()
@@ -125,7 +149,7 @@ class _Module:
 
 
 def _fixture():
-    term_a = _Element((42, 10, 4, 101), text="A buffer")
+    term_a = _Element((42, 10, 4, 101), text="A buffer", focused=True)
     term_b = _Element((42, 10, 4, 202), text="B buffer")
     tab_a = _Element((42, 10, 4, 11), selected=True)
     tab_b = _Element((42, 10, 4, 22), selected=False)
@@ -167,9 +191,33 @@ def test_selects_retained_tab_and_requires_matching_term_control(monkeypatch):
     with pytest.raises(tabguard.TerminalTabGuardError, match="sole selected"):
         guard.checkpoint("wrong-tab", select=False, deadline=time.monotonic() + 1)
     assert guard.checkpoint("reselect", select=True, deadline=time.monotonic() + 1)["selected"] is True
-    root.term = _Element((42, 10, 4, 999), text="wrong pane")
+    root.term.focused = False
+    wrong = _Element((42, 10, 4, 999), text="wrong pane", focused=True)
+    root.terms.append(wrong)
+    root.focused_element = wrong
     with pytest.raises(tabguard.TerminalTabGuardError, match="TermControl"):
         guard.checkpoint("wrong-term", select=False, deadline=time.monotonic() + 1)
+
+
+def test_active_term_control_denies_zero_focused_text_candidates():
+    uia, module, root, _tab_a, _tab_b = _fixture()
+    root.focused_element = _Element((42, 99), text=None)
+    with pytest.raises(tabguard.TerminalTabGuardError, match="exactly one focused"):
+        tabguard._active_term_control(uia, module, root)
+
+
+def test_active_term_control_denies_multiple_focused_text_candidates():
+    uia, module, root, _tab_a, _tab_b = _fixture()
+    root.terms[1].parent = root.terms[0]
+    root.focused_element = root.terms[1]
+    with pytest.raises(tabguard.TerminalTabGuardError, match="exactly one focused"):
+        tabguard._active_term_control(uia, module, root)
+
+
+def test_active_term_control_ignores_longer_inactive_text_candidate():
+    uia, module, root, tab_a, _tab_b = _fixture()
+    root.terms[1].text = "inactive" * 1000
+    assert tabguard._active_term_control(uia, module, root) is tab_a.term
 
 
 def test_closed_reopened_same_runtime_id_is_stale_by_compare_elements(monkeypatch):
@@ -256,7 +304,14 @@ class _OperationGuard:
         return {"ok": True, "stage": stage, "selected": True}
 
 
-def _submit_with_tab(tmp_path, *, fail_stage=None):
+def _submit_with_tab(
+    tmp_path,
+    *,
+    fail_stage=None,
+    raise_after_side_effect=False,
+    malformed_result=False,
+    zero_accepted=False,
+):
     target = _target()
     identity = tabguard.TerminalTabIdentity(
         window_hwnd=target.hwnd,
@@ -273,6 +328,18 @@ def _submit_with_tab(tmp_path, *, fail_stage=None):
 
     def send_body(_window, text, _transport, _deadline):
         sent.append(text)
+        if raise_after_side_effect:
+            raise OSError("transport outcome unknown after native call")
+        if malformed_result:
+            return None
+        if zero_accepted:
+            return {
+                "ok": False,
+                "transport": "postmessage_wm_char",
+                "chars_requested": 1,
+                "chars_accepted": 0,
+                "delivery_verified": False,
+            }
         return {
             "ok": True,
             "transport": "postmessage_wm_char",
@@ -355,6 +422,28 @@ def test_post_body_batch_tab_drift_is_ambiguous_and_stops(tmp_path):
     assert result["state"] == "ambiguous"
     assert result["error"].startswith("terminal_tab_or_body_batch_failed")
     assert result["chars_accepted"] == 1
+    assert sent == ["a"]
+
+
+def test_batch_zero_exception_after_native_side_effect_is_ambiguous(tmp_path):
+    result, _tab, sent = _submit_with_tab(tmp_path, raise_after_side_effect=True)
+    assert result["state"] == "ambiguous"
+    assert result["error"].startswith("terminal_tab_or_body_batch_failed")
+    assert result["chars_accepted"] == 0
+    assert sent == ["a"]
+
+
+def test_batch_zero_malformed_result_after_native_entry_is_ambiguous(tmp_path):
+    result, _tab, sent = _submit_with_tab(tmp_path, malformed_result=True)
+    assert result["state"] == "ambiguous"
+    assert result["chars_accepted"] == 0
+    assert sent == ["a"]
+
+
+def test_batch_zero_explicit_zero_acceptance_is_refused(tmp_path):
+    result, _tab, sent = _submit_with_tab(tmp_path, zero_accepted=True)
+    assert result["state"] == "refused"
+    assert result["error"] == "body_transport_zero_accepted"
     assert sent == ["a"]
 
 

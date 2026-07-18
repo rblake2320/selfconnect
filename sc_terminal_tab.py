@@ -107,29 +107,41 @@ def _selected(item: Any) -> bool:
 
 
 def _active_term_control(uia: Any, module: Any, root: Any) -> Any:
+    try:
+        focused_element = uia.GetFocusedElement()
+        walker = uia.ControlViewWalker
+    except Exception as exc:
+        raise TerminalTabGuardError("focused UIA element is unavailable") from exc
+
+    def contains_focused(candidate: Any) -> bool:
+        current = focused_element
+        for _depth in range(64):
+            try:
+                if bool(uia.CompareElements(candidate, current)):
+                    return True
+                current = walker.GetParentElement(current)
+            except Exception:
+                return False
+            if current is None:
+                return False
+        return False
+
     condition = uia.CreatePropertyCondition(_UIA_IS_TEXT_PATTERN_AVAILABLE_PROPERTY_ID, True)
     found = root.FindAll(_UIA_TREE_SCOPE_SUBTREE, condition)
-    candidates: list[tuple[Any, int, bool]] = []
+    focused_candidates: list[Any] = []
     for index in range(found.Length):
         element = found.GetElement(index)
         try:
-            pattern = element.GetCurrentPattern(_UIA_TEXT_PATTERN_ID).QueryInterface(
+            element.GetCurrentPattern(_UIA_TEXT_PATTERN_ID).QueryInterface(
                 module.IUIAutomationTextPattern
             )
-            length = len(pattern.DocumentRange.GetText(-1))
         except Exception:
             continue
-        try:
-            focused = bool(element.CurrentHasKeyboardFocus)
-        except Exception:
-            focused = False
-        candidates.append((element, length, focused))
-    focused_candidates = [element for element, _length, focused in candidates if focused]
+        if contains_focused(element):
+            focused_candidates.append(element)
     if len(focused_candidates) == 1:
         return focused_candidates[0]
-    if not candidates:
-        raise TerminalTabGuardError("active TermControl TextPattern is unavailable")
-    return max(candidates, key=lambda candidate: candidate[1])[0]
+    raise TerminalTabGuardError("exactly one focused TermControl TextPattern is required")
 
 
 def _root(uia: Any, identity: TerminalTabIdentity) -> Any:

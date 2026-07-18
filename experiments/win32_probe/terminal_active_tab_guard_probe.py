@@ -146,6 +146,67 @@ def _close_owned_window(hwnd: int) -> None:
     ctypes.windll.user32.PostMessageW(int(hwnd), 0x0010, 0, 0)
 
 
+def _prove_background_window_denial(
+    guard: Any, target: Any, root: Any, nonce: str, window_name: str
+) -> bool:
+    title = f"SC_BACKGROUND_{nonce}"
+    script = (
+        "import tkinter as tk; "
+        "root=tk.Tk(); "
+        f"root.title({title!r}); "
+        "root.geometry('320x120'); "
+        "root.after(15000, root.destroy); "
+        "root.mainloop()"
+    )
+    process = subprocess.Popen([sys.executable, "-c", script])
+    hwnd = 0
+    try:
+        window = _wait_until(
+            lambda: next(
+                (item for item in list_windows() if int(item.pid) == process.pid and item.title == title),
+                None,
+            ),
+            timeout=10.0,
+        )
+        hwnd = int(window.hwnd)
+        from pywinauto import mouse
+        import win32gui
+
+        rectangle = win32gui.GetWindowRect(hwnd)
+        if rectangle[2] <= rectangle[0] or rectangle[3] <= rectangle[1]:
+            raise RuntimeError("controlled background-window rectangle unavailable")
+        mouse.click(
+            coords=(
+                int((rectangle[0] + rectangle[2]) / 2),
+                int((rectangle[1] + rectangle[3]) / 2),
+            )
+        )
+        win32gui.BringWindowToTop(hwnd)
+        win32gui.SetForegroundWindow(hwnd)
+        _wait_until(lambda: ctypes.windll.user32.GetForegroundWindow() == hwnd, timeout=3.0)
+        try:
+            guard.checkpoint("background-window", select=False, deadline=time.monotonic() + 3)
+            denied = False
+        except tabs.TerminalTabGuardError:
+            denied = True
+        root.SetFocus()
+        _wait_until(
+            lambda: ctypes.windll.user32.GetForegroundWindow() == int(target.hwnd),
+            timeout=3.0,
+        )
+        subprocess.run(
+            ["wt.exe", "-w", window_name, "move-focus", "right"],
+            check=True,
+            timeout=5,
+        )
+        guard.checkpoint("foreground-restored", select=False, deadline=time.monotonic() + 3)
+        return denied
+    finally:
+        if hwnd:
+            _close_owned_window(hwnd)
+        _terminate_owned(process)
+
+
 def run() -> dict[str, Any]:
     if os.name != "nt":
         raise RuntimeError("Windows is required")
@@ -170,9 +231,16 @@ def run() -> dict[str, Any]:
         target = TargetIdentity.from_window(window)
         uia, module = tabs._get_uia()
         root = uia.ElementFromHandle(target.hwnd)
-        tab_items = tabs._tab_items(uia, root)
-        if len(tab_items) != 2:
-            raise AssertionError(f"expected two controlled tabs, got {len(tab_items)}")
+        tab_items = _wait_until(
+            lambda: (
+                items
+                if len(items := tabs._tab_items(uia, root)) == 2
+                and len({str(item.CurrentName) for item in items}) == 1
+                and duplicate_title in str(items[0].CurrentName)
+                else None
+            ),
+            timeout=10.0,
+        )
         duplicate_titles = len({str(item.CurrentName) for item in tab_items}) == 1
 
         first = tab_items[0]
@@ -180,6 +248,9 @@ def run() -> dict[str, Any]:
         guard = tabs.capture_active_terminal_tab(target, peer_birth_id=f"probe-{nonce}")
         retained = guard._retained_tab
         baseline = guard.checkpoint("baseline", select=False, deadline=time.monotonic() + 3)
+        background_window_denied = _prove_background_window_denial(
+            guard, target, root, nonce, window_name
+        )
 
         old_index, new_index = _reorder_with_terminal_command(
             uia, root, retained, window_name
@@ -260,6 +331,7 @@ def run() -> dict[str, Any]:
 
         checks = {
             "duplicate_titles_not_identity": duplicate_titles,
+            "background_window_without_focused_termcontrol_denied": background_window_denied,
             "retained_compare_baseline": baseline["retained_compare"],
             "reorder_preserved_retained_identity": reorder["retained_compare"] and old_index != new_index,
             "wrong_active_tab_denied": wrong_tab_denied,
@@ -290,7 +362,7 @@ def run() -> dict[str, Any]:
                 "preventive_alternative": "birth-id-bound named-pipe/control-plane input is out of scope",
             },
             "implementation": {
-                "git_base_head": subprocess.check_output(
+                "working_tree_base": subprocess.check_output(
                     ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, encoding="utf-8"
                 ).strip(),
                 "sc_terminal_tab_canonical_lf_sha256": _canonical_source_digest(ROOT / "sc_terminal_tab.py"),

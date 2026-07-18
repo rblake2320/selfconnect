@@ -1,6 +1,7 @@
 {
   "checks": {
     "active_term_control_mismatch_denied": true,
+    "background_window_without_focused_termcontrol_denied": true,
     "closed_tab_denied": true,
     "duplicate_titles_not_identity": true,
     "post_call_change_is_ambiguous": true,
@@ -11,16 +12,16 @@
     "wrong_active_tab_denied": true
   },
   "identity": {
-    "peer_birth_id_sha256": "bca548a29a496f3fff3120be4b3de3fc892aa058792ff08d882e83a26c584ad2",
+    "peer_birth_id_sha256": "b940cdd303cf0b89a31e8ff6b600280a26fb15a21cf2b243b8fa90cea7a7fa4a",
     "runtime_id_scope": "desktop-session-opaque-reusable",
     "tab_runtime_id_length": 4,
     "term_control_runtime_id_length": 4,
     "title_or_index_used_as_identity": false
   },
   "implementation": {
-    "git_base_head": "7b075590bfb394fc9cbcc5b3febe58651339c677",
-    "sc_guarded_submit_canonical_lf_sha256": "16df9466df79575a5b7eb62ef0058243af4b457e121c572ed9802d46b0476a24",
-    "sc_terminal_tab_canonical_lf_sha256": "0290959787d484a0479650a70a49a5d00d386ef00c1af8e9ed87a6db0d737528"
+    "sc_guarded_submit_canonical_lf_sha256": "816d61c7fdb90f7d9be285a8d259cbb27f00c6fe8dab74b52c1e92287c2025b0",
+    "sc_terminal_tab_canonical_lf_sha256": "09832786ba85d7056512c2e1e825e4399d8e238c51d2714b9c60618a7f2fd737",
+    "working_tree_base": "81c221036bd5fe08579afc50eb0621e5ecc456e2"
   },
   "platform": "win32",
   "raw_terminal_text_included": false,
