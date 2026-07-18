@@ -51,7 +51,7 @@ _BIDI_CONTROLS = {
     0x2066, 0x2067, 0x2068, 0x2069,
 }
 _OVERLAPPED: Any = None
-_PENDING_IO: list[tuple[int, Any, int]] = []
+_PENDING_IO: list[tuple[Any, ...]] = []
 _PENDING_IO_LOCK = threading.Lock()
 
 
@@ -158,6 +158,7 @@ class PeerAckRequest:
     receiver: str
     issued_at: float
     response_key_id: str = ""
+    attempt_nonce: str = ""
 
 
 @dataclass(frozen=True)
@@ -166,6 +167,7 @@ class PeerAck:
     key_id: str
     message_id: str
     challenge: str
+    attempt_nonce: str
     ack_nonce: str
     input_sha256: str
     processed_input_sha256: str
@@ -267,6 +269,7 @@ def sign_peer_ack(
     key_id: str,
     message_id: str,
     challenge: str,
+    attempt_nonce: str,
     ack_nonce: str,
     input_sha256: str,
     processed_input_sha256: str | None = None,
@@ -286,6 +289,7 @@ def sign_peer_ack(
         "key_id": key_id,
         "message_id": message_id,
         "challenge": _validate_hex(challenge, "challenge", TOKEN_BYTES),
+        "attempt_nonce": _validate_hex(attempt_nonce, "attempt nonce", TOKEN_BYTES),
         "ack_nonce": _validate_hex(ack_nonce, "ack nonce", TOKEN_BYTES),
         "input_sha256": _validate_hex(input_sha256, "input digest", 32),
         "processed_input_sha256": _validate_hex(attested_digest, "processed input digest", 32),
@@ -304,6 +308,7 @@ def verify_peer_ack(
     key_id: str,
     message_id: str,
     challenge: str,
+    attempt_nonce: str,
     input_sha256: str,
     sender: str,
     receiver: str,
@@ -313,7 +318,7 @@ def verify_peer_ack(
     max_age = _validate_duration(max_age_seconds, "max_age_seconds", MAX_ACK_AGE_SECONDS)
     decoded, wire_key_id, signature = _wire_decode(raw, keyring=keyring)
     required = {
-        "schema", "key_id", "message_id", "challenge", "ack_nonce",
+        "schema", "key_id", "message_id", "challenge", "attempt_nonce", "ack_nonce",
         "input_sha256", "processed_input_sha256", "sender", "receiver", "decision", "issued_at",
     }
     if set(decoded) != required:
@@ -327,6 +332,7 @@ def verify_peer_ack(
         "wire_key_id": (wire_key_id, key_id),
         "message_id": (decoded["message_id"], message_id),
         "challenge": (decoded["challenge"], challenge),
+        "attempt_nonce": (decoded["attempt_nonce"], attempt_nonce),
         "input_sha256": (decoded["input_sha256"], input_sha256),
         "sender": (decoded["sender"], sender),
         "receiver": (decoded["receiver"], receiver),
@@ -335,6 +341,7 @@ def verify_peer_ack(
         if not hmac.compare_digest(actual, expected):
             raise AckVerificationError(f"peer acknowledgement {field} mismatch")
     _validate_hex(decoded["challenge"], "challenge", TOKEN_BYTES)
+    _validate_hex(decoded["attempt_nonce"], "attempt nonce", TOKEN_BYTES)
     _validate_hex(decoded["ack_nonce"], "ack nonce", TOKEN_BYTES)
     _validate_hex(decoded["input_sha256"], "input digest", 32)
     _validate_hex(decoded["processed_input_sha256"], "processed input digest", 32)
@@ -352,7 +359,7 @@ def _validate_request(raw: bytes, *, keyring: AckKeyRing, max_age_seconds: float
     decoded, wire_key_id, _signature = _wire_decode(raw, keyring=keyring)
     required = {
         "schema", "key_id", "message_id", "challenge", "input_sha256", "sender", "receiver",
-        "issued_at", "response_key_id",
+        "issued_at", "response_key_id", "attempt_nonce",
     }
     if set(decoded) != required or any(not isinstance(decoded[field], str) for field in required - {"issued_at"}):
         raise AckVerificationError("peer ACK request schema mismatch")
@@ -360,11 +367,79 @@ def _validate_request(raw: bytes, *, keyring: AckKeyRing, max_age_seconds: float
     if decoded["schema"] != REQUEST_SCHEMA or decoded["key_id"] != wire_key_id:
         raise AckVerificationError("peer ACK request binding mismatch")
     _validate_hex(decoded["challenge"], "challenge", TOKEN_BYTES)
+    _validate_hex(decoded["attempt_nonce"], "attempt nonce", TOKEN_BYTES)
     _validate_hex(decoded["input_sha256"], "input digest", 32)
     age = time.time() - issued_at
     if age < -5.0 or age > max_age:
         raise AckVerificationError("peer ACK request outside freshness window")
     return PeerAckRequest(issued_at=issued_at, **{key: decoded[key] for key in required if key != "issued_at"})
+
+
+def _sqlite_table_info(connection: sqlite3.Connection, table: str) -> list[tuple[Any, ...]]:
+    return connection.execute(f"PRAGMA table_info({table})").fetchall()
+
+
+def _sqlite_unique_sets(connection: sqlite3.Connection, table: str) -> set[tuple[str, ...]]:
+    result: set[tuple[str, ...]] = set()
+    for row in connection.execute(f"PRAGMA index_list({table})"):
+        if int(row[2]) != 1:
+            continue
+        result.add(tuple(str(item[2]) for item in connection.execute(f"PRAGMA index_info({row[1]})")))
+    return result
+
+
+def _normalized_catalog_sql(connection: sqlite3.Connection, table: str) -> str:
+    row = connection.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+    return " ".join(str(row[0]).lower().split()) if row and row[0] else ""
+
+
+def _attest_table(
+    connection: sqlite3.Connection,
+    table: str,
+    columns: tuple[tuple[str, str, int, int], ...],
+    unique_sets: set[tuple[str, ...]],
+    required_sql: tuple[str, ...],
+) -> None:
+    actual = tuple((str(row[1]), str(row[2]).upper(), int(row[3]), int(row[5])) for row in _sqlite_table_info(connection, table))
+    if actual != columns:
+        raise AckReplayError(f"{table} catalog column/PK attestation failed")
+    if not unique_sets <= _sqlite_unique_sets(connection, table):
+        raise AckReplayError(f"{table} catalog UNIQUE attestation failed")
+    sql = _normalized_catalog_sql(connection, table)
+    if any(fragment not in sql for fragment in required_sql):
+        raise AckReplayError(f"{table} catalog CHECK attestation failed")
+
+
+def _configure_durable_sqlite(connection: sqlite3.Connection) -> None:
+    mode = connection.execute("PRAGMA journal_mode=DELETE").fetchone()
+    if not mode or str(mode[0]).lower() != "delete":
+        raise AckReplayError("durable SQLite journal mode is not DELETE")
+    connection.execute("PRAGMA synchronous=FULL")
+    synchronous = connection.execute("PRAGMA synchronous").fetchone()
+    if not synchronous or int(synchronous[0]) != 2:
+        raise AckReplayError("durable SQLite synchronous mode is not FULL")
+
+
+FINALIZER_SCHEMA_VERSION = 3
+FINALIZER_CREATE_SQL = """
+CREATE TABLE peer_ack_finalization (
+    sender TEXT NOT NULL, receiver TEXT NOT NULL, message_id TEXT NOT NULL,
+    challenge TEXT NOT NULL, ack_nonce TEXT NOT NULL, input_sha256 TEXT NOT NULL,
+    ack_sha256 TEXT NOT NULL, raw_ack BLOB NOT NULL, key_id TEXT NOT NULL,
+    decision TEXT NOT NULL CHECK (decision IN ('accepted','rejected')), issued_at REAL NOT NULL,
+    audit_event_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending','audited')),
+    created_at REAL NOT NULL, audited_at REAL,
+    PRIMARY KEY (sender, receiver, message_id), UNIQUE (sender, challenge), UNIQUE (ack_nonce)
+)
+"""
+FINALIZER_COLUMNS = (
+    ("sender", "TEXT", 1, 1), ("receiver", "TEXT", 1, 2), ("message_id", "TEXT", 1, 3),
+    ("challenge", "TEXT", 1, 0), ("ack_nonce", "TEXT", 1, 0), ("input_sha256", "TEXT", 1, 0),
+    ("ack_sha256", "TEXT", 1, 0), ("raw_ack", "BLOB", 1, 0), ("key_id", "TEXT", 1, 0),
+    ("decision", "TEXT", 1, 0), ("issued_at", "REAL", 1, 0), ("audit_event_json", "TEXT", 1, 0),
+    ("state", "TEXT", 1, 0), ("created_at", "REAL", 1, 0), ("audited_at", "REAL", 0, 0),
+)
 
 
 class DurableAckFinalizer:
@@ -373,64 +448,80 @@ class DurableAckFinalizer:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        _protect_evidence_path(self.path)
-        with contextlib.closing(self._connect()) as connection:
+        with contextlib.closing(sqlite3.connect(self.path, timeout=5.0, isolation_level=None)) as connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version > 2:
+            if version > FINALIZER_SCHEMA_VERSION:
                 raise AckReplayError("peer ACK finalization schema is newer than this implementation")
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS peer_ack_finalization (
-                    sender TEXT NOT NULL,
-                    receiver TEXT NOT NULL,
-                    message_id TEXT NOT NULL,
-                    challenge TEXT NOT NULL,
-                    ack_nonce TEXT NOT NULL,
-                    input_sha256 TEXT NOT NULL,
-                    ack_sha256 TEXT NOT NULL,
-                    raw_ack BLOB,
-                    key_id TEXT,
-                    decision TEXT,
-                    issued_at REAL,
-                    state TEXT NOT NULL CHECK (state IN ('pending', 'audited')),
-                    created_at REAL NOT NULL,
-                    audited_at REAL,
-                    PRIMARY KEY (sender, receiver, message_id),
-                    UNIQUE (sender, challenge),
-                    UNIQUE (sender, ack_nonce)
+            _configure_durable_sqlite(connection)
+            exists = bool(_sqlite_table_info(connection, "peer_ack_finalization"))
+            if not exists:
+                connection.execute("BEGIN EXCLUSIVE")
+                connection.execute(FINALIZER_CREATE_SQL)
+                connection.execute(f"PRAGMA user_version={FINALIZER_SCHEMA_VERSION}")
+                self._attest(connection)
+                connection.commit()
+            elif version == FINALIZER_SCHEMA_VERSION:
+                self._attest(connection)
+            else:
+                self._migrate_legacy(connection)
+        _protect_evidence_path(self.path)
+
+    @staticmethod
+    def _attest(connection: sqlite3.Connection) -> None:
+        _attest_table(
+            connection, "peer_ack_finalization", FINALIZER_COLUMNS,
+            {("sender", "receiver", "message_id"), ("sender", "challenge"), ("ack_nonce",)},
+            ("check (decision in ('accepted','rejected'))", "check (state in ('pending','audited'))"),
+        )
+
+    def _migrate_legacy(self, connection: sqlite3.Connection) -> None:
+        columns = tuple(str(row[1]) for row in _sqlite_table_info(connection, "peer_ack_finalization"))
+        base = ("sender", "receiver", "message_id", "challenge", "ack_nonce", "input_sha256", "ack_sha256")
+        if columns not in {
+            (*base, "state", "created_at", "audited_at"),
+            (*base, "raw_ack", "key_id", "decision", "issued_at", "state", "created_at", "audited_at"),
+        }:
+            raise AckReplayError("unrecognized legacy peer ACK finalization schema")
+        uniques = _sqlite_unique_sets(connection, "peer_ack_finalization")
+        if not {("sender", "receiver", "message_id"), ("sender", "challenge"), ("sender", "ack_nonce")} <= uniques:
+            raise AckReplayError("legacy peer ACK finalization constraints are not authoritative")
+        if "check (state in ('pending', 'audited'))" not in _normalized_catalog_sql(connection, "peer_ack_finalization"):
+            raise AckReplayError("legacy peer ACK state constraint is not authoritative")
+        if connection.execute("SELECT 1 FROM peer_ack_finalization WHERE state='pending' LIMIT 1").fetchone():
+            raise AckReplayError("legacy pending ACK lacks the canonical audit envelope required for recovery")
+        has_envelope = "raw_ack" in columns
+        connection.execute("BEGIN EXCLUSIVE")
+        try:
+            connection.execute("ALTER TABLE peer_ack_finalization RENAME TO peer_ack_finalization_legacy")
+            connection.execute(FINALIZER_CREATE_SQL)
+            if has_envelope:
+                connection.execute(
+                    "INSERT INTO peer_ack_finalization SELECT sender,receiver,message_id,challenge,ack_nonce,input_sha256,"
+                    "ack_sha256,coalesce(raw_ack,x''),coalesce(key_id,'legacy'),coalesce(decision,'rejected'),"
+                    "coalesce(issued_at,0),'{}',state,created_at,audited_at FROM peer_ack_finalization_legacy"
                 )
-                """
-            )
-            columns = {row[1]: str(row[2]).upper() for row in connection.execute("PRAGMA table_info(peer_ack_finalization)")}
-            required_base = {
-                "sender", "receiver", "message_id", "challenge", "ack_nonce", "input_sha256",
-                "ack_sha256", "state", "created_at", "audited_at",
-            }
-            current_names = required_base | {"raw_ack", "key_id", "decision", "issued_at"}
-            if not required_base <= columns.keys() or not set(columns) <= current_names:
-                raise AckReplayError("unrecognized peer ACK finalization schema")
-            expected_types = {
-                "sender": "TEXT", "receiver": "TEXT", "message_id": "TEXT", "challenge": "TEXT",
-                "ack_nonce": "TEXT", "input_sha256": "TEXT", "ack_sha256": "TEXT", "state": "TEXT",
-                "created_at": "REAL", "audited_at": "REAL", "raw_ack": "BLOB", "key_id": "TEXT",
-                "decision": "TEXT", "issued_at": "REAL",
-            }
-            if any(columns[name] != expected_types[name] for name in columns):
-                raise AckReplayError("peer ACK finalization schema type mismatch")
-            additions = {"raw_ack": "BLOB", "key_id": "TEXT", "decision": "TEXT", "issued_at": "REAL"}
-            for name, sql_type in additions.items():
-                if name not in columns:
-                    connection.execute(f"ALTER TABLE peer_ack_finalization ADD COLUMN {name} {sql_type}")
-            connection.execute("PRAGMA user_version=2")
+            else:
+                connection.execute(
+                    "INSERT INTO peer_ack_finalization SELECT sender,receiver,message_id,challenge,ack_nonce,input_sha256,"
+                    "ack_sha256,x'','legacy','rejected',0,'{}',state,created_at,audited_at "
+                    "FROM peer_ack_finalization_legacy"
+                )
+            connection.execute("DROP TABLE peer_ack_finalization_legacy")
+            connection.execute(f"PRAGMA user_version={FINALIZER_SCHEMA_VERSION}")
+            self._attest(connection)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5.0, isolation_level=None)
-        connection.execute("PRAGMA journal_mode=DELETE")
-        connection.execute("PRAGMA synchronous=FULL")
+        _configure_durable_sqlite(connection)
         return connection
 
-    def finalize(self, ack: PeerAck, raw: bytes, audit: Callable[[str], None]) -> None:
+    def finalize(self, ack: PeerAck, raw: bytes, audit: Callable[[dict[str, Any]], None], audit_event: dict[str, Any]) -> None:
         ack_sha256 = hashlib.sha256(raw).hexdigest()
+        audit_json = _canonical_bytes(audit_event).decode("ascii")
         values = (ack.sender, ack.receiver, ack.message_id, ack.challenge, ack.ack_nonce, ack.input_sha256, ack_sha256)
         with contextlib.closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -444,9 +535,9 @@ class DurableAckFinalizer:
                     connection.execute(
                         "INSERT INTO peer_ack_finalization "
                         "(sender, receiver, message_id, challenge, ack_nonce, input_sha256, ack_sha256, "
-                        "raw_ack, key_id, decision, issued_at, state, created_at, audited_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL)",
-                        (*values, sqlite3.Binary(raw), ack.key_id, ack.decision, ack.issued_at, time.time()),
+                        "raw_ack, key_id, decision, issued_at, audit_event_json, state, created_at, audited_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL)",
+                        (*values, sqlite3.Binary(raw), ack.key_id, ack.decision, ack.issued_at, audit_json, time.time()),
                     )
                     connection.commit()
                 except sqlite3.IntegrityError as exc:
@@ -457,7 +548,7 @@ class DurableAckFinalizer:
                     connection.rollback()
                     raise AckReplayError("peer acknowledgement replay rejected")
                 connection.commit()
-        audit(ack_sha256)
+        audit(audit_event)
         with contextlib.closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             updated = connection.execute(
@@ -474,12 +565,15 @@ class DurableAckFinalizer:
         with contextlib.closing(self._connect()) as connection:
             rows = connection.execute(
                 "SELECT sender, receiver, message_id, challenge, ack_nonce, input_sha256, ack_sha256, "
-                "raw_ack, key_id, decision, issued_at, created_at FROM peer_ack_finalization "
+                "raw_ack, key_id, decision, issued_at, audit_event_json, created_at FROM peer_ack_finalization "
                 "WHERE state='pending' ORDER BY created_at"
             ).fetchall()
         names = ("sender", "receiver", "message_id", "challenge", "ack_nonce", "input_sha256", "ack_sha256",
-                 "raw_ack", "key_id", "decision", "issued_at", "created_at")
-        return [dict(zip(names, row, strict=True)) for row in rows]
+                 "raw_ack", "key_id", "decision", "issued_at", "audit_event_json", "created_at")
+        result = [dict(zip(names, row, strict=True)) for row in rows]
+        for item in result:
+            item["audit_event"] = json.loads(item.pop("audit_event_json"))
+        return result
 
     def reconcile_pending(self, audit: Callable[[dict[str, Any]], None]) -> int:
         """Audit pending authenticated ACKs idempotently without repeating submission."""
@@ -508,15 +602,10 @@ def reconcile_pending_acks(replay_path: str | Path, event_log_path: str | Path) 
     store = DurableAckFinalizer(replay_path)
 
     def audit(envelope: dict[str, Any]) -> None:
-        raw = envelope.get("raw_ack")
-        if not isinstance(raw, bytes) or not raw:
-            raise AckReplayError("legacy pending ACK lacks a recoverable authenticated envelope")
-        data = {key: value for key, value in envelope.items() if key not in {"raw_ack", "created_at"}}
-        sc_mesh_registry.append_event(
-            "guarded_submit_acknowledged", status="acknowledged", summary="reconciled authenticated peer ACK",
-            data={**data, "recovery": "audit_only_no_physical_submit"}, event_log_path=event_log_path,
-            strict=True, strict_idempotency_key=f"guarded-ack:{envelope['ack_sha256']}",
-        )
+        event = envelope.get("audit_event")
+        if not isinstance(event, dict):
+            raise AckReplayError("pending ACK lacks a canonical audit event")
+        sc_mesh_registry.append_event(event_log_path=event_log_path, strict=True, **event)
 
     return store.reconcile_pending(audit)
 
@@ -537,17 +626,36 @@ class SubprocessAckProcessor:
             raise TimeoutError("governed processor deadline expired")
         payload = _canonical_bytes({"mode": mode, "admission_id": admission_id, "request": asdict(request)})
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        process = subprocess.Popen(
+            self.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            creationflags=flags,
+        )
+        assert process.stdin is not None and process.stdout is not None
+        process.stdin.write(payload)
+        process.stdin.close()
+        output: list[bytes] = []
+
+        def bounded_read() -> None:
+            chunk = process.stdout.read(4097)
+            output.append(chunk)
+            if len(chunk) > 4096 and process.poll() is None:
+                process.kill()
+
+        reader = threading.Thread(target=bounded_read, name="selfconnect-processor-output", daemon=True)
+        reader.start()
         try:
-            completed = subprocess.run(
-                self.command, input=payload, capture_output=True, check=False,
-                timeout=remaining, creationflags=flags,
-            )
+            returncode = process.wait(timeout=remaining)
         except subprocess.TimeoutExpired as exc:
-            raise TimeoutError("governed processor was killed at its deadline") from exc
-        if completed.returncode != 0 or len(completed.stdout) > 4096:
+            process.kill()
+            process.wait(timeout=5)
+            raise TimeoutError("governed processor direct child was killed at its deadline") from exc
+        finally:
+            reader.join(timeout=5)
+        stdout = output[0] if output else b""
+        if returncode != 0 or len(stdout) > 4096 or reader.is_alive():
             raise AckVerificationError("governed processor failed")
         try:
-            result = json.loads(completed.stdout)
+            result = json.loads(stdout)
         except Exception as exc:
             raise AckVerificationError("governed processor returned malformed JSON") from exc
         if not isinstance(result, dict) or set(result) != {"admission_id", "mode", "decision", "input_sha256"}:
@@ -563,66 +671,142 @@ class SubprocessAckProcessor:
         return self._invoke("recover", request, admission_id, deadline)
 
 
+RECEIVER_SCHEMA_VERSION = 2
+RECEIVER_CREATE_SQL = """
+CREATE TABLE receiver_admission (
+    sender TEXT NOT NULL, receiver TEXT NOT NULL, message_id TEXT NOT NULL, challenge TEXT NOT NULL,
+    input_sha256 TEXT NOT NULL, response_key_id TEXT NOT NULL, operation_sha256 TEXT NOT NULL,
+    admission_id TEXT NOT NULL UNIQUE,
+    state TEXT NOT NULL CHECK (state IN ('admitted','processing','completed')),
+    lease_owner TEXT, lease_boot_id INTEGER, lease_expires_tick REAL,
+    decision TEXT CHECK (decision IS NULL OR decision IN ('accepted','rejected')),
+    processed_input_sha256 TEXT, created_at REAL NOT NULL, completed_at REAL,
+    PRIMARY KEY (sender, message_id, challenge)
+);
+CREATE TABLE receiver_attempt (
+    attempt_nonce TEXT NOT NULL PRIMARY KEY, sender TEXT NOT NULL, message_id TEXT NOT NULL,
+    request_sha256 TEXT NOT NULL UNIQUE, created_at REAL NOT NULL
+)
+"""
+RECEIVER_COLUMNS = (
+    ("sender", "TEXT", 1, 1), ("receiver", "TEXT", 1, 0), ("message_id", "TEXT", 1, 2),
+    ("challenge", "TEXT", 1, 3), ("input_sha256", "TEXT", 1, 0), ("response_key_id", "TEXT", 1, 0),
+    ("operation_sha256", "TEXT", 1, 0), ("admission_id", "TEXT", 1, 0), ("state", "TEXT", 1, 0),
+    ("lease_owner", "TEXT", 0, 0), ("lease_boot_id", "INTEGER", 0, 0), ("lease_expires_tick", "REAL", 0, 0),
+    ("decision", "TEXT", 0, 0), ("processed_input_sha256", "TEXT", 0, 0),
+    ("created_at", "REAL", 1, 0), ("completed_at", "REAL", 0, 0),
+)
+ATTEMPT_COLUMNS = (
+    ("attempt_nonce", "TEXT", 1, 1), ("sender", "TEXT", 1, 0), ("message_id", "TEXT", 1, 0),
+    ("request_sha256", "TEXT", 1, 0), ("created_at", "REAL", 1, 0),
+)
+LEGACY_RECEIVER_COLUMNS = (
+    ("sender", "TEXT", 1, 1), ("key_id", "TEXT", 1, 2), ("message_id", "TEXT", 1, 3),
+    ("challenge", "TEXT", 1, 4), ("request_sha256", "TEXT", 1, 0), ("request_body", "BLOB", 1, 0),
+    ("admission_id", "TEXT", 1, 0), ("state", "TEXT", 1, 0), ("lease_owner", "TEXT", 0, 0),
+    ("lease_boot_id", "INTEGER", 0, 0), ("lease_expires_tick", "REAL", 0, 0),
+    ("decision", "TEXT", 0, 0), ("processed_input_sha256", "TEXT", 0, 0),
+    ("response", "BLOB", 0, 0), ("created_at", "REAL", 1, 0), ("completed_at", "REAL", 0, 0),
+)
+
+
 class DurableReceiverAdmissionStore:
-    """Crash-safe receiver admission/result store, before governed processing."""
+    """Stable operation admission plus durable single-use authenticated attempts."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        _protect_evidence_path(self.path)
-        with contextlib.closing(self._connect()) as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS receiver_admission (
-                    sender TEXT NOT NULL, key_id TEXT NOT NULL, message_id TEXT NOT NULL,
-                    challenge TEXT NOT NULL, request_sha256 TEXT NOT NULL, request_body BLOB NOT NULL,
-                    admission_id TEXT NOT NULL UNIQUE,
-                    state TEXT NOT NULL CHECK (state IN ('admitted', 'processing', 'completed')),
-                    lease_owner TEXT, lease_boot_id INTEGER, lease_expires_tick REAL,
-                    decision TEXT, processed_input_sha256 TEXT, response BLOB,
-                    created_at REAL NOT NULL, completed_at REAL,
-                    PRIMARY KEY (sender, key_id, message_id, challenge)
+        with contextlib.closing(sqlite3.connect(self.path, timeout=5.0, isolation_level=None)) as connection:
+            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+            if version > RECEIVER_SCHEMA_VERSION:
+                raise AckReplayError("receiver admission schema is newer than this implementation")
+            _configure_durable_sqlite(connection)
+            exists = bool(_sqlite_table_info(connection, "receiver_admission"))
+            if not exists:
+                connection.execute("BEGIN EXCLUSIVE")
+                for statement in RECEIVER_CREATE_SQL.split(";"):
+                    if statement.strip():
+                        connection.execute(statement)
+                connection.execute(f"PRAGMA user_version={RECEIVER_SCHEMA_VERSION}")
+                self._attest(connection)
+                connection.commit()
+            elif version == RECEIVER_SCHEMA_VERSION:
+                self._attest(connection)
+            else:
+                if version != 1:
+                    raise AckReplayError("unrecognized legacy receiver schema version")
+                _attest_table(
+                    connection, "receiver_admission", LEGACY_RECEIVER_COLUMNS,
+                    {("sender", "key_id", "message_id", "challenge"), ("admission_id",)},
+                    ("check (state in ('admitted', 'processing', 'completed'))",),
                 )
-                """
-            )
-            expected = {
-                "sender", "key_id", "message_id", "challenge", "request_sha256", "request_body",
-                "admission_id", "state", "lease_owner", "lease_boot_id", "lease_expires_tick", "decision",
-                "processed_input_sha256", "response", "created_at", "completed_at",
-            }
-            actual = {row[1] for row in connection.execute("PRAGMA table_info(receiver_admission)")}
-            if actual != expected:
-                raise AckReplayError("unrecognized receiver admission schema")
-            connection.execute("PRAGMA user_version=1")
+                if connection.execute("SELECT 1 FROM receiver_admission LIMIT 1").fetchone():
+                    raise AckReplayError("legacy receiver state requires governed offline migration")
+                connection.execute("BEGIN EXCLUSIVE")
+                connection.execute("DROP TABLE receiver_admission")
+                for statement in RECEIVER_CREATE_SQL.split(";"):
+                    if statement.strip():
+                        connection.execute(statement)
+                connection.execute(f"PRAGMA user_version={RECEIVER_SCHEMA_VERSION}")
+                self._attest(connection)
+                connection.commit()
+        _protect_evidence_path(self.path)
+
+    @staticmethod
+    def _attest(connection: sqlite3.Connection) -> None:
+        _attest_table(
+            connection, "receiver_admission", RECEIVER_COLUMNS,
+            {("sender", "message_id", "challenge"), ("admission_id",)},
+            ("check (state in ('admitted','processing','completed'))", "check (decision is null or decision in ('accepted','rejected'))"),
+        )
+        _attest_table(connection, "receiver_attempt", ATTEMPT_COLUMNS, {("attempt_nonce",), ("request_sha256",)}, ())
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5.0, isolation_level=None)
-        connection.execute("PRAGMA journal_mode=DELETE")
-        connection.execute("PRAGMA synchronous=FULL")
+        _configure_durable_sqlite(connection)
         return connection
 
-    def admit(self, request: PeerAckRequest, raw: bytes) -> tuple[str, str, bytes | None]:
-        digest = hashlib.sha256(raw).hexdigest()
-        key = (request.sender, request.key_id, request.message_id, request.challenge)
+    def admit(self, request: PeerAckRequest, raw: bytes) -> tuple[str, str, tuple[str, str] | None]:
+        request_digest = hashlib.sha256(raw).hexdigest()
+        operation = {
+            "sender": request.sender, "receiver": request.receiver, "message_id": request.message_id,
+            "challenge": request.challenge, "input_sha256": request.input_sha256,
+        }
+        operation_digest = hashlib.sha256(_canonical_bytes(operation)).hexdigest()
+        key = (request.sender, request.message_id, request.challenge)
         with contextlib.closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute(
+                    "INSERT INTO receiver_attempt VALUES (?, ?, ?, ?, ?)",
+                    (request.attempt_nonce, request.sender, request.message_id, request_digest, time.time()),
+                )
+            except sqlite3.IntegrityError as exc:
+                connection.rollback()
+                raise AckReplayError("receiver request attempt replay rejected") from exc
+            # Attempt consumption is its own durable decision. A later binding
+            # rejection or crash must never make this nonce reusable.
+            connection.commit()
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT request_sha256, admission_id, state, response FROM receiver_admission "
-                "WHERE sender=? AND key_id=? AND message_id=? AND challenge=?", key,
+                "SELECT operation_sha256, admission_id, state, decision, processed_input_sha256 "
+                "FROM receiver_admission WHERE sender=? AND message_id=? AND challenge=?", key,
             ).fetchone()
             if row is None:
                 admission_id = secrets.token_hex(TOKEN_BYTES)
                 connection.execute(
-                    "INSERT INTO receiver_admission VALUES (?, ?, ?, ?, ?, ?, ?, 'admitted', NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL)",
-                    (*key, digest, sqlite3.Binary(raw), admission_id, time.time()),
+                    "INSERT INTO receiver_admission VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'admitted', NULL,NULL,NULL,NULL,NULL,?,NULL)",
+                    (request.sender, request.receiver, request.message_id, request.challenge, request.input_sha256,
+                     request.response_key_id, operation_digest, admission_id, time.time()),
                 )
                 connection.commit()
                 return admission_id, "admitted", None
-            if not hmac.compare_digest(row[0], digest):
-                connection.rollback()
+            if not hmac.compare_digest(str(row[0]), operation_digest):
+                connection.commit()
                 raise AckReplayError("receiver admission binding conflict")
             connection.commit()
-            return str(row[1]), str(row[2]), bytes(row[3]) if row[3] is not None else None
+            result = (str(row[3]), str(row[4])) if row[2] == "completed" else None
+            return str(row[1]), str(row[2]), result
 
     def claim(self, admission_id: str, deadline: float) -> str | None:
         owner = secrets.token_hex(TOKEN_BYTES)
@@ -644,38 +828,38 @@ class DurableReceiverAdmissionStore:
             connection.commit()
         return owner if updated == 1 else None
 
-    def wait_completed(self, admission_id: str, deadline: float) -> bytes:
+    def wait_completed(self, admission_id: str, deadline: float) -> tuple[str, str]:
         while time.monotonic() < deadline:
             with contextlib.closing(self._connect()) as connection:
                 row = connection.execute(
-                    "SELECT state, response FROM receiver_admission WHERE admission_id=?", (admission_id,),
+                    "SELECT state, decision, processed_input_sha256 FROM receiver_admission WHERE admission_id=?", (admission_id,),
                 ).fetchone()
             if row is not None and row[0] == "completed":
-                return bytes(row[1])
+                return str(row[1]), str(row[2])
             time.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
         raise TimeoutError("receiver admission is already governed by another claimant")
 
-    def complete(self, admission_id: str, owner: str, decision: str, digest: str, response: bytes) -> None:
+    def complete(self, admission_id: str, owner: str, decision: str, digest: str) -> None:
         with contextlib.closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT state, decision, processed_input_sha256, response FROM receiver_admission WHERE admission_id=?",
+                "SELECT state, decision, processed_input_sha256 FROM receiver_admission WHERE admission_id=?",
                 (admission_id,),
             ).fetchone()
             if row is None:
                 connection.rollback()
                 raise AckReplayError("receiver admission disappeared")
             if row[0] == "completed":
-                if row[1] != decision or row[2] != digest or bytes(row[3]) != response:
+                if row[1] != decision or row[2] != digest:
                     connection.rollback()
                     raise AckReplayError("receiver result conflict")
                 connection.commit()
                 return
             updated = connection.execute(
                 "UPDATE receiver_admission SET state='completed', lease_owner=NULL, lease_boot_id=NULL, lease_expires_tick=NULL, "
-                "decision=?, processed_input_sha256=?, response=?, completed_at=? "
+                "decision=?, processed_input_sha256=?, completed_at=? "
                 "WHERE admission_id=? AND lease_owner=? AND state='processing'",
-                (decision, digest, sqlite3.Binary(response), time.time(), admission_id, owner),
+                (decision, digest, time.time(), admission_id, owner),
             ).rowcount
             if updated != 1:
                 connection.rollback()
@@ -734,7 +918,7 @@ class _Authorities:
     focus: Callable[[int], dict[str, Any]]
     enter: Callable[[TargetIdentity], dict[str, Any]]
     receive_ack: Callable[[PeerAckRequest, float], bytes]
-    finalize_ack: Callable[[PeerAck, bytes, Callable[[str], None]], None]
+    finalize_ack: Callable[[PeerAck, bytes, Callable[[dict[str, Any]], None], dict[str, Any]], None]
     audit_append: Callable[..., dict[str, Any]]
     token_hex: Callable[[int], str]
 
@@ -854,6 +1038,12 @@ def _configure_security_api() -> None:
     advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p]
     advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
     advapi32.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+    advapi32.ImpersonateNamedPipeClient.restype = wintypes.BOOL
+    advapi32.ImpersonateNamedPipeClient.argtypes = [wintypes.HANDLE]
+    advapi32.RevertToSelf.restype = wintypes.BOOL
+    advapi32.RevertToSelf.argtypes = []
+    advapi32.SetFileSecurityW.restype = wintypes.BOOL
+    advapi32.SetFileSecurityW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p]
 
 
 def make_private_pipe_address() -> str:
@@ -924,17 +1114,27 @@ class ProcessingAckServer:
             finally:
                 ctypes.windll.advapi32.RevertToSelf()
             request = _validate_request(raw_request, keyring=self.keyring, max_age_seconds=timeout)
-            if request.response_key_id != self.key_id:
-                raise AckVerificationError("peer ACK response signing key binding denied")
-            admission_id, state, response = self.admissions.admit(request, raw_request)
+            self.keyring.resolve(request.response_key_id)
+            admission_id, state, durable_result = self.admissions.admit(request, raw_request)
+
+            def receipt(result: tuple[str, str]) -> bytes:
+                decision, processed_digest = result
+                return sign_peer_ack(
+                    keyring=self.keyring, key_id=request.response_key_id,
+                    message_id=request.message_id, challenge=request.challenge,
+                    attempt_nonce=request.attempt_nonce, ack_nonce=secrets.token_hex(TOKEN_BYTES),
+                    input_sha256=request.input_sha256, processed_input_sha256=processed_digest,
+                    sender=request.receiver, receiver=request.sender, decision=decision,
+                )
+
             if state == "completed":
-                _write_all(handle, response or b"", deadline)
+                _write_all(handle, receipt(durable_result or ("rejected", request.input_sha256)), deadline)
                 _read_pipe_confirmation(handle, deadline)
                 return
             lease_owner = self.admissions.claim(admission_id, deadline)
             if lease_owner is None:
-                response = self.admissions.wait_completed(admission_id, deadline)
-                _write_all(handle, response, deadline)
+                durable_result = self.admissions.wait_completed(admission_id, deadline)
+                _write_all(handle, receipt(durable_result), deadline)
                 _read_pipe_confirmation(handle, deadline)
                 return
             if state == "admitted":
@@ -948,20 +1148,8 @@ class ProcessingAckServer:
             _validate_hex(processed_input_sha256, "adapter attested input digest", 32)
             if processed_input_sha256 != request.input_sha256:
                 decision = "rejected"
-            response = sign_peer_ack(
-                keyring=self.keyring,
-                key_id=self.key_id,
-                message_id=request.message_id,
-                challenge=request.challenge,
-                ack_nonce=secrets.token_hex(TOKEN_BYTES),
-                input_sha256=request.input_sha256,
-                processed_input_sha256=processed_input_sha256,
-                sender=request.receiver,
-                receiver=request.sender,
-                decision=decision,
-            )
-            self.admissions.complete(admission_id, lease_owner, decision, processed_input_sha256, response)
-            _write_all(handle, response, deadline)
+            self.admissions.complete(admission_id, lease_owner, decision, processed_input_sha256)
+            _write_all(handle, receipt((decision, processed_input_sha256)), deadline)
             _read_pipe_confirmation(handle, deadline)
         finally:
             ctypes.windll.kernel32.CancelIoEx(handle, None)
@@ -1064,7 +1252,10 @@ def _connect_pipe(handle: int, deadline: float) -> None:
     _overlapped_call(handle, deadline, lambda overlapped, _count: kernel32.ConnectNamedPipe(handle, ctypes.byref(overlapped)), "connect")
 
 
-def _overlapped_call(handle: int, deadline: float, start: Callable[[Any, Any], int], operation: str) -> int:
+def _overlapped_call(
+    handle: int, deadline: float, start: Callable[[Any, Any], int], operation: str,
+    keepalive: tuple[Any, ...] = (),
+) -> int:
     from ctypes import wintypes
 
     kernel32 = ctypes.windll.kernel32
@@ -1087,20 +1278,20 @@ def _overlapped_call(handle: int, deadline: float, start: Callable[[Any, Any], i
         remaining = deadline - time.monotonic()
         if remaining <= 0 or kernel32.WaitForSingleObject(event, max(1, int(remaining * 1000))) != 0:
             kernel32.CancelIoEx(handle, ctypes.byref(overlapped))
-            _retain_cancelled_io(handle, overlapped, event)
+            _retain_cancelled_io(handle, overlapped, event, start, keepalive)
             retained = True
             raise TimeoutError(f"peer acknowledgement {operation} deadline expired")
         if not kernel32.GetOverlappedResult(handle, ctypes.byref(overlapped), ctypes.byref(count), False):
-            raise OSError(f"named-pipe {operation} completion failed")
+            raise OSError(f"named-pipe {operation} completion failed ({int(kernel32.GetLastError())})")
         return int(count.value)
     finally:
         if not retained:
             kernel32.CloseHandle(event)
 
 
-def _retain_cancelled_io(handle: int, overlapped: Any, event: int) -> None:
-    """Keep OVERLAPPED memory alive until cancellation completion without blocking cleanup."""
-    item = (handle, overlapped, event)
+def _retain_cancelled_io(handle: int, overlapped: Any, event: int, start: Any, keepalive: tuple[Any, ...]) -> None:
+    """Retain OVERLAPPED, closure, and native buffers until observed completion."""
+    item = (handle, overlapped, event, start, keepalive)
     with _PENDING_IO_LOCK:
         _PENDING_IO.append(item)
 
@@ -1121,7 +1312,7 @@ def _write_all(handle: int, data: bytes, deadline: float) -> None:
     written = _overlapped_call(
         handle, deadline,
         lambda overlapped, count: ctypes.windll.kernel32.WriteFile(handle, buffer, len(data), ctypes.byref(count), ctypes.byref(overlapped)),
-        "write",
+        "write", (buffer, data),
     )
     if written != len(data) or time.monotonic() > deadline:
         raise TimeoutError("named-pipe write was partial or exceeded deadline")
@@ -1138,7 +1329,7 @@ def _read_frame(handle: int, deadline: float) -> bytes:
         read = _overlapped_call(
             handle, deadline,
             lambda overlapped, count: ctypes.windll.kernel32.ReadFile(handle, buffer, size, ctypes.byref(count), ctypes.byref(overlapped)),
-            "read",
+            "read", (buffer,),
         )
         if read <= 0:
             raise OSError("named-pipe closed before complete frame")
@@ -1159,7 +1350,7 @@ def _read_pipe_confirmation(handle: int, deadline: float) -> None:
         lambda overlapped, count: ctypes.windll.kernel32.ReadFile(
             handle, buffer, 1, ctypes.byref(count), ctypes.byref(overlapped),
         ),
-        "confirmation read",
+        "confirmation read", (buffer,),
     )
     if read != 1 or buffer.raw[:1] != b"\x06":
         raise AckVerificationError("peer response confirmation is invalid")
@@ -1178,11 +1369,15 @@ def _guarded_submit_impl(
     transport: str,
     ack_timeout: float,
     max_ack_age_seconds: float,
+    response_key_id: str | None = None,
 ) -> dict[str, Any]:
     encoded_input = _validate_input(text)
     timeout = _validate_duration(ack_timeout, "ack_timeout", MAX_ACK_AGE_SECONDS)
+    operation_deadline = time.monotonic() + timeout
     max_age = _validate_duration(max_ack_age_seconds, "max_ack_age_seconds", MAX_ACK_AGE_SECONDS)
     keyring.resolve(key_id)
+    response_key = key_id if response_key_id is None else response_key_id
+    keyring.resolve(response_key)
     if not sender or not receiver or sender == receiver:
         raise ValueError("distinct sender and receiver are required")
     input_sha256 = hashlib.sha256(encoded_input).hexdigest()
@@ -1190,19 +1385,30 @@ def _guarded_submit_impl(
     challenge = authorities.token_hex(TOKEN_BYTES)
     _validate_hex(challenge, "challenge", TOKEN_BYTES)
     base = {
-        "message_id": message_id, "challenge": challenge, "key_id": key_id,
+        "message_id": message_id, "challenge": challenge, "key_id": key_id, "response_key_id": response_key,
         "input_sha256": input_sha256, "input_bytes": len(encoded_input),
         "sender": sender, "receiver": receiver, "target": asdict(target),
     }
     body_evidence: dict[str, Any] = {}
 
+    def audit_spec(event_type: str, status: str, *, idempotency_key: str = "", **data: Any) -> dict[str, Any]:
+        return {
+            "event_type": event_type, "status": status, "hwnd": target.hwnd,
+            "summary": f"guarded submit {status}", "data": {**base, **data},
+            "strict_idempotency_key": idempotency_key,
+        }
+
+    def append_audit(spec: dict[str, Any]):
+        return authorities.audit_append(event_log_path=event_log_path, strict=True, **spec)
+
     def audit(event_type: str, status: str, *, idempotency_key: str = "", **data: Any):
-        return authorities.audit_append(
-            event_type, status=status, hwnd=target.hwnd,
-            summary=f"guarded submit {status}", data={**base, **data},
-            event_log_path=event_log_path, strict=True,
-            strict_idempotency_key=idempotency_key,
-        )
+        return append_audit(audit_spec(event_type, status, idempotency_key=idempotency_key, **data))
+
+    def expired(stage: str, *, ambiguous: bool = False, **extra: Any):
+        if time.monotonic() < operation_deadline:
+            return None
+        state = "ambiguous" if ambiguous or body_evidence else "refused"
+        return audit_failure(state, f"operation_deadline_expired_{stage}", **extra)
 
     def outcome(state: str, error: str, **extra: Any):
         return {**base, "ok": False, "state": state, "delivery_verified": False, "error": error, **extra}
@@ -1225,10 +1431,14 @@ def _guarded_submit_impl(
         return outcome("refused", f"target_guard_exception_before_typing:{type(exc).__name__}")
     if not first_guard["ok"]:
         return outcome("refused", "target_guard_failed_before_typing", guard=first_guard)
+    if deadline_result := expired("before_prepare"):
+        return deadline_result
     try:
         audit("guarded_submit_prepared", "prepared", guard=first_guard)
     except Exception as exc:
         return outcome("refused", f"audit_prepare_failed:{type(exc).__name__}", guard=first_guard)
+    if deadline_result := expired("before_body"):
+        return deadline_result
     try:
         body = authorities.send_body(first_window, text, transport)
     except Exception as exc:
@@ -1239,6 +1449,8 @@ def _guarded_submit_impl(
         "chars_requested": body.get("chars_requested") if isinstance(body, dict) else len(text),
         "chars_accepted": body.get("chars_accepted") if isinstance(body, dict) else "unknown",
     })
+    if deadline_result := expired("after_body", ambiguous=True):
+        return deadline_result
     accepted = (
         isinstance(body, dict) and body.get("ok") is True
         and int(body.get("chars_requested", -1)) == len(text)
@@ -1255,22 +1467,30 @@ def _guarded_submit_impl(
         return audit_failure("ambiguous", f"body_staged_target_guard_exception_before_focus:{type(exc).__name__}", body=body)
     if not focus_guard["ok"]:
         return audit_failure("ambiguous", "body_staged_target_guard_failed_before_focus", guard=focus_guard, body=body)
+    if deadline_result := expired("before_focus", ambiguous=True):
+        return deadline_result
     try:
         focus_result = authorities.focus(target.hwnd)
     except Exception as exc:
         return audit_failure("ambiguous", f"body_staged_focus_exception:{type(exc).__name__}", body=body)
     if not isinstance(focus_result, dict) or focus_result.get("ok") is not True:
         return audit_failure("ambiguous", "body_staged_focus_failed", focus=focus_result, body=body)
+    if deadline_result := expired("after_focus", ambiguous=True):
+        return deadline_result
     try:
         _, enter_guard = _guard(target, authorities.snapshot, "immediately_before_hardware_enter")
     except Exception as exc:
         return audit_failure("ambiguous", f"body_staged_target_guard_exception_before_enter:{type(exc).__name__}", body=body)
     if not enter_guard["ok"]:
         return audit_failure("ambiguous", "body_staged_target_guard_failed_before_hardware_enter", guard=enter_guard, body=body)
+    if deadline_result := expired("before_enter", ambiguous=True):
+        return deadline_result
     try:
         enter_result = authorities.enter(target)
     except Exception as exc:
         return audit_failure("ambiguous", f"hardware_enter_exception:{type(exc).__name__}", body=body)
+    if deadline_result := expired("after_enter", ambiguous=True, enter=enter_result):
+        return deadline_result
     try:
         _, after_guard = _guard(target, authorities.snapshot, "immediately_after_hardware_enter")
     except Exception as exc:
@@ -1284,24 +1504,29 @@ def _guarded_submit_impl(
     request = PeerAckRequest(
         schema=REQUEST_SCHEMA, key_id=key_id, message_id=message_id,
         challenge=challenge, input_sha256=input_sha256, sender=sender,
-        receiver=receiver, issued_at=time.time(), response_key_id=key_id,
+        receiver=receiver, issued_at=time.time(), response_key_id=response_key,
+        attempt_nonce=authorities.token_hex(TOKEN_BYTES),
     )
     try:
-        ack_deadline = time.monotonic() + timeout
-        raw_ack = authorities.receive_ack(request, timeout)
-        if time.monotonic() >= ack_deadline:
+        remaining = operation_deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("operation deadline expired before peer ACK")
+        raw_ack = authorities.receive_ack(request, remaining)
+        if time.monotonic() >= operation_deadline:
             raise TimeoutError("peer ACK total deadline expired before authentication")
         ack = verify_peer_ack(
-            raw_ack, keyring=keyring, key_id=key_id, message_id=message_id,
-            challenge=challenge, input_sha256=input_sha256, sender=receiver,
+            raw_ack, keyring=keyring, key_id=response_key, message_id=message_id,
+            challenge=challenge, attempt_nonce=request.attempt_nonce,
+            input_sha256=input_sha256, sender=receiver,
             receiver=sender, max_age_seconds=max_age,
         )
-        if time.monotonic() >= ack_deadline:
+        if time.monotonic() >= operation_deadline:
             raise TimeoutError("peer ACK total deadline expired during authentication")
         ack_data = {
             "ack": {
                 "schema": ack.schema, "key_id": ack.key_id,
                 "challenge": ack.challenge, "ack_nonce": ack.ack_nonce,
+                "attempt_nonce": ack.attempt_nonce,
                 "processed_input_sha256": ack.processed_input_sha256,
                 "sender": ack.sender, "receiver": ack.receiver,
                 "decision": ack.decision, "issued_at": ack.issued_at,
@@ -1309,13 +1534,12 @@ def _guarded_submit_impl(
             }
         }
 
-        def append_ack(ack_sha256: str) -> None:
-            audit(
-                "guarded_submit_acknowledged", "acknowledged",
-                idempotency_key=f"guarded-ack:{ack_sha256}", **ack_data,
-            )
-
-        authorities.finalize_ack(ack, raw_ack, append_ack)
+        ack_sha256 = hashlib.sha256(raw_ack).hexdigest()
+        ack_event = audit_spec(
+            "guarded_submit_acknowledged", "acknowledged",
+            idempotency_key=f"guarded-ack:{ack_sha256}", **ack_data,
+        )
+        authorities.finalize_ack(ack, raw_ack, append_audit, ack_event)
     except Exception as exc:
         return audit_failure("ambiguous", f"peer_ack_failed:{type(exc).__name__}", enter=enter_result)
     return {
@@ -1339,12 +1563,14 @@ def guarded_submit(
     ack_pipe: str,
     replay_path: str | Path,
     event_log_path: str | Path,
+    response_key_id: str | None = None,
     transport: str = "auto",
     ack_timeout: float = 10.0,
     max_ack_age_seconds: float = DEFAULT_ACK_MAX_AGE_SECONDS,
 ) -> dict[str, Any]:
     """Run the fixed-authority candidate guarded-submit transaction."""
     client = RawJsonNamedPipeClient(ack_pipe, keyring)
+    _protect_evidence_path(Path(event_log_path))
     finalizer = DurableAckFinalizer(replay_path)
     reconcile_pending_acks(replay_path, event_log_path)
     authorities = _Authorities(
@@ -1359,7 +1585,7 @@ def guarded_submit(
     )
     return _guarded_submit_impl(
         text, target=target, sender=sender, receiver=receiver,
-        keyring=keyring, key_id=key_id, event_log_path=event_log_path,
+        keyring=keyring, key_id=key_id, response_key_id=response_key_id, event_log_path=event_log_path,
         authorities=authorities, transport=transport, ack_timeout=ack_timeout,
         max_ack_age_seconds=max_ack_age_seconds,
     )

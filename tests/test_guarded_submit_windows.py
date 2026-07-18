@@ -127,7 +127,7 @@ except Exception:
         evidence_path = os.environ.get("SELFCONNECT_REAL_EVIDENCE_PATH")
         if evidence_path:
             evidence = {
-                "schema": "selfconnect.guarded-hardware-submit-live.v2",
+                "schema": "selfconnect.guarded-hardware-submit-live.v3",
                 "status": "PASS",
                 "claim_status": "candidate evidence only; issue #22 remains open",
                 "platform": sys.platform,
@@ -155,6 +155,8 @@ except Exception:
                     "schema": result["ack"]["schema"],
                     "key_id": result["ack"]["key_id"],
                     "challenge_echo_matched": result["ack"]["challenge"] == result["challenge"],
+                    "attempt_nonce_bound": bool(result["ack"]["attempt_nonce"]),
+                    "independent_response_key_id": result["ack"]["key_id"],
                     "sender": result["ack"]["sender"],
                     "receiver": result["ack"]["receiver"],
                     "decision": result["decision"],
@@ -166,17 +168,19 @@ except Exception:
                         event_log_path=tmp_path / "events.jsonl",
                     )["ok"],
                     "stale_closed_hwnd_refused": stale["state"] == "refused",
-                    "sender_finalization_store": "sqlite synchronous=FULL pending->audited with authenticated envelope recovery",
-                    "receiver_admission_store": "sqlite synchronous=FULL admit->processing lease->completed signed result",
+                    "sender_finalization_store": "attested SQLite DELETE/FULL catalog; canonical audit envelope pending->audited",
+                    "receiver_admission_store": "attested SQLite DELETE/FULL stable operation plus durable one-use attempts",
                 },
                 "pipe_security": {
                     "scope": "current logon SID, local clients only",
                     "first_instance": True,
                     "client_token_logon_sid_checked": True,
                     "overlapped_total_deadline": True,
+                    "overlapped_buffers_retained_until_kernel_completion": True,
                 },
                 "processor": {
-                    "governed_killable_subprocess": True,
+                    "direct_child_killed_on_deadline": True,
+                    "descendants_prohibited_but_not_contained": True,
                     "digest_is_adapter_attestation": True,
                     "durable_admission_idempotency_required": True,
                 },

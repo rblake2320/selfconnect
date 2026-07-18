@@ -8,8 +8,8 @@
   "claim_status": "candidate evidence only; issue #22 remains open",
   "durability": {
     "event_chain_verified": true,
-    "receiver_admission_store": "sqlite synchronous=FULL admit->processing lease->completed signed result",
-    "sender_finalization_store": "sqlite synchronous=FULL pending->audited with authenticated envelope recovery",
+    "receiver_admission_store": "attested SQLite DELETE/FULL stable operation plus durable one-use attempts",
+    "sender_finalization_store": "attested SQLite DELETE/FULL catalog; canonical audit envelope pending->audited",
     "stale_closed_hwnd_refused": true
   },
   "input": {
@@ -19,10 +19,12 @@
     "utf8_bytes": 21
   },
   "peer_ack": {
-    "ack_sha256": "105856d4b6cc4b54207041994fc46b7bfb13e830c13aed1b5a56693e1125d4b2",
+    "ack_sha256": "17364d134704a03b63fd37af5c4b335aaac3ccf9e5e255041ed25d2e0b25d4f3",
+    "attempt_nonce_bound": true,
     "challenge_echo_matched": true,
     "decision": "accepted",
     "delivery_verified": true,
+    "independent_response_key_id": "live-key-2026-07",
     "key_id": "live-key-2026-07",
     "receiver": "live-controller",
     "schema": "selfconnect.peer-ack.v2",
@@ -31,16 +33,18 @@
   "pipe_security": {
     "client_token_logon_sid_checked": true,
     "first_instance": true,
+    "overlapped_buffers_retained_until_kernel_completion": true,
     "overlapped_total_deadline": true,
     "scope": "current logon SID, local clients only"
   },
   "platform": "win32",
   "processor": {
+    "descendants_prohibited_but_not_contained": true,
     "digest_is_adapter_attestation": true,
-    "durable_admission_idempotency_required": true,
-    "governed_killable_subprocess": true
+    "direct_child_killed_on_deadline": true,
+    "durable_admission_idempotency_required": true
   },
-  "schema": "selfconnect.guarded-hardware-submit-live.v2",
+  "schema": "selfconnect.guarded-hardware-submit-live.v3",
   "secrets_or_raw_input_included": false,
   "status": "PASS",
   "target": {
@@ -48,7 +52,7 @@
     "exe_name": "python.exe",
     "exe_path_sha256": "15e88d126372a2a88e8348acc28bd7ce56ca34446655609304961cb05a668cc8",
     "process_start_time_bound": true,
-    "title_sha256": "994ef07c1d7ac0a3aae49ba9d31c10da3f9a9ca5405d300e50119d57f437556e"
+    "title_sha256": "4101e9743fe15b5eb72545d9179e24c3f0af87f5ba8d98422c0a8c59fe859656"
   },
   "transport": {
     "hardware_enter_events_inserted": 2,
