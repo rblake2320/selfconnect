@@ -40,6 +40,8 @@ MAX_ACK_BYTES = 16 * 1024
 MAX_INPUT_BYTES = 64 * 1024
 MIN_KEY_BYTES = 32
 TOKEN_BYTES = 32
+MESSAGE_ID_RE = re.compile(r"[0-9a-f]{32}\Z")
+PEER_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 PROCESSOR_ATTESTATION_BOUNDARY = (
     "processed_input_sha256 is a governed adapter attestation, not an independent observation; "
     "the adapter must durably deduplicate admission_id and implement recover()"
@@ -69,6 +71,18 @@ class AckVerificationError(GuardedSubmitError):
 
 class AckReplayError(AckVerificationError):
     """Raised when an already finalized peer ACK is presented again."""
+
+
+def _validate_message_id(value: Any, error_type: type[Exception] = ValueError) -> str:
+    if type(value) is not str or MESSAGE_ID_RE.fullmatch(value) is None:
+        raise error_type("message_id must be 32 lowercase hexadecimal characters")
+    return value
+
+
+def _validate_peer_id(value: Any, name: str, error_type: type[Exception] = ValueError) -> str:
+    if type(value) is not str or PEER_ID_RE.fullmatch(value) is None:
+        raise error_type(f"{name} must contain 1-128 safe ASCII identifier characters")
+    return value
 
 
 @dataclass(frozen=True)
@@ -296,15 +310,15 @@ def sign_peer_ack(
     body = {
         "schema": ACK_SCHEMA,
         "key_id": key_id,
-        "message_id": message_id,
+        "message_id": _validate_message_id(message_id),
         "challenge": _validate_hex(challenge, "challenge", TOKEN_BYTES),
         "attempt_nonce": _validate_hex(attempt_nonce, "attempt nonce", TOKEN_BYTES),
         "ack_nonce": _validate_hex(ack_nonce, "ack nonce", TOKEN_BYTES),
         "input_sha256": _validate_hex(input_sha256, "input digest", 32),
         "operation_sha256": _validate_hex(operation_sha256, "operation digest", 32),
         "processed_input_sha256": _validate_hex(attested_digest, "processed input digest", 32),
-        "sender": sender,
-        "receiver": receiver,
+        "sender": _validate_peer_id(sender, "sender"),
+        "receiver": _validate_peer_id(receiver, "receiver"),
         "decision": decision,
         "issued_at": float(timestamp),
     }
@@ -337,6 +351,9 @@ def verify_peer_ack(
     if any(not isinstance(decoded[field], str) for field in required - {"issued_at"}):
         raise AckVerificationError("peer acknowledgement field types are invalid")
     issued_at = _validate_timestamp(decoded["issued_at"])
+    _validate_message_id(decoded["message_id"], AckVerificationError)
+    _validate_peer_id(decoded["sender"], "sender", AckVerificationError)
+    _validate_peer_id(decoded["receiver"], "receiver", AckVerificationError)
     checks = {
         "schema": (decoded["schema"], ACK_SCHEMA),
         "key_id": (decoded["key_id"], key_id),
@@ -379,6 +396,11 @@ def _validate_request(raw: bytes, *, keyring: AckKeyRing, max_age_seconds: float
     issued_at = _validate_timestamp(decoded["issued_at"])
     if decoded["schema"] != REQUEST_SCHEMA or decoded["key_id"] != wire_key_id:
         raise AckVerificationError("peer ACK request binding mismatch")
+    _validate_message_id(decoded["message_id"], AckVerificationError)
+    _validate_peer_id(decoded["sender"], "sender", AckVerificationError)
+    _validate_peer_id(decoded["receiver"], "receiver", AckVerificationError)
+    if decoded["sender"] == decoded["receiver"]:
+        raise AckVerificationError("peer ACK request requires distinct peers")
     _validate_hex(decoded["challenge"], "challenge", TOKEN_BYTES)
     _validate_hex(decoded["attempt_nonce"], "attempt nonce", TOKEN_BYTES)
     _validate_hex(decoded["input_sha256"], "input digest", 32)
@@ -496,6 +518,7 @@ _ACK_OPERATION_FIELDS = frozenset({
     "message_id", "challenge", "key_id", "response_key_id", "input_sha256", "input_bytes",
     "sender", "receiver", "target",
 })
+_ATTEMPT_OPERATION_FIELDS = frozenset({"key_id", "response_key_id"})
 _ACK_RECEIPT_FIELDS = frozenset((*PeerAck.__dataclass_fields__, "ack_sha256"))
 _ACK_EVENT_FIELDS = frozenset({
     "event_type", "status", "hwnd", "summary", "data", "strict_idempotency_key",
@@ -518,6 +541,11 @@ def _operation_snapshot_bytes(operation: dict[str, Any]) -> bytes:
     for field in _ACK_OPERATION_FIELDS - {"target", "input_bytes"}:
         if type(operation[field]) is not str or not operation[field]:
             raise AckReplayError(f"peer ACK operation {field} is invalid")
+    _validate_message_id(operation["message_id"], AckReplayError)
+    _validate_peer_id(operation["sender"], "sender", AckReplayError)
+    _validate_peer_id(operation["receiver"], "receiver", AckReplayError)
+    if operation["sender"] == operation["receiver"]:
+        raise AckReplayError("peer ACK operation requires distinct peers")
     return _canonical_bytes(operation)
 
 
@@ -533,6 +561,16 @@ def _operation_from_snapshot(snapshot: bytes) -> dict[str, Any]:
     return operation
 
 
+def _stable_operation_sha256(operation_snapshot: bytes) -> str:
+    """Digest semantic operation fields, excluding per-attempt key selection."""
+    operation = _operation_from_snapshot(operation_snapshot)
+    stable = {
+        field: operation[field]
+        for field in _ACK_OPERATION_FIELDS - _ATTEMPT_OPERATION_FIELDS
+    }
+    return hashlib.sha256(_canonical_bytes(stable)).hexdigest()
+
+
 def _canonical_ack_event(ack: PeerAck, raw: bytes, operation_snapshot: bytes) -> dict[str, Any]:
     operation = _operation_from_snapshot(operation_snapshot)
     if operation["message_id"] != ack.message_id or operation["challenge"] != ack.challenge:
@@ -543,7 +581,7 @@ def _canonical_ack_event(ack: PeerAck, raw: bytes, operation_snapshot: bytes) ->
         raise AckReplayError("peer ACK operation peer binding failed")
     if operation["response_key_id"] != ack.key_id:
         raise AckReplayError("peer ACK response key binding failed")
-    if not hmac.compare_digest(hashlib.sha256(operation_snapshot).hexdigest(), ack.operation_sha256):
+    if not hmac.compare_digest(_stable_operation_sha256(operation_snapshot), ack.operation_sha256):
         raise AckReplayError("peer ACK authenticated operation snapshot binding failed")
     receipt = {**asdict(ack), "ack_sha256": hashlib.sha256(raw).hexdigest()}
     return {
@@ -861,11 +899,11 @@ class SubprocessAckProcessor:
         return self._invoke("recover", request, admission_id, deadline)
 
 
-RECEIVER_SCHEMA_VERSION = 2
+RECEIVER_SCHEMA_VERSION = 3
 RECEIVER_CREATE_SQL = """
 CREATE TABLE receiver_admission (
     sender TEXT NOT NULL, receiver TEXT NOT NULL, message_id TEXT NOT NULL, challenge TEXT NOT NULL,
-    input_sha256 TEXT NOT NULL, response_key_id TEXT NOT NULL, operation_sha256 TEXT NOT NULL,
+    input_sha256 TEXT NOT NULL, operation_sha256 TEXT NOT NULL,
     admission_id TEXT NOT NULL UNIQUE,
     state TEXT NOT NULL CHECK (state IN ('admitted','processing','completed')),
     lease_owner TEXT, lease_boot_id INTEGER, lease_expires_tick REAL,
@@ -880,7 +918,7 @@ CREATE TABLE receiver_attempt (
 """
 RECEIVER_COLUMNS = (
     ("sender", "TEXT", 1, 1), ("receiver", "TEXT", 1, 0), ("message_id", "TEXT", 1, 2),
-    ("challenge", "TEXT", 1, 3), ("input_sha256", "TEXT", 1, 0), ("response_key_id", "TEXT", 1, 0),
+    ("challenge", "TEXT", 1, 3), ("input_sha256", "TEXT", 1, 0),
     ("operation_sha256", "TEXT", 1, 0), ("admission_id", "TEXT", 1, 0), ("state", "TEXT", 1, 0),
     ("lease_owner", "TEXT", 0, 0), ("lease_boot_id", "INTEGER", 0, 0), ("lease_expires_tick", "REAL", 0, 0),
     ("decision", "TEXT", 0, 0), ("processed_input_sha256", "TEXT", 0, 0),
@@ -981,11 +1019,7 @@ class DurableReceiverAdmissionStore:
 
     def admit(self, request: PeerAckRequest, raw: bytes) -> tuple[str, str, tuple[str, str] | None]:
         request_digest = hashlib.sha256(raw).hexdigest()
-        operation = {
-            "sender": request.sender, "receiver": request.receiver, "message_id": request.message_id,
-            "challenge": request.challenge, "input_sha256": request.input_sha256,
-        }
-        operation_digest = hashlib.sha256(_canonical_bytes(operation)).hexdigest()
+        operation_digest = _validate_hex(request.operation_sha256, "operation digest", 32)
         key = (request.sender, request.message_id, request.challenge)
         with contextlib.closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -1008,9 +1042,11 @@ class DurableReceiverAdmissionStore:
             if row is None:
                 admission_id = secrets.token_hex(TOKEN_BYTES)
                 connection.execute(
-                    "INSERT INTO receiver_admission VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'admitted', NULL,NULL,NULL,NULL,NULL,?,NULL)",
+                    "INSERT INTO receiver_admission "
+                    "(sender, receiver, message_id, challenge, input_sha256, operation_sha256, "
+                    "admission_id, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'admitted', ?)",
                     (request.sender, request.receiver, request.message_id, request.challenge, request.input_sha256,
-                     request.response_key_id, operation_digest, admission_id, time.time()),
+                     operation_digest, admission_id, time.time()),
                 )
                 connection.commit()
                 return admission_id, "admitted", None
@@ -1647,7 +1683,9 @@ def _guarded_submit_impl(
     keyring.resolve(key_id)
     response_key = key_id if response_key_id is None else response_key_id
     keyring.resolve(response_key)
-    if not sender or not receiver or sender == receiver:
+    _validate_peer_id(sender, "sender")
+    _validate_peer_id(receiver, "receiver")
+    if sender == receiver:
         raise ValueError("distinct sender and receiver are required")
     input_sha256 = hashlib.sha256(encoded_input).hexdigest()
     message_id = uuid.UUID(bytes=bytes.fromhex(authorities.token_hex(16))).hex
@@ -1659,7 +1697,7 @@ def _guarded_submit_impl(
         "sender": sender, "receiver": receiver, "target": asdict(target),
     }
     operation_snapshot = _operation_snapshot_bytes(base)
-    operation_sha256 = hashlib.sha256(operation_snapshot).hexdigest()
+    operation_sha256 = _stable_operation_sha256(operation_snapshot)
     body_evidence: dict[str, Any] = {}
 
     def audit_spec(event_type: str, status: str, *, idempotency_key: str = "", **data: Any) -> dict[str, Any]:

@@ -335,7 +335,7 @@ def test_named_pipe_connect_uses_total_deadline():
     request = guarded.PeerAckRequest(
         guarded.REQUEST_SCHEMA, KEY_ID, MESSAGE_ID, CHALLENGE,
         hashlib.sha256(TEXT.encode()).hexdigest(), SENDER, RECEIVER, time.time(), KEY_ID, ATTEMPT_NONCE,
-        hashlib.sha256(_operation_snapshot()).hexdigest(),
+        guarded._stable_operation_sha256(_operation_snapshot()),
     )
     started = time.monotonic()
     with pytest.raises(TimeoutError, match="deadline"):
@@ -430,6 +430,46 @@ def test_bool_or_nonfinite_ack_timestamp_rejected(timestamp):
         )
 
 
+def test_old_authenticated_request_schema_is_rejected():
+    request, _ = _request_wire()
+    body = {**asdict(request), "schema": "selfconnect.peer-ack-request.v1"}
+    raw = guarded._wire_encode(body, key_id=KEY_ID, key=KEY)
+    with pytest.raises(guarded.AckVerificationError, match="binding mismatch"):
+        guarded._validate_request(raw, keyring=KEYRING, max_age_seconds=1)
+
+
+def test_old_authenticated_ack_schema_is_rejected():
+    request, _ = _request_wire()
+    decoded, _, _ = guarded._wire_decode(_ack(request, issued_at=1.0), keyring=KEYRING)
+    raw = guarded._wire_encode(
+        {**decoded, "schema": "selfconnect.peer-ack.v2"}, key_id=KEY_ID, key=KEY,
+    )
+    with pytest.raises(guarded.AckVerificationError, match="schema mismatch"):
+        guarded.verify_peer_ack(
+            raw, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID,
+            challenge=CHALLENGE, attempt_nonce=ATTEMPT_NONCE,
+            input_sha256=request.input_sha256, operation_sha256=request.operation_sha256,
+            sender=RECEIVER, receiver=SENDER, now=1.0,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("message_id", ""),
+        ("message_id", "A" * 32),
+        ("sender", "peer/b"),
+        ("receiver", "x" * 129),
+    ],
+)
+def test_authenticated_request_rejects_unsafe_or_unbounded_ids(field, value):
+    request, _ = _request_wire()
+    body = {**asdict(request), field: value}
+    raw = guarded._wire_encode(body, key_id=KEY_ID, key=KEY)
+    with pytest.raises(guarded.AckVerificationError):
+        guarded._validate_request(raw, keyring=KEYRING, max_age_seconds=1)
+
+
 @pytest.mark.parametrize("value", [True, False, 0, -1, math.nan, math.inf, 901])
 def test_invalid_timeout_and_max_age_rejected(tmp_path, value):
     with pytest.raises(ValueError):
@@ -452,7 +492,7 @@ def test_pending_ack_can_reconcile_once_then_replay_is_rejected(tmp_path):
     request = guarded.PeerAckRequest(
         guarded.REQUEST_SCHEMA, KEY_ID, MESSAGE_ID, CHALLENGE,
         hashlib.sha256(TEXT.encode()).hexdigest(), SENDER, RECEIVER, 1.0, KEY_ID, ATTEMPT_NONCE,
-        hashlib.sha256(_operation_snapshot()).hexdigest(),
+        guarded._stable_operation_sha256(_operation_snapshot()),
     )
     raw = _ack(request, issued_at=1.0)
     ack = guarded.verify_peer_ack(
@@ -611,11 +651,13 @@ def test_strict_idempotency_key_rejects_conflicting_intended_event(tmp_path):
 def _request_wire(
     *, issued_at: float = 1.0, attempt_nonce: str = ATTEMPT_NONCE,
     input_sha256: str | None = None, request_key_id: str = KEY_ID, response_key_id: str = KEY_ID,
+    operation_overrides: dict | None = None,
 ) -> tuple[guarded.PeerAckRequest, bytes]:
     digest = input_sha256 or hashlib.sha256(TEXT.encode()).hexdigest()
-    operation_sha256 = hashlib.sha256(_operation_snapshot(
-        input_sha256=digest, response_key_id=response_key_id,
-    )).hexdigest()
+    operation_snapshot = _operation_snapshot(
+        input_sha256=digest, response_key_id=response_key_id, **(operation_overrides or {}),
+    )
+    operation_sha256 = guarded._stable_operation_sha256(operation_snapshot)
     request = guarded.PeerAckRequest(
         guarded.REQUEST_SCHEMA, request_key_id, MESSAGE_ID, CHALLENGE,
         digest, SENDER, RECEIVER, issued_at, response_key_id, attempt_nonce, operation_sha256,
@@ -688,6 +730,40 @@ def test_receiver_rejects_same_admission_binding_with_changed_authenticated_body
         store.admit(changed, changed_raw)
     with pytest.raises(guarded.AckReplayError, match="attempt replay"):
         store.admit(changed, changed_raw)
+
+
+@pytest.mark.parametrize(
+    "operation_overrides",
+    [
+        {"input_bytes": len(TEXT.encode()) + 1},
+        {"target": {**asdict(TARGET), "pid": TARGET.pid + 1}},
+    ],
+)
+def test_receiver_rejects_retry_with_changed_full_operation(tmp_path, operation_overrides):
+    store = guarded.DurableReceiverAdmissionStore(tmp_path / "receiver.sqlite3")
+    request, raw = _request_wire(issued_at=1.0)
+    store.admit(request, raw)
+    changed, changed_raw = _request_wire(
+        issued_at=2.0,
+        attempt_nonce="66" * 32,
+        operation_overrides=operation_overrides,
+    )
+    with pytest.raises(guarded.AckReplayError, match="binding conflict"):
+        store.admit(changed, changed_raw)
+
+
+def test_receiver_response_key_rotation_preserves_stable_operation_digest(tmp_path):
+    store = guarded.DurableReceiverAdmissionStore(tmp_path / "receiver.sqlite3")
+    first, first_raw = _request_wire(issued_at=1.0, response_key_id=KEY_ID)
+    admission_id, _, _ = store.admit(first, first_raw)
+    retry, retry_raw = _request_wire(
+        issued_at=2.0,
+        attempt_nonce="66" * 32,
+        request_key_id=OLD_KEY_ID,
+        response_key_id=OLD_KEY_ID,
+    )
+    assert retry.operation_sha256 == first.operation_sha256
+    assert store.admit(retry, retry_raw)[:2] == (admission_id, "admitted")
 
 
 def test_finalizer_rejects_unattested_legacy_schema_without_mutation(tmp_path):
@@ -859,7 +935,7 @@ def test_finalizer_ack_nonce_is_globally_single_use(tmp_path):
         request1, message_id="88" * 16, challenge="99" * 32, attempt_nonce="aa" * 32,
     )
     operation2 = _operation_snapshot(message_id=request2.message_id, challenge=request2.challenge)
-    request2 = replace(request2, operation_sha256=hashlib.sha256(operation2).hexdigest())
+    request2 = replace(request2, operation_sha256=guarded._stable_operation_sha256(operation2))
     raw2 = _ack(request2, issued_at=1.0)
     ack2 = guarded.verify_peer_ack(
         raw2, keyring=KEYRING, key_id=KEY_ID, message_id=request2.message_id,

@@ -128,7 +128,7 @@ except Exception:
         evidence_path = os.environ.get("SELFCONNECT_REAL_EVIDENCE_PATH")
         if evidence_path:
             evidence = {
-                "schema": "selfconnect.guarded-hardware-submit-live.v4",
+                "schema": "selfconnect.guarded-hardware-submit-live.v5",
                 "status": "PASS",
                 "claim_status": "candidate evidence only; issue #22 remains open",
                 "platform": sys.platform,
@@ -157,7 +157,7 @@ except Exception:
                     "key_id": result["ack"]["key_id"],
                     "challenge_echo_matched": result["ack"]["challenge"] == result["challenge"],
                     "attempt_nonce_bound": bool(result["ack"]["attempt_nonce"]),
-                    "operation_snapshot_sha256": result["ack"]["operation_sha256"],
+                    "stable_operation_sha256": result["ack"]["operation_sha256"],
                     "independent_response_key_id": result["ack"]["key_id"],
                     "sender": result["ack"]["sender"],
                     "receiver": result["ack"]["receiver"],
@@ -171,7 +171,7 @@ except Exception:
                     )["ok"],
                     "stale_closed_hwnd_refused": stale["state"] == "refused",
                     "sender_finalization_store": "attested SQLite DELETE/FULL catalog; canonical audit envelope pending->audited",
-                    "receiver_admission_store": "attested SQLite DELETE/FULL stable operation plus durable one-use attempts",
+                    "receiver_admission_store": "attested SQLite DELETE/FULL stable full-operation digest excluding per-attempt keys plus durable one-use attempts",
                 },
                 "pipe_security": {
                     "scope": "current logon SID, local clients only",
