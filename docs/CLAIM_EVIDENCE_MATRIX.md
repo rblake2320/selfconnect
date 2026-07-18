@@ -1,6 +1,6 @@
 # SelfConnect Claim Evidence Matrix
 
-Last updated: 2026-07-15
+Last updated: 2026-07-18
 
 This matrix ties current SelfConnect positioning to concrete proof artifacts on
 `test/win32-hardening-v1`. It is intentionally conservative: if a capability has
@@ -11,6 +11,7 @@ not been live-tested or committed as a probe, it is marked as pending.
 | OS-native terminal injection | Proven on bounded target classes | `send_string(mode="auto")` selects exact-HWND `WM_CHAR` for tested CASCADIA and `WriteConsoleInputW` for `ConsoleWindowClass`. Live console proof: `experiments/win32_probe/results/console_input_transport_PASS_redacted.json`. Boundary: PostMessage queue acceptance and console record insertion are not receiver delivery without independent readback/ACK/effect |
 | Window capture readback | Proven | `capture_window`, `save_capture`, `test_self_connect.py` |
 | Target-safe sends | Proven in package path | `sc_cli.verify_target`, guarded `send`, `tests/test_package_adapters.py` |
+| Windows Terminal active-tab guard | Proven as a bounded wrong-active/stale-tab mitigation; exclusive per-tab routing is not claimed | `sc_terminal_tab.py`, `tests/test_terminal_tab_guard.py`, `docs/WINDOWS_TERMINAL_ACTIVE_TAB_GUARD.md`, `experiments/win32_probe/results/terminal_active_tab_guard_LIVE_PASS_redacted.json`. The live duplicate-title drill covers reorder, wrong-tab, background-window denial, split-pane TermControl mismatch, close/reopen, and post-native-call ambiguity. RuntimeIds are session-opaque/reusable and title/index are not identity. The caller-asserted peer birth ID is digest-bound, not independently live-registry-attested by this module. |
 | Mesh role/task/birth tracking | Proven in package path | `sc_mesh_registry.py`, `selfconnect-mesh list/register/update/heartbeat`; birth IDs distinguish terminal instances |
 | Explore vs governed profiles | Proven as registry policy metadata | `sc_mesh_registry.py`, `docs/PROVEN_VS_UNTESTED.md` |
 | UIA terminal structured read | Proven | `experiments/win32_probe/uia_echo_filter_probe.py`, `docs/UIA_ECHO_FILTER_TERMCONTROL.md` |

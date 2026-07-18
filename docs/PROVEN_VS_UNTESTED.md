@@ -1,6 +1,6 @@
 # SelfConnect Proven vs Untested Capability Map
 
-Last updated: 2026-07-15
+Last updated: 2026-07-18
 
 This note keeps the claim boundary clean. SelfConnect has made a real shift,
 but not every possible Win32 surface has been tested yet.
@@ -54,6 +54,11 @@ These have been tested in this branch or recorded as committed probes:
   an independent target-process effect.
 - Terminal/window capture with `PrintWindow`.
 - Window enumeration and target verification.
+- Bounded Windows Terminal active-tab identity checks using a retained UIA
+  TabItem, session-opaque RuntimeIds, selected state, focused TermControl, and
+  peer birth ID. The live duplicate-title drill covers reorder, wrong-tab,
+  split-pane focus, close/reopen, and post-call ambiguity. This is not
+  exclusive per-tab input routing.
 - Notepad-style control/input experiments.
 - UIA structured text readback on terminal surfaces.
 - UIA `TextChanged` event proof on Windows Terminal / ConPTY.
@@ -107,7 +112,9 @@ These should not be claimed as working until tested:
 - WebView2-hosted app control beyond normal HWND/UIA capture paths.
 - Cross-browser parity.
 - Universal delivery semantics across every console host and TUI.
-- PID-safe `WriteConsoleInputW` routing across multiple Windows Terminal tabs.
+- Exclusive or PID-safe native-input routing across multiple Windows Terminal
+  tabs. The bounded active-tab guard mitigates wrong/stale active selection but
+  cannot atomically bind UIA selection to later window input.
 
 ## Browser And CAPTCHA Boundary
 

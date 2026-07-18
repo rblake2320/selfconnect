@@ -108,7 +108,7 @@
       "evidence": [
         {
           "path": "pyproject.toml",
-          "sha256_text": "4c263fab0b77c586d59daa2141ba1aea18492da87ce9638faf94baf75d4d4c7b"
+          "sha256_text": "3421c7c0961457d891f207d27c683536a3f661a1ee10389aeb50318b1fa2c9de"
         }
       ]
     },

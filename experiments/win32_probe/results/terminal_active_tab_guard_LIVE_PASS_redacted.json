@@ -1,0 +1,36 @@
+{
+  "checks": {
+    "active_term_control_mismatch_denied": true,
+    "background_window_without_focused_termcontrol_denied": true,
+    "closed_tab_denied": true,
+    "duplicate_titles_not_identity": true,
+    "post_call_change_is_ambiguous": true,
+    "reopened_runtime_differs_in_recorded_run": true,
+    "reopened_tab_denied": true,
+    "reorder_preserved_retained_identity": true,
+    "retained_compare_baseline": true,
+    "wrong_active_tab_denied": true
+  },
+  "identity": {
+    "peer_birth_id_sha256": "8e20682cd15085ce8b10716333f3ee53cd91f590d9c5c66d1b89a54cbd1eb342",
+    "runtime_id_scope": "desktop-session-opaque-reusable",
+    "tab_runtime_id_length": 4,
+    "term_control_runtime_id_length": 4,
+    "title_or_index_used_as_identity": false
+  },
+  "implementation": {
+    "sc_guarded_submit_canonical_lf_sha256": "eb23394ff013eba0d2787422313a6c8c2bb2751b889c5d37e660cfb9ffdd2a7c",
+    "sc_terminal_tab_canonical_lf_sha256": "09832786ba85d7056512c2e1e825e4399d8e238c51d2714b9c60618a7f2fd737",
+    "working_tree_base": "542105c4ae441ba857f2e160eac81d2804bbfcbe"
+  },
+  "platform": "win32",
+  "raw_terminal_text_included": false,
+  "schema": "selfconnect.windows-terminal-active-tab-guard-live.v1",
+  "status": "PASS",
+  "transport_boundary": {
+    "exclusive_per_tab_routing_claimed": false,
+    "post_call_change": "ambiguous because queued input may already have taken effect",
+    "preventive_alternative": "birth-id-bound named-pipe/control-plane input is out of scope",
+    "shared_input_site_hwnd_observed": true
+  }
+}
