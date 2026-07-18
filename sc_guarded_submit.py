@@ -29,6 +29,12 @@ from types import MappingProxyType
 from typing import Any, Callable
 
 import sc_mesh_registry
+from sc_terminal_tab import (
+    TerminalTabGuard,
+    TerminalTabGuardError,
+    TerminalTabIdentity,
+    capture_active_terminal_tab,
+)
 
 ACK_SCHEMA = "selfconnect.peer-ack.v3"
 REQUEST_SCHEMA = "selfconnect.peer-ack-request.v2"
@@ -518,16 +524,19 @@ _ACK_OPERATION_FIELDS = frozenset({
     "message_id", "challenge", "key_id", "response_key_id", "input_sha256", "input_bytes",
     "sender", "receiver", "target",
 })
+_ACK_TAB_OPERATION_FIELDS = frozenset((*_ACK_OPERATION_FIELDS, "terminal_tab"))
 _ATTEMPT_OPERATION_FIELDS = frozenset({"key_id", "response_key_id"})
 _ACK_RECEIPT_FIELDS = frozenset((*PeerAck.__dataclass_fields__, "ack_sha256"))
 _ACK_EVENT_FIELDS = frozenset({
     "event_type", "status", "hwnd", "summary", "data", "strict_idempotency_key",
 })
 _TARGET_IDENTITY_FIELDS = frozenset(TargetIdentity.__dataclass_fields__)
+_TERMINAL_TAB_IDENTITY_FIELDS = frozenset(TerminalTabIdentity.__dataclass_fields__)
 
 
 def _operation_snapshot_bytes(operation: dict[str, Any]) -> bytes:
-    if set(operation) != _ACK_OPERATION_FIELDS or not isinstance(operation.get("target"), dict):
+    fields = set(operation)
+    if fields not in {_ACK_OPERATION_FIELDS, _ACK_TAB_OPERATION_FIELDS} or not isinstance(operation.get("target"), dict):
         raise AckReplayError("peer ACK operation schema is invalid")
     target = operation["target"]
     if set(target) != _TARGET_IDENTITY_FIELDS:
@@ -536,6 +545,20 @@ def _operation_snapshot_bytes(operation: dict[str, Any]) -> bytes:
         TargetIdentity(**target)
     except (TypeError, ValueError) as exc:
         raise AckReplayError("peer ACK target identity types are invalid") from exc
+    if fields == _ACK_TAB_OPERATION_FIELDS:
+        terminal_tab = operation["terminal_tab"]
+        if not isinstance(terminal_tab, dict) or set(terminal_tab) != _TERMINAL_TAB_IDENTITY_FIELDS:
+            raise AckReplayError("peer ACK terminal-tab identity schema is invalid")
+        try:
+            tab_identity = TerminalTabIdentity(**terminal_tab)
+        except (TypeError, ValueError, TerminalTabGuardError) as exc:
+            raise AckReplayError("peer ACK terminal-tab identity types are invalid") from exc
+        if (
+            tab_identity.window_hwnd != target["hwnd"]
+            or tab_identity.window_pid != target["pid"]
+            or tab_identity.window_process_start_time_ns != target["process_start_time_ns"]
+        ):
+            raise AckReplayError("peer ACK terminal-tab top-level target binding failed")
     if type(operation["input_bytes"]) is not int or not 0 < operation["input_bytes"] <= MAX_INPUT_BYTES:
         raise AckReplayError("peer ACK operation input_bytes is invalid")
     for field in _ACK_OPERATION_FIELDS - {"target", "input_bytes"}:
@@ -566,7 +589,7 @@ def _stable_operation_sha256(operation_snapshot: bytes) -> str:
     operation = _operation_from_snapshot(operation_snapshot)
     stable = {
         field: operation[field]
-        for field in _ACK_OPERATION_FIELDS - _ATTEMPT_OPERATION_FIELDS
+        for field in set(operation) - _ATTEMPT_OPERATION_FIELDS
     }
     return hashlib.sha256(_canonical_bytes(stable)).hexdigest()
 
@@ -616,7 +639,11 @@ def _validated_ack_audit_event(
     data = event.get("data")
     receipt = data.get("ack") if isinstance(data, dict) else None
     operation = {key: value for key, value in data.items() if key != "ack"} if isinstance(data, dict) else {}
-    if set(operation) != _ACK_OPERATION_FIELDS or not isinstance(receipt, dict) or set(receipt) != _ACK_RECEIPT_FIELDS:
+    if (
+        set(operation) not in {_ACK_OPERATION_FIELDS, _ACK_TAB_OPERATION_FIELDS}
+        or not isinstance(receipt, dict)
+        or set(receipt) != _ACK_RECEIPT_FIELDS
+    ):
         raise AckReplayError("peer ACK canonical audit envelope data schema is invalid")
     expected_data = {
         "message_id": binding["message_id"], "challenge": binding["challenge"],
@@ -1675,6 +1702,7 @@ def _guarded_submit_impl(
     ack_timeout: float,
     max_ack_age_seconds: float,
     response_key_id: str | None = None,
+    terminal_tab_guard: TerminalTabGuard | Any | None = None,
 ) -> dict[str, Any]:
     encoded_input = _validate_input(text)
     timeout = _validate_duration(ack_timeout, "ack_timeout", MAX_ACK_AGE_SECONDS)
@@ -1687,6 +1715,19 @@ def _guarded_submit_impl(
     _validate_peer_id(receiver, "receiver")
     if sender == receiver:
         raise ValueError("distinct sender and receiver are required")
+    tab_identity = None
+    if terminal_tab_guard is not None:
+        tab_identity = getattr(terminal_tab_guard, "identity", None)
+        if not isinstance(tab_identity, TerminalTabIdentity):
+            raise ValueError("terminal_tab_guard must carry a TerminalTabIdentity")
+        if (
+            tab_identity.window_hwnd != target.hwnd
+            or tab_identity.window_pid != target.pid
+            or tab_identity.window_process_start_time_ns != target.process_start_time_ns
+        ):
+            raise ValueError("terminal-tab identity does not bind the guarded top-level target")
+        if target.class_name != "CASCADIA_HOSTING_WINDOW_CLASS":
+            raise ValueError("terminal-tab guards require a Windows Terminal CASCADIA target")
     input_sha256 = hashlib.sha256(encoded_input).hexdigest()
     message_id = uuid.UUID(bytes=bytes.fromhex(authorities.token_hex(16))).hex
     challenge = authorities.token_hex(TOKEN_BYTES)
@@ -1696,6 +1737,8 @@ def _guarded_submit_impl(
         "input_sha256": input_sha256, "input_bytes": len(encoded_input),
         "sender": sender, "receiver": receiver, "target": asdict(target),
     }
+    if tab_identity is not None:
+        base["terminal_tab"] = asdict(tab_identity)
     operation_snapshot = _operation_snapshot_bytes(base)
     operation_sha256 = _stable_operation_sha256(operation_snapshot)
     body_evidence: dict[str, Any] = {}
@@ -1734,25 +1777,88 @@ def _guarded_submit_impl(
             record["audit_error"] = f"{type(exc).__name__}:{exc}"
         return record
 
+    def tab_checkpoint(stage: str, *, select: bool) -> dict[str, Any] | None:
+        if terminal_tab_guard is None:
+            return None
+        result = terminal_tab_guard.checkpoint(stage, select=select, deadline=operation_deadline)
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            raise TerminalTabGuardError("active-tab checkpoint did not confirm the intended tab")
+        return result
+
     try:
         first_window, first_guard = _guard(target, authorities.snapshot, "before_typing")
     except Exception as exc:
         return outcome("refused", f"target_guard_exception_before_typing:{type(exc).__name__}")
     if not first_guard["ok"]:
         return outcome("refused", "target_guard_failed_before_typing", guard=first_guard)
+    try:
+        initial_tab_guard = tab_checkpoint("before_body", select=True)
+    except Exception as exc:
+        return audit_failure(
+            "refused",
+            f"terminal_tab_guard_failed_before_body:{type(exc).__name__}",
+        )
     if deadline_result := expired("before_prepare"):
         return deadline_result
     try:
-        audit("guarded_submit_prepared", "prepared", guard=first_guard)
+        audit("guarded_submit_prepared", "prepared", guard=first_guard, terminal_tab_guard=initial_tab_guard)
     except Exception as exc:
         return outcome("refused", f"audit_prepare_failed:{type(exc).__name__}", guard=first_guard)
     if deadline_result := expired("before_body"):
         return deadline_result
     try:
-        body = authorities.send_body(first_window, text, transport, operation_deadline)
+        if terminal_tab_guard is None:
+            body = authorities.send_body(first_window, text, transport, operation_deadline)
+        else:
+            accepted_count = 0
+            batch_transport = None
+            last_checkpoint = initial_tab_guard
+            for index, character in enumerate(text):
+                tab_checkpoint(f"before_body_batch_{index}", select=False)
+                batch = authorities.send_body(first_window, character, transport, operation_deadline)
+                if not isinstance(batch, dict):
+                    raise TerminalTabGuardError("body transport batch result is malformed")
+                batch_accepted = int(batch.get("chars_accepted", -1))
+                if batch.get("ok") is not True or int(batch.get("chars_requested", -1)) != 1 or batch_accepted != 1:
+                    body = {
+                        **batch,
+                        "ok": False,
+                        "chars_requested": len(text),
+                        "chars_accepted": accepted_count + max(0, batch_accepted),
+                        "batch_count": index + 1,
+                    }
+                    break
+                accepted_count += 1
+                transport_name = batch.get("transport")
+                if batch_transport is None:
+                    batch_transport = transport_name
+                elif transport_name != batch_transport:
+                    raise TerminalTabGuardError("body transport changed across tab-guarded batches")
+                last_checkpoint = tab_checkpoint(f"after_body_batch_{index}", select=False)
+            else:
+                body = {
+                    "ok": True,
+                    "transport": batch_transport,
+                    "chars_requested": len(text),
+                    "chars_accepted": accepted_count,
+                    "batch_count": len(text),
+                    "delivery_verified": False,
+                    "tab_guard_after_last_batch": last_checkpoint,
+                }
     except Exception as exc:
-        body_evidence.update({"chars_requested": len(text), "chars_accepted": "unknown"})
-        return audit_failure("ambiguous", f"body_staged_exception:{type(exc).__name__}", chars_accepted="unknown")
+        if terminal_tab_guard is None:
+            body_evidence.update({"chars_requested": len(text), "chars_accepted": "unknown"})
+            return audit_failure(
+                "ambiguous",
+                f"body_staged_exception:{type(exc).__name__}",
+                chars_accepted="unknown",
+            )
+        body_evidence.update({"chars_requested": len(text), "chars_accepted": locals().get("accepted_count", "unknown")})
+        return audit_failure(
+            "ambiguous" if locals().get("accepted_count", 0) else "refused",
+            f"terminal_tab_or_body_batch_failed:{type(exc).__name__}",
+            chars_accepted=locals().get("accepted_count", "unknown"),
+        )
     body_evidence.update({
         "body": body,
         "chars_requested": body.get("chars_requested") if isinstance(body, dict) else len(text),
@@ -1787,6 +1893,14 @@ def _guarded_submit_impl(
     if deadline_result := expired("after_focus", ambiguous=True):
         return deadline_result
     try:
+        before_enter_tab_guard = tab_checkpoint("immediately_before_hardware_enter", select=False)
+    except Exception as exc:
+        return audit_failure(
+            "ambiguous",
+            f"terminal_tab_guard_failed_before_enter:{type(exc).__name__}",
+            body=body,
+        )
+    try:
         _, enter_guard = _guard(target, authorities.snapshot, "immediately_before_hardware_enter")
     except Exception as exc:
         return audit_failure("ambiguous", f"body_staged_target_guard_exception_before_enter:{type(exc).__name__}", body=body)
@@ -1804,10 +1918,26 @@ def _guarded_submit_impl(
         _, after_guard = _guard(target, authorities.snapshot, "immediately_after_hardware_enter")
     except Exception as exc:
         return audit_failure("ambiguous", f"target_guard_exception_after_enter:{type(exc).__name__}", enter=enter_result)
+    try:
+        after_enter_tab_guard = tab_checkpoint("immediately_after_hardware_enter", select=False)
+    except Exception as exc:
+        return audit_failure(
+            "ambiguous",
+            f"terminal_tab_guard_failed_after_enter:{type(exc).__name__}",
+            enter=enter_result,
+        )
     if not isinstance(enter_result, dict) or enter_result.get("ok") is not True or not after_guard["ok"]:
         return audit_failure("ambiguous", "hardware_enter_not_confirmed", enter=enter_result, guard=after_guard)
     try:
-        audit("guarded_submit_submitted", "submitted", enter=enter_result, guard=after_guard, body=body)
+        audit(
+            "guarded_submit_submitted",
+            "submitted",
+            enter=enter_result,
+            guard=after_guard,
+            body=body,
+            terminal_tab_before_enter=before_enter_tab_guard,
+            terminal_tab_after_enter=after_enter_tab_guard,
+        )
     except Exception as exc:
         return audit_failure("ambiguous", f"audit_submitted_failed:{type(exc).__name__}", enter=enter_result)
     request = PeerAckRequest(
@@ -1855,7 +1985,10 @@ def _guarded_submit_impl(
         "delivery_verified": ack.decision == "accepted", "transport_accepted": True,
         "peer_acknowledged": True, "decision": ack.decision,
         "body": body, "focus": focus_result, "enter": enter_result,
-        "guard_after_enter": after_guard, **ack_data,
+        "guard_after_enter": after_guard,
+        "terminal_tab_before_enter": before_enter_tab_guard,
+        "terminal_tab_after_enter": after_enter_tab_guard,
+        **ack_data,
     }
 
 
@@ -1874,12 +2007,15 @@ def guarded_submit(
     transport: str = "auto",
     ack_timeout: float = 10.0,
     max_ack_age_seconds: float = DEFAULT_ACK_MAX_AGE_SECONDS,
+    terminal_tab_guard: TerminalTabGuard | None = None,
 ) -> dict[str, Any]:
     """Run guarded submit under a trusted, non-monkeypatched interpreter.
 
     The exported path fixes its collaborators. Private helpers, test injection,
     hostile reflection, and module mutation are outside this bounded claim.
     """
+    if terminal_tab_guard is not None and type(terminal_tab_guard) is not TerminalTabGuard:
+        raise TypeError("public guarded_submit requires an exact TerminalTabGuard")
     client = RawJsonNamedPipeClient(ack_pipe, keyring)
     _protect_evidence_path(Path(event_log_path))
     finalizer = DurableAckFinalizer(replay_path)
@@ -1898,14 +2034,15 @@ def guarded_submit(
         text, target=target, sender=sender, receiver=receiver,
         keyring=keyring, key_id=key_id, response_key_id=response_key_id, event_log_path=event_log_path,
         authorities=authorities, transport=transport, ack_timeout=ack_timeout,
-        max_ack_age_seconds=max_ack_age_seconds,
+        max_ack_age_seconds=max_ack_age_seconds, terminal_tab_guard=terminal_tab_guard,
     )
 
 
 __all__ = [
     "ACK_SCHEMA", "REQUEST_SCHEMA", "AckKey", "AckKeyRing", "AckReplayError",
     "AckVerificationError", "DurableAckFinalizer", "DurableReceiverAdmissionStore",
-    "PeerAck", "PeerAckRequest", "SubprocessAckProcessor",
+    "PeerAck", "PeerAckRequest", "SubprocessAckProcessor", "TerminalTabGuard",
+    "TerminalTabGuardError", "TerminalTabIdentity", "capture_active_terminal_tab",
     "ProcessingAckServer", "RawJsonNamedPipeClient", "TargetIdentity",
     "guarded_submit", "list_pending_acks", "make_private_pipe_address",
     "reconcile_pending_acks", "sign_peer_ack", "verify_peer_ack",

@@ -1,0 +1,35 @@
+{
+  "checks": {
+    "active_term_control_mismatch_denied": true,
+    "closed_tab_denied": true,
+    "duplicate_titles_not_identity": true,
+    "post_call_change_is_ambiguous": true,
+    "reopened_runtime_differs_in_recorded_run": true,
+    "reopened_tab_denied": true,
+    "reorder_preserved_retained_identity": true,
+    "retained_compare_baseline": true,
+    "wrong_active_tab_denied": true
+  },
+  "identity": {
+    "peer_birth_id_sha256": "bca548a29a496f3fff3120be4b3de3fc892aa058792ff08d882e83a26c584ad2",
+    "runtime_id_scope": "desktop-session-opaque-reusable",
+    "tab_runtime_id_length": 4,
+    "term_control_runtime_id_length": 4,
+    "title_or_index_used_as_identity": false
+  },
+  "implementation": {
+    "git_base_head": "7b075590bfb394fc9cbcc5b3febe58651339c677",
+    "sc_guarded_submit_canonical_lf_sha256": "16df9466df79575a5b7eb62ef0058243af4b457e121c572ed9802d46b0476a24",
+    "sc_terminal_tab_canonical_lf_sha256": "0290959787d484a0479650a70a49a5d00d386ef00c1af8e9ed87a6db0d737528"
+  },
+  "platform": "win32",
+  "raw_terminal_text_included": false,
+  "schema": "selfconnect.windows-terminal-active-tab-guard-live.v1",
+  "status": "PASS",
+  "transport_boundary": {
+    "exclusive_per_tab_routing_claimed": false,
+    "post_call_change": "ambiguous because queued input may already have taken effect",
+    "preventive_alternative": "birth-id-bound named-pipe/control-plane input is out of scope",
+    "shared_input_site_hwnd_observed": true
+  }
+}

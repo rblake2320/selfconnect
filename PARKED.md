@@ -51,11 +51,18 @@
 ## P-002 - Console Input for Windows Terminal Tabs
 
 - Status: parked.
-- Current replacement: exact-HWND `WM_CHAR` for the tested CASCADIA surface.
+- Current mitigation: `TerminalTabGuard` retains the selected UIA TabItem,
+  binds its session-opaque RuntimeId, focused TermControl RuntimeId, and peer
+  birth ID into guarded-submit evidence, and checks before/after native input.
+  The duplicate-title live drill covers reorder, wrong-tab, pane-focus,
+  close/reopen, and post-call ambiguity.
 - Why parked: Windows Terminal tabs can share a process; a PID-selected console
-  input buffer is not sufficient proof of the intended tab.
-- Restore condition: deterministic tab-to-console identity binding plus live
-  wrong-tab and stale-tab denial tests.
+  input buffer and shared window input path are not exclusive proof that a
+  native call reached the intended tab. UIA selection plus later input is not
+  atomic.
+- Restore condition: a birth-ID-bound receiving control plane or another
+  deterministic, receiver-verifiable tab-to-console identity and routing
+  channel. The bounded active-tab guard does not satisfy this condition.
 
 ## P-003 - Console Screen-Buffer Read Parity
 
