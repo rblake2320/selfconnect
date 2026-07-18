@@ -3,6 +3,7 @@
     "issue_22_open": true,
     "logical_sender_is_process_identity_claim": false,
     "production_readiness_claimed": false,
+    "protected_parent_directory_is_deployer_precondition": true,
     "windows_terminal_per_tab_claimed": false
   },
   "claim_status": "candidate evidence only; issue #22 remains open",
@@ -19,7 +20,7 @@
     "utf8_bytes": 21
   },
   "peer_ack": {
-    "ack_sha256": "17364d134704a03b63fd37af5c4b335aaac3ccf9e5e255041ed25d2e0b25d4f3",
+    "ack_sha256": "e4891979259cc8fbf36e4f4f0b05d292c3210b613aa24716d99cafc3dec95ed3",
     "attempt_nonce_bound": true,
     "challenge_echo_matched": true,
     "decision": "accepted",
@@ -31,6 +32,7 @@
     "sender": "live-peer"
   },
   "pipe_security": {
+    "bounded_native_authority_contract": true,
     "client_token_logon_sid_checked": true,
     "first_instance": true,
     "overlapped_buffers_retained_until_kernel_completion": true,
@@ -42,7 +44,8 @@
     "descendants_prohibited_but_not_contained": true,
     "digest_is_adapter_attestation": true,
     "direct_child_killed_on_deadline": true,
-    "durable_admission_idempotency_required": true
+    "durable_admission_idempotency_required": true,
+    "stdin_stdout_share_processor_deadline": true
   },
   "schema": "selfconnect.guarded-hardware-submit-live.v3",
   "secrets_or_raw_input_included": false,
@@ -52,7 +55,7 @@
     "exe_name": "python.exe",
     "exe_path_sha256": "15e88d126372a2a88e8348acc28bd7ce56ca34446655609304961cb05a668cc8",
     "process_start_time_bound": true,
-    "title_sha256": "4101e9743fe15b5eb72545d9179e24c3f0af87f5ba8d98422c0a8c59fe859656"
+    "title_sha256": "7c4332d5708376291e8d32596dd86d2b26ade9071e604e6201dde02eb99d404a"
   },
   "transport": {
     "hardware_enter_events_inserted": 2,

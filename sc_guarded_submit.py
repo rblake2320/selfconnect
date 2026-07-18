@@ -43,8 +43,9 @@ PROCESSOR_ATTESTATION_BOUNDARY = (
     "the adapter must durably deduplicate admission_id and implement recover()"
 )
 EVIDENCE_BOUNDARY = (
-    "local DACL and hash-chain evidence resists cross-logon replacement and detects later tampering; "
-    "same-logon administrators and off-host compromise are outside this candidate claim"
+    "the evidence file has a local owner/SYSTEM DACL and hash-chain; its parent directory must already be "
+    "access-controlled by the deployer and is not attested here; parent replacement, same-logon administrators, "
+    "and off-host compromise are outside this candidate claim"
 )
 _BIDI_CONTROLS = {
     0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
@@ -180,7 +181,7 @@ class PeerAck:
 
 
 def _canonical_bytes(value: dict[str, Any]) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("utf-8")
 
 
 def _validate_duration(value: float, name: str, maximum: float) -> float:
@@ -399,16 +400,22 @@ def _attest_table(
     table: str,
     columns: tuple[tuple[str, str, int, int], ...],
     unique_sets: set[tuple[str, ...]],
-    required_sql: tuple[str, ...],
+    expected_sql: str,
 ) -> None:
     actual = tuple((str(row[1]), str(row[2]).upper(), int(row[3]), int(row[5])) for row in _sqlite_table_info(connection, table))
     if actual != columns:
         raise AckReplayError(f"{table} catalog column/PK attestation failed")
-    if not unique_sets <= _sqlite_unique_sets(connection, table):
+    if unique_sets != _sqlite_unique_sets(connection, table):
         raise AckReplayError(f"{table} catalog UNIQUE attestation failed")
     sql = _normalized_catalog_sql(connection, table)
-    if any(fragment not in sql for fragment in required_sql):
-        raise AckReplayError(f"{table} catalog CHECK attestation failed")
+    if sql != " ".join(expected_sql.lower().split()):
+        raise AckReplayError(f"{table} canonical catalog attestation failed")
+    extras = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE tbl_name=? AND type IN ('trigger','index') AND sql IS NOT NULL LIMIT 1",
+        (table,),
+    ).fetchone()
+    if extras:
+        raise AckReplayError(f"{table} unexpected catalog object attestation failed")
 
 
 def _configure_durable_sqlite(connection: sqlite3.Connection) -> None:
@@ -441,6 +448,75 @@ FINALIZER_COLUMNS = (
     ("decision", "TEXT", 1, 0), ("issued_at", "REAL", 1, 0), ("audit_event_json", "TEXT", 1, 0),
     ("state", "TEXT", 1, 0), ("created_at", "REAL", 1, 0), ("audited_at", "REAL", 0, 0),
 )
+LEGACY_FINALIZER_V1_SQL = """
+CREATE TABLE peer_ack_finalization (
+    sender TEXT NOT NULL,
+    receiver TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    challenge TEXT NOT NULL,
+    ack_nonce TEXT NOT NULL,
+    input_sha256 TEXT NOT NULL,
+    ack_sha256 TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'audited')),
+    created_at REAL NOT NULL,
+    audited_at REAL,
+    PRIMARY KEY (sender, receiver, message_id),
+    UNIQUE (sender, challenge),
+    UNIQUE (sender, ack_nonce)
+)
+"""
+LEGACY_FINALIZER_V2_SQL = LEGACY_FINALIZER_V1_SQL.replace(
+    "    state TEXT NOT NULL",
+    "    raw_ack BLOB,\n    key_id TEXT,\n    decision TEXT,\n    issued_at REAL,\n    state TEXT NOT NULL",
+)
+LEGACY_FINALIZER_V1_COLUMNS = (
+    ("sender", "TEXT", 1, 1), ("receiver", "TEXT", 1, 2), ("message_id", "TEXT", 1, 3),
+    ("challenge", "TEXT", 1, 0), ("ack_nonce", "TEXT", 1, 0), ("input_sha256", "TEXT", 1, 0),
+    ("ack_sha256", "TEXT", 1, 0), ("state", "TEXT", 1, 0), ("created_at", "REAL", 1, 0),
+    ("audited_at", "REAL", 0, 0),
+)
+LEGACY_FINALIZER_V2_COLUMNS = (
+    *LEGACY_FINALIZER_V1_COLUMNS[:7],
+    ("raw_ack", "BLOB", 0, 0), ("key_id", "TEXT", 0, 0), ("decision", "TEXT", 0, 0),
+    ("issued_at", "REAL", 0, 0), *LEGACY_FINALIZER_V1_COLUMNS[7:],
+)
+_AUDIT_EVENT_FIELDS = frozenset({
+    "event_type", "role", "mesh", "birth_id", "generation", "agent", "hwnd", "task", "status",
+    "profile", "summary", "data", "repo_path", "repo_snapshot", "strict_idempotency_key",
+})
+
+
+def _validated_ack_audit_event(audit_json: str, binding: dict[str, Any]) -> dict[str, Any]:
+    try:
+        event = json.loads(audit_json)
+    except Exception as exc:
+        raise AckReplayError("peer ACK canonical audit envelope is malformed") from exc
+    if not isinstance(event, dict) or not set(event) <= _AUDIT_EVENT_FIELDS:
+        raise AckReplayError("peer ACK canonical audit envelope schema is invalid")
+    try:
+        if _canonical_bytes(event).decode("ascii") != audit_json:
+            raise AckReplayError("peer ACK audit envelope is not canonical")
+    except (TypeError, ValueError) as exc:
+        raise AckReplayError("peer ACK audit envelope is not strict JSON") from exc
+    expected_key = f"guarded-ack:{binding['ack_sha256']}"
+    if event.get("event_type") != "guarded_submit_acknowledged" or event.get("strict_idempotency_key") != expected_key:
+        raise AckReplayError("peer ACK audit envelope identity binding failed")
+    data = event.get("data")
+    receipt = data.get("ack") if isinstance(data, dict) else None
+    expected_data = {
+        "message_id": binding["message_id"], "challenge": binding["challenge"],
+        "input_sha256": binding["input_sha256"], "sender": binding["receiver"], "receiver": binding["sender"],
+    }
+    expected_receipt = {
+        "challenge": binding["challenge"], "ack_nonce": binding["ack_nonce"],
+        "decision": binding["decision"], "key_id": binding["key_id"], "ack_sha256": binding["ack_sha256"],
+        "sender": binding["sender"], "receiver": binding["receiver"],
+    }
+    if not isinstance(receipt, dict) or any(data.get(key) != value for key, value in expected_data.items()):
+        raise AckReplayError("peer ACK audit envelope operation binding failed")
+    if any(receipt.get(key) != value for key, value in expected_receipt.items()):
+        raise AckReplayError("peer ACK audit envelope receipt binding failed")
+    return event
 
 
 class DurableAckFinalizer:
@@ -472,22 +548,24 @@ class DurableAckFinalizer:
         _attest_table(
             connection, "peer_ack_finalization", FINALIZER_COLUMNS,
             {("sender", "receiver", "message_id"), ("sender", "challenge"), ("ack_nonce",)},
-            ("check (decision in ('accepted','rejected'))", "check (state in ('pending','audited'))"),
+            FINALIZER_CREATE_SQL,
         )
 
     def _migrate_legacy(self, connection: sqlite3.Connection) -> None:
         columns = tuple(str(row[1]) for row in _sqlite_table_info(connection, "peer_ack_finalization"))
         base = ("sender", "receiver", "message_id", "challenge", "ack_nonce", "input_sha256", "ack_sha256")
-        if columns not in {
-            (*base, "state", "created_at", "audited_at"),
-            (*base, "raw_ack", "key_id", "decision", "issued_at", "state", "created_at", "audited_at"),
-        }:
+        v1 = (*base, "state", "created_at", "audited_at")
+        v2 = (*base, "raw_ack", "key_id", "decision", "issued_at", "state", "created_at", "audited_at")
+        if columns == v1:
+            legacy_columns, legacy_sql = LEGACY_FINALIZER_V1_COLUMNS, LEGACY_FINALIZER_V1_SQL
+        elif columns == v2:
+            legacy_columns, legacy_sql = LEGACY_FINALIZER_V2_COLUMNS, LEGACY_FINALIZER_V2_SQL
+        else:
             raise AckReplayError("unrecognized legacy peer ACK finalization schema")
-        uniques = _sqlite_unique_sets(connection, "peer_ack_finalization")
-        if not {("sender", "receiver", "message_id"), ("sender", "challenge"), ("sender", "ack_nonce")} <= uniques:
-            raise AckReplayError("legacy peer ACK finalization constraints are not authoritative")
-        if "check (state in ('pending', 'audited'))" not in _normalized_catalog_sql(connection, "peer_ack_finalization"):
-            raise AckReplayError("legacy peer ACK state constraint is not authoritative")
+        _attest_table(
+            connection, "peer_ack_finalization", legacy_columns,
+            {("sender", "receiver", "message_id"), ("sender", "challenge"), ("sender", "ack_nonce")}, legacy_sql,
+        )
         if connection.execute("SELECT 1 FROM peer_ack_finalization WHERE state='pending' LIMIT 1").fetchone():
             raise AckReplayError("legacy pending ACK lacks the canonical audit envelope required for recovery")
         has_envelope = "raw_ack" in columns
@@ -522,16 +600,23 @@ class DurableAckFinalizer:
 
     def finalize(self, ack: PeerAck, raw: bytes, audit: Callable[[dict[str, Any]], None], audit_event: dict[str, Any]) -> None:
         ack_sha256 = hashlib.sha256(raw).hexdigest()
-        audit_json = _canonical_bytes(audit_event).decode("ascii")
         values = (ack.sender, ack.receiver, ack.message_id, ack.challenge, ack.ack_nonce, ack.input_sha256, ack_sha256)
+        binding = {
+            "sender": ack.sender, "receiver": ack.receiver, "message_id": ack.message_id,
+            "challenge": ack.challenge, "ack_nonce": ack.ack_nonce, "input_sha256": ack.input_sha256,
+            "ack_sha256": ack_sha256, "key_id": ack.key_id, "decision": ack.decision,
+        }
         with contextlib.closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
-                "SELECT challenge, ack_nonce, input_sha256, ack_sha256, state FROM peer_ack_finalization "
+                "SELECT challenge, ack_nonce, input_sha256, ack_sha256, state, key_id, decision, audit_event_json "
+                "FROM peer_ack_finalization "
                 "WHERE sender=? AND receiver=? AND message_id=?",
                 values[:3],
             ).fetchone()
             if existing is None:
+                audit_json = _canonical_bytes(audit_event).decode("ascii")
+                event_to_audit = _validated_ack_audit_event(audit_json, binding)
                 try:
                     connection.execute(
                         "INSERT INTO peer_ack_finalization "
@@ -548,8 +633,10 @@ class DurableAckFinalizer:
                 if tuple(existing[:4]) != values[3:] or existing[4] == "audited":
                     connection.rollback()
                     raise AckReplayError("peer acknowledgement replay rejected")
+                stored_binding = {**binding, "key_id": str(existing[5]), "decision": str(existing[6])}
+                event_to_audit = _validated_ack_audit_event(str(existing[7]), stored_binding)
                 connection.commit()
-        audit(audit_event)
+        audit(event_to_audit)
         with contextlib.closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             updated = connection.execute(
@@ -573,7 +660,8 @@ class DurableAckFinalizer:
                  "raw_ack", "key_id", "decision", "issued_at", "audit_event_json", "created_at")
         result = [dict(zip(names, row, strict=True)) for row in rows]
         for item in result:
-            item["audit_event"] = json.loads(item.pop("audit_event_json"))
+            audit_json = str(item.pop("audit_event_json"))
+            item["audit_event"] = _validated_ack_audit_event(audit_json, item)
         return result
 
     def reconcile_pending(self, audit: Callable[[dict[str, Any]], None]) -> int:
@@ -632,28 +720,42 @@ class SubprocessAckProcessor:
             creationflags=flags,
         )
         assert process.stdin is not None and process.stdout is not None
-        process.stdin.write(payload)
-        process.stdin.close()
         output: list[bytes] = []
 
-        def bounded_read() -> None:
-            chunk = process.stdout.read(4097)
-            output.append(chunk)
-            if len(chunk) > 4096 and process.poll() is None:
-                process.kill()
+        def bounded_write() -> None:
+            try:
+                process.stdin.write(payload)
+                process.stdin.close()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
 
+        def bounded_read() -> None:
+            try:
+                chunk = process.stdout.read(4097)
+                output.append(chunk)
+                if len(chunk) > 4096 and process.poll() is None:
+                    process.kill()
+            except (OSError, ValueError):
+                pass
+
+        writer = threading.Thread(target=bounded_write, name="selfconnect-processor-input", daemon=True)
         reader = threading.Thread(target=bounded_read, name="selfconnect-processor-output", daemon=True)
+        writer.start()
         reader.start()
         try:
-            returncode = process.wait(timeout=remaining)
+            returncode = process.wait(timeout=max(0.001, deadline - time.monotonic()))
         except subprocess.TimeoutExpired as exc:
             process.kill()
-            process.wait(timeout=5)
+            threading.Thread(target=process.wait, name="selfconnect-processor-reaper", daemon=True).start()
             raise TimeoutError("governed processor direct child was killed at its deadline") from exc
-        finally:
-            reader.join(timeout=5)
+        remaining = max(0.0, deadline - time.monotonic())
+        writer.join(timeout=remaining)
+        remaining = max(0.0, deadline - time.monotonic())
+        reader.join(timeout=remaining)
         stdout = output[0] if output else b""
-        if returncode != 0 or len(stdout) > 4096 or reader.is_alive():
+        if time.monotonic() >= deadline:
+            raise TimeoutError("governed processor I/O exceeded deadline")
+        if returncode != 0 or len(stdout) > 4096 or writer.is_alive() or reader.is_alive():
             raise AckVerificationError("governed processor failed")
         try:
             result = json.loads(stdout)
@@ -709,6 +811,26 @@ LEGACY_RECEIVER_COLUMNS = (
     ("decision", "TEXT", 0, 0), ("processed_input_sha256", "TEXT", 0, 0),
     ("response", "BLOB", 0, 0), ("created_at", "REAL", 1, 0), ("completed_at", "REAL", 0, 0),
 )
+LEGACY_RECEIVER_CREATE_SQL = """
+CREATE TABLE receiver_admission (
+    sender TEXT NOT NULL, key_id TEXT NOT NULL, message_id TEXT NOT NULL,
+    challenge TEXT NOT NULL, request_sha256 TEXT NOT NULL, request_body BLOB NOT NULL,
+    admission_id TEXT NOT NULL UNIQUE,
+    state TEXT NOT NULL CHECK (state IN ('admitted', 'processing', 'completed')),
+    lease_owner TEXT, lease_boot_id INTEGER, lease_expires_tick REAL,
+    decision TEXT, processed_input_sha256 TEXT, response BLOB,
+    created_at REAL NOT NULL, completed_at REAL,
+    PRIMARY KEY (sender, key_id, message_id, challenge)
+)
+"""
+
+
+def _receiver_create_statement(table: str) -> str:
+    prefix = f"create table {table} "
+    for statement in RECEIVER_CREATE_SQL.split(";"):
+        if statement.strip().lower().startswith(prefix):
+            return statement.strip()
+    raise AssertionError(f"missing receiver schema statement for {table}")
 
 
 class DurableReceiverAdmissionStore:
@@ -739,7 +861,7 @@ class DurableReceiverAdmissionStore:
                 _attest_table(
                     connection, "receiver_admission", LEGACY_RECEIVER_COLUMNS,
                     {("sender", "key_id", "message_id", "challenge"), ("admission_id",)},
-                    ("check (state in ('admitted', 'processing', 'completed'))",),
+                    LEGACY_RECEIVER_CREATE_SQL,
                 )
                 if connection.execute("SELECT 1 FROM receiver_admission LIMIT 1").fetchone():
                     raise AckReplayError("legacy receiver state requires governed offline migration")
@@ -758,9 +880,12 @@ class DurableReceiverAdmissionStore:
         _attest_table(
             connection, "receiver_admission", RECEIVER_COLUMNS,
             {("sender", "message_id", "challenge"), ("admission_id",)},
-            ("check (state in ('admitted','processing','completed'))", "check (decision is null or decision in ('accepted','rejected'))"),
+            _receiver_create_statement("receiver_admission"),
         )
-        _attest_table(connection, "receiver_attempt", ATTEMPT_COLUMNS, {("attempt_nonce",), ("request_sha256",)}, ())
+        _attest_table(
+            connection, "receiver_attempt", ATTEMPT_COLUMNS,
+            {("attempt_nonce",), ("request_sha256",)}, _receiver_create_statement("receiver_attempt"),
+        )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5.0, isolation_level=None)
@@ -915,18 +1040,31 @@ def _validate_input(text: str) -> bytes:
 @dataclass(frozen=True)
 class _Authorities:
     snapshot: Callable[[int], tuple[Any | None, TargetIdentity | None]]
-    send_body: Callable[[Any, str, str], dict[str, Any]]
-    focus: Callable[[int], dict[str, Any]]
-    enter: Callable[[TargetIdentity], dict[str, Any]]
+    send_body: Callable[[Any, str, str, float], dict[str, Any]]
+    focus: Callable[[int, float], dict[str, Any]]
+    enter: Callable[[TargetIdentity, float], dict[str, Any]]
     receive_ack: Callable[[PeerAckRequest, float], bytes]
     finalize_ack: Callable[[PeerAck, bytes, Callable[[dict[str, Any]], None], dict[str, Any]], None]
     audit_append: Callable[..., dict[str, Any]]
     token_hex: Callable[[int], str]
 
+    def __post_init__(self) -> None:
+        for name in ("send_body", "focus", "enter"):
+            if getattr(getattr(self, name), "_sc_deadline_bounded", False) is not True:
+                raise ValueError(f"{name} authority must implement the bounded deadline contract")
 
-def _production_send_body(window: Any, text: str, transport: str) -> dict[str, Any]:
+
+def _deadline_bounded(callback: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    setattr(callback, "_sc_deadline_bounded", True)
+    return callback
+
+
+@_deadline_bounded
+def _production_send_body(window: Any, text: str, transport: str, deadline: float) -> dict[str, Any]:
     import self_connect as sc
 
+    if time.monotonic() >= deadline:
+        raise TimeoutError("body deadline expired before native transport")
     if window.class_name == sc.CONSOLE_HOST_CLASS:
         mode = "console"
     elif window.class_name == sc.WT_HOST_CLASS:
@@ -935,18 +1073,45 @@ def _production_send_body(window: Any, text: str, transport: str) -> dict[str, A
         return {"ok": False, "error": "guarded_body_transport_class_denied"}
     if transport not in {"auto", mode}:
         return {"ok": False, "error": "guarded_body_transport_override_denied"}
-    return sc.send_string(window, text, mode=mode)
+    if mode == "console":
+        return sc.send_string(window, text, mode=mode)
+    input_site = sc.find_child_by_class(window.hwnd, sc.WT_INPUT_CLASS)
+    delivery_hwnd = input_site if input_site else window.hwnd
+    accepted = 0
+    for character in text:
+        if time.monotonic() >= deadline:
+            return {
+                "ok": False, "transport": "postmessage_wm_char", "chars_requested": len(text),
+                "chars_accepted": accepted, "delivery_verified": False, "error": "body_deadline_expired",
+            }
+        if not sc._send_char_postmessage(delivery_hwnd, character):
+            return {
+                "ok": False, "transport": "postmessage_wm_char", "chars_requested": len(text),
+                "chars_accepted": accepted, "delivery_verified": False, "error": "postmessage_queue_rejected",
+            }
+        accepted += 1
+    return {
+        "ok": True, "transport": "postmessage_wm_char", "chars_requested": len(text),
+        "chars_accepted": accepted, "delivery_verified": False, "delivery_hwnd": int(delivery_hwnd),
+    }
 
 
-def _production_focus(hwnd: int) -> dict[str, Any]:
+@_deadline_bounded
+def _production_focus(hwnd: int, deadline: float) -> dict[str, Any]:
     import self_connect as sc
 
-    return sc.focus_window_checked(hwnd)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("focus deadline expired before native focus")
+    return sc.focus_window_checked(hwnd, settle_seconds=min(0.2, remaining))
 
 
-def _production_enter(target: TargetIdentity) -> dict[str, Any]:
+@_deadline_bounded
+def _production_enter(target: TargetIdentity, deadline: float) -> dict[str, Any]:
     import self_connect as sc
 
+    if time.monotonic() >= deadline:
+        raise TimeoutError("Enter deadline expired before native SendInput")
     return sc.hardware_enter_checked(target.hwnd, expected_identity=asdict(target))
 
 
@@ -1448,7 +1613,7 @@ def _guarded_submit_impl(
     if deadline_result := expired("before_body"):
         return deadline_result
     try:
-        body = authorities.send_body(first_window, text, transport)
+        body = authorities.send_body(first_window, text, transport, operation_deadline)
     except Exception as exc:
         body_evidence.update({"chars_requested": len(text), "chars_accepted": "unknown"})
         return audit_failure("ambiguous", f"body_staged_exception:{type(exc).__name__}", chars_accepted="unknown")
@@ -1478,7 +1643,7 @@ def _guarded_submit_impl(
     if deadline_result := expired("before_focus", ambiguous=True):
         return deadline_result
     try:
-        focus_result = authorities.focus(target.hwnd)
+        focus_result = authorities.focus(target.hwnd, operation_deadline)
     except Exception as exc:
         return audit_failure("ambiguous", f"body_staged_focus_exception:{type(exc).__name__}", body=body)
     if not isinstance(focus_result, dict) or focus_result.get("ok") is not True:
@@ -1494,7 +1659,7 @@ def _guarded_submit_impl(
     if deadline_result := expired("before_enter", ambiguous=True):
         return deadline_result
     try:
-        enter_result = authorities.enter(target)
+        enter_result = authorities.enter(target, operation_deadline)
     except Exception as exc:
         return audit_failure("ambiguous", f"hardware_enter_exception:{type(exc).__name__}", body=body)
     if deadline_result := expired("after_enter", ambiguous=True, enter=enter_result):

@@ -177,9 +177,11 @@ except Exception:
                     "client_token_logon_sid_checked": True,
                     "overlapped_total_deadline": True,
                     "overlapped_buffers_retained_until_kernel_completion": True,
+                    "bounded_native_authority_contract": True,
                 },
                 "processor": {
                     "direct_child_killed_on_deadline": True,
+                    "stdin_stdout_share_processor_deadline": True,
                     "descendants_prohibited_but_not_contained": True,
                     "digest_is_adapter_attestation": True,
                     "durable_admission_idempotency_required": True,
@@ -189,6 +191,7 @@ except Exception:
                     "production_readiness_claimed": False,
                     "windows_terminal_per_tab_claimed": False,
                     "logical_sender_is_process_identity_claim": False,
+                    "protected_parent_directory_is_deployer_precondition": True,
                 },
                 "secrets_or_raw_input_included": False,
             }

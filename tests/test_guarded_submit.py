@@ -67,6 +67,25 @@ def _ack(request: guarded.PeerAckRequest, *, decision="accepted", **overrides) -
     return guarded.sign_peer_ack(**values)
 
 
+def _ack_event(ack: guarded.PeerAck, raw: bytes, **extra_data):
+    ack_sha256 = hashlib.sha256(raw).hexdigest()
+    return {
+        "event_type": "guarded_submit_acknowledged", "status": "acknowledged",
+        "summary": "guarded submit acknowledged",
+        "data": {
+            "message_id": ack.message_id, "challenge": ack.challenge, "input_sha256": ack.input_sha256,
+            "sender": ack.receiver, "receiver": ack.sender, **extra_data,
+            "ack": {
+                "challenge": ack.challenge, "ack_nonce": ack.ack_nonce, "decision": ack.decision,
+                "key_id": ack.key_id, "ack_sha256": ack_sha256, "sender": ack.sender,
+                "receiver": ack.receiver, "attempt_nonce": ack.attempt_nonce,
+                "processed_input_sha256": ack.processed_input_sha256,
+            },
+        },
+        "strict_idempotency_key": f"guarded-ack:{ack_sha256}", "repo_snapshot": {},
+    }
+
+
 def _submit(tmp_path: Path, **overrides):
     snapshots = overrides.pop("snapshots", None)
     calls = 0
@@ -93,14 +112,21 @@ def _submit(tmp_path: Path, **overrides):
         assert len(value) == byte_count * 2
         return value
 
+    def bounded(callback):
+        @guarded._deadline_bounded
+        def invoke(*args):
+            return callback(*args[:-1])
+
+        return invoke
+
     authorities = guarded._Authorities(
         snapshot=overrides.pop("snapshot", snapshot),
-        send_body=overrides.pop("send_body", lambda _window, text, _transport: {
+        send_body=bounded(overrides.pop("send_body", lambda _window, text, _transport: {
             "ok": True, "chars_requested": len(text), "chars_accepted": len(text),
             "delivery_verified": False,
-        }),
-        focus=overrides.pop("focus", lambda hwnd: {"ok": True, "hwnd": hwnd}),
-        enter=overrides.pop("enter", lambda target: {"ok": True, "hwnd": target.hwnd, "events_inserted": 2}),
+        })),
+        focus=bounded(overrides.pop("focus", lambda hwnd: {"ok": True, "hwnd": hwnd})),
+        enter=bounded(overrides.pop("enter", lambda target: {"ok": True, "hwnd": target.hwnd, "events_inserted": 2})),
         receive_ack=overrides.pop("receive_ack", receive),
         finalize_ack=overrides.pop("finalize_ack", finalizer.finalize),
         audit_append=overrides.pop("audit_append", sc_mesh_registry.append_event),
@@ -243,7 +269,7 @@ def test_partial_body_is_ambiguous_before_focus(tmp_path):
 
 def test_direct_body_transport_denies_non_console_class():
     target = _window(replace(TARGET, class_name="OtherWindow"))
-    assert guarded._production_send_body(target, TEXT, "auto")["ok"] is False
+    assert guarded._production_send_body(target, TEXT, "auto", time.monotonic() + 1)["ok"] is False
 
 
 def test_keyring_requires_32_bytes_and_supports_rotation_overlap():
@@ -382,7 +408,13 @@ def test_bool_or_nonfinite_ack_timestamp_rejected(timestamp):
         "processed_input_sha256": hashlib.sha256(TEXT.encode()).hexdigest(),
         "sender": RECEIVER, "receiver": SENDER, "decision": "accepted", "issued_at": timestamp,
     }
-    raw = guarded._wire_encode(body, key_id=KEY_ID, key=KEY)
+    if isinstance(timestamp, float) and not math.isfinite(timestamp):
+        raw_body = json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=True).encode()
+        signature = hmac.new(KEY, raw_body, hashlib.sha256).hexdigest().encode()
+        payload = b"SCACK1 " + KEY_ID.encode() + b" " + str(len(raw_body)).encode() + b" " + signature + b"\n" + raw_body
+        raw = struct.pack("<I", len(payload)) + payload
+    else:
+        raw = guarded._wire_encode(body, key_id=KEY_ID, key=KEY)
     with pytest.raises(guarded.AckVerificationError, match="finite"):
         guarded.verify_peer_ack(
             raw, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID,
@@ -420,10 +452,7 @@ def test_pending_ack_can_reconcile_once_then_replay_is_rejected(tmp_path):
         challenge=CHALLENGE, attempt_nonce=ATTEMPT_NONCE, input_sha256=request.input_sha256,
         sender=RECEIVER, receiver=SENDER, now=1.0,
     )
-    event = {
-        "event_type": "guarded_submit_acknowledged", "status": "accepted", "data": {"digest": "a"},
-        "repo_snapshot": {}, "strict_idempotency_key": "guarded-submit:test",
-    }
+    event = _ack_event(ack, raw, digest="a")
     with pytest.raises(OSError):
         store.finalize(ack, raw, lambda _event: (_ for _ in ()).throw(OSError("audit down")), event)
     calls = []
@@ -431,6 +460,25 @@ def test_pending_ack_can_reconcile_once_then_replay_is_rejected(tmp_path):
     assert len(calls) == 1
     with pytest.raises(guarded.AckReplayError):
         store.finalize(ack, raw, lambda _event: None, event)
+
+
+def test_pending_retry_cannot_replace_persisted_audit_envelope(tmp_path):
+    store = guarded.DurableAckFinalizer(tmp_path / "finalize.sqlite3")
+    request, _ = _request_wire(issued_at=1.0)
+    raw = _ack(request, issued_at=1.0)
+    ack = guarded.verify_peer_ack(
+        raw, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID, challenge=CHALLENGE,
+        attempt_nonce=ATTEMPT_NONCE, input_sha256=request.input_sha256,
+        sender=RECEIVER, receiver=SENDER, now=1.0,
+    )
+    good = _ack_event(ack, raw, authority="persisted-good")
+    with pytest.raises(OSError):
+        store.finalize(ack, raw, lambda _event: (_ for _ in ()).throw(OSError("audit unavailable")), good)
+    evil = {"event_type": "evil", "data": {"authority": "replacement"}, "strict_idempotency_key": "evil"}
+    audited = []
+    store.finalize(ack, raw, audited.append, evil)
+    assert audited == [good]
+    assert guarded.list_pending_acks(store.path) == []
 
 
 def test_strict_idempotent_audit_append_does_not_duplicate(tmp_path):
@@ -547,7 +595,7 @@ def test_finalizer_rejects_unattested_legacy_schema_without_mutation(tmp_path):
         )
         connection.commit()
     before = path.read_bytes()
-    with pytest.raises(guarded.AckReplayError, match="constraints are not authoritative"):
+    with pytest.raises(guarded.AckReplayError, match="attestation failed"):
         guarded.DurableAckFinalizer(path)
     assert path.read_bytes() == before
 
@@ -562,6 +610,21 @@ def test_finalizer_schema_version_and_constraints_are_attested(tmp_path):
     replacement = tmp_path / "replacement.sqlite3"
     os.replace(path, replacement)
     assert replacement.exists()
+
+
+@pytest.mark.parametrize(
+    ("version", "schema"),
+    [(0, guarded.LEGACY_FINALIZER_V1_SQL), (2, guarded.LEGACY_FINALIZER_V2_SQL)],
+)
+def test_exact_empty_legacy_finalizer_catalog_migrates(tmp_path, version, schema):
+    path = tmp_path / f"finalizer-v{version}.sqlite3"
+    with contextlib.closing(sqlite3.connect(path)) as connection:
+        connection.execute(schema)
+        connection.execute(f"PRAGMA user_version={version}")
+        connection.commit()
+    guarded.DurableAckFinalizer(path)
+    with contextlib.closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == guarded.FINALIZER_SCHEMA_VERSION
 
 
 @pytest.mark.parametrize(
@@ -593,6 +656,41 @@ def test_current_finalizer_catalog_missing_global_nonce_constraint_is_rejected(t
         connection.commit()
     with pytest.raises(guarded.AckReplayError, match="UNIQUE attestation"):
         guarded.DurableAckFinalizer(path)
+
+
+def test_catalog_attestation_rejects_check_comment_spoof_and_trigger(tmp_path):
+    finalizer_path = tmp_path / "comment-finalizer.sqlite3"
+    check = "CHECK (decision IN ('accepted','rejected'))"
+    spoofed = guarded.FINALIZER_CREATE_SQL.replace(check, f"CHECK (1) /* {check} */")
+    with contextlib.closing(sqlite3.connect(finalizer_path)) as connection:
+        connection.execute(spoofed)
+        connection.execute(f"PRAGMA user_version={guarded.FINALIZER_SCHEMA_VERSION}")
+        connection.commit()
+    with pytest.raises(guarded.AckReplayError, match="canonical catalog"):
+        guarded.DurableAckFinalizer(finalizer_path)
+
+    receiver_path = tmp_path / "comment-receiver.sqlite3"
+    receiver_check = "CHECK (state IN ('admitted','processing','completed'))"
+    spoofed_receiver = guarded.RECEIVER_CREATE_SQL.replace(receiver_check, f"CHECK (1) /* {receiver_check} */")
+    with contextlib.closing(sqlite3.connect(receiver_path)) as connection:
+        for statement in spoofed_receiver.split(";"):
+            if statement.strip():
+                connection.execute(statement)
+        connection.execute(f"PRAGMA user_version={guarded.RECEIVER_SCHEMA_VERSION}")
+        connection.commit()
+    with pytest.raises(guarded.AckReplayError, match="canonical catalog"):
+        guarded.DurableReceiverAdmissionStore(receiver_path)
+
+    trigger_path = tmp_path / "trigger-finalizer.sqlite3"
+    guarded.DurableAckFinalizer(trigger_path)
+    with contextlib.closing(sqlite3.connect(trigger_path)) as connection:
+        connection.execute(
+            "CREATE TRIGGER rewrite_audit AFTER INSERT ON peer_ack_finalization "
+            "BEGIN UPDATE peer_ack_finalization SET audit_event_json='{}' WHERE rowid=NEW.rowid; END"
+        )
+        connection.commit()
+    with pytest.raises(guarded.AckReplayError, match="unexpected catalog object"):
+        guarded.DurableAckFinalizer(trigger_path)
 
 
 def test_current_receiver_catalog_missing_attempt_uniqueness_is_rejected(tmp_path):
@@ -648,7 +746,7 @@ def test_finalizer_ack_nonce_is_globally_single_use(tmp_path):
         challenge=request1.challenge, attempt_nonce=request1.attempt_nonce,
         input_sha256=request1.input_sha256, sender=RECEIVER, receiver=SENDER, now=1.0,
     )
-    event1 = {"event_type": "ack", "data": {"operation": 1}, "repo_snapshot": {}}
+    event1 = _ack_event(ack1, raw1, operation=1)
     store.finalize(ack1, raw1, lambda _event: None, event1)
 
     request2 = replace(
@@ -661,7 +759,7 @@ def test_finalizer_ack_nonce_is_globally_single_use(tmp_path):
         input_sha256=request2.input_sha256, sender=RECEIVER, receiver=SENDER, now=1.0,
     )
     with pytest.raises(guarded.AckReplayError, match="nonce replay"):
-        store.finalize(ack2, raw2, lambda _event: None, {"event_type": "ack", "data": {"operation": 2}})
+        store.finalize(ack2, raw2, lambda _event: None, _ack_event(ack2, raw2, operation=2))
 
 
 def test_audit_append_then_failure_recovers_exact_persisted_event(tmp_path):
@@ -673,11 +771,7 @@ def test_audit_append_then_failure_recovers_exact_persisted_event(tmp_path):
         challenge=CHALLENGE, attempt_nonce=ATTEMPT_NONCE, input_sha256=request.input_sha256,
         sender=RECEIVER, receiver=SENDER, now=1.0,
     )
-    event = {
-        "event_type": "guarded_submit_acknowledged", "status": "acknowledged",
-        "summary": "guarded submit acknowledged", "data": {"decision": "accepted", "nonce": ACK_NONCE},
-        "strict_idempotency_key": "guarded-ack:exact-recovery", "repo_snapshot": {},
-    }
+    event = _ack_event(ack, raw, recovery_case="append_then_fail")
     event_path = tmp_path / "events.jsonl"
 
     def append_then_fail(value):
@@ -705,11 +799,7 @@ def test_public_pending_reconciliation_is_audit_only_and_idempotent(tmp_path):
         attempt_nonce=ATTEMPT_NONCE, input_sha256=request.input_sha256,
         sender=RECEIVER, receiver=SENDER, now=1.0,
     )
-    event = {
-        "event_type": "guarded_submit_acknowledged", "status": "accepted",
-        "data": {"recovery": "audit_only_no_physical_submit"}, "repo_snapshot": {},
-        "strict_idempotency_key": "guarded-submit:pending",
-    }
+    event = _ack_event(ack, raw, recovery="audit_only_no_physical_submit")
     with pytest.raises(OSError):
         store.finalize(ack, raw, lambda _event: (_ for _ in ()).throw(OSError("audit unavailable")), event)
     assert len(guarded.list_pending_acks(tmp_path / "finalize.sqlite3")) == 1
@@ -812,6 +902,23 @@ def test_submit_uses_one_total_deadline_across_all_physical_stages(tmp_path, sta
         assert calls == ["body", "focus", "enter"]
 
 
+def test_unbounded_physical_authority_is_refused_without_invocation():
+    invoked = threading.Event()
+
+    def hung_body(*_args):
+        invoked.set()
+        threading.Event().wait()
+
+    with pytest.raises(ValueError, match="bounded deadline contract"):
+        guarded._Authorities(
+            snapshot=lambda _hwnd: (None, None), send_body=hung_body,
+            focus=guarded._production_focus, enter=guarded._production_enter,
+            receive_ack=lambda *_args: b"", finalize_ack=lambda *_args: None,
+            audit_append=lambda *_args, **_kwargs: {}, token_hex=lambda count: "00" * count,
+        )
+    assert invoked.is_set() is False
+
+
 def test_signed_rejection_binds_adapter_attested_digest_separately():
     requested = hashlib.sha256(TEXT.encode()).hexdigest()
     processed = "44" * 32
@@ -837,6 +944,18 @@ def test_governed_subprocess_is_killed_at_total_deadline(tmp_path):
     with pytest.raises(TimeoutError, match="killed"):
         processor.process(request, "aa" * 32, time.monotonic() + 0.1)
     assert time.monotonic() - started < 1
+
+
+def test_governed_subprocess_stdin_write_cannot_bypass_deadline(tmp_path):
+    adapter = tmp_path / "no-read.py"
+    adapter.write_text("import time\ntime.sleep(60)\n", encoding="ascii")
+    processor = guarded.SubprocessAckProcessor([sys.executable, str(adapter)])
+    request, _ = _request_wire(issued_at=time.time())
+    request = replace(request, sender="s" * 12_000)
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="killed"):
+        processor.process(request, "aa" * 32, time.monotonic() + 0.1)
+    assert time.monotonic() - started < 0.75
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real private named pipe requires Windows")
