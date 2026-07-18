@@ -1,6 +1,7 @@
 {
   "claim_boundaries": {
     "authority_scope": "exported guarded_submit under a trusted non-monkeypatched interpreter; private helpers and module mutation excluded",
+    "authority_storage_scope": "receiver authority rows must remain in trusted, untampered storage; direct same-account database mutation is outside this candidate claim",
     "issue_22_open": true,
     "logical_sender_is_process_identity_claim": false,
     "production_readiness_claimed": false,
@@ -17,8 +18,9 @@
   "implementation_evidence": {
     "commit_scope": "implementation prior-head captured before committing this refreshed artifact",
     "git_head": "4355898d4f11f91a73e926b3cbdaf83ed7bf47ea",
-    "sc_guarded_submit_sha256": "2fb046a12d19cc89be5c2807c119bb8513caaa3752fffd0a21401bd599bae9b5",
-    "self_connect_sha256": "28b1276de260e609be498536a9bcc8b3e1de3b6109d789943a18bdb38dbbba85"
+    "hash_canonicalization": "UTF-8 source bytes with CRLF and CR normalized to LF before SHA-256",
+    "sc_guarded_submit_canonical_lf_sha256": "2fb046a12d19cc89be5c2807c119bb8513caaa3752fffd0a21401bd599bae9b5",
+    "self_connect_canonical_lf_sha256": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
   },
   "input": {
     "contains_bmp_unicode": true,

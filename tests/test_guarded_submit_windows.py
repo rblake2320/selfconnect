@@ -192,6 +192,7 @@ except Exception:
                 "claim_boundaries": {
                     "issue_22_open": True,
                     "authority_scope": "exported guarded_submit under a trusted non-monkeypatched interpreter; private helpers and module mutation excluded",
+                    "authority_storage_scope": "receiver authority rows must remain in trusted, untampered storage; direct same-account database mutation is outside this candidate claim",
                     "production_readiness_claimed": False,
                     "windows_terminal_per_tab_claimed": False,
                     "logical_sender_is_process_identity_claim": False,
@@ -202,11 +203,12 @@ except Exception:
                     "git_head": subprocess.check_output(
                         ["git", "rev-parse", "HEAD"], cwd=repo_root, text=True,
                     ).strip(),
-                    "sc_guarded_submit_sha256": hashlib.sha256(
-                        (repo_root / "sc_guarded_submit.py").read_bytes(),
+                    "hash_canonicalization": "UTF-8 source bytes with CRLF and CR normalized to LF before SHA-256",
+                    "sc_guarded_submit_canonical_lf_sha256": hashlib.sha256(
+                        (repo_root / "sc_guarded_submit.py").read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n").encode("utf-8"),
                     ).hexdigest(),
-                    "self_connect_sha256": hashlib.sha256(
-                        (repo_root / "self_connect.py").read_bytes(),
+                    "self_connect_canonical_lf_sha256": hashlib.sha256(
+                        (repo_root / "self_connect.py").read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n").encode("utf-8"),
                     ).hexdigest(),
                 },
                 "secrets_or_raw_input_included": False,
