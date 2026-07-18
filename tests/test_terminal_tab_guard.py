@@ -11,6 +11,7 @@ import pytest
 import sc_guarded_submit as guarded
 import sc_mesh_registry
 import sc_terminal_tab as tabguard
+import self_connect
 
 
 class _Array:
@@ -312,6 +313,7 @@ def _submit_with_tab(
     malformed_result=False,
     zero_accepted=False,
     zero_mutation=None,
+    returned_result_factory=None,
 ):
     target = _target()
     identity = tabguard.TerminalTabIdentity(
@@ -329,6 +331,8 @@ def _submit_with_tab(
 
     def send_body(_window, text, _transport, _deadline):
         sent.append(text)
+        if returned_result_factory is not None:
+            return returned_result_factory()
         if raise_after_side_effect:
             raise OSError("transport outcome unknown after native call")
         if malformed_result:
@@ -477,6 +481,31 @@ def test_malformed_or_inconsistent_zero_result_is_ambiguous(tmp_path, mutation):
     )
     assert result["state"] == "ambiguous"
     assert result["error"] == "body_staged_partial_or_unknown"
+    assert sent == ["a"]
+
+
+def test_real_production_postmessage_zero_rejection_is_refused(
+    tmp_path,
+    monkeypatch,
+):
+    target = _target()
+    window = SimpleNamespace(**asdict(target))
+    monkeypatch.setattr(self_connect, "find_child_by_class", lambda *_args: target.hwnd + 1)
+    monkeypatch.setattr(self_connect, "_send_char_postmessage", lambda *_args: False)
+    production_result = guarded._production_send_body(
+        window,
+        "a",
+        "postmessage",
+        time.monotonic() + 1,
+    )
+    assert guarded._is_explicit_zero_postmessage_rejection(production_result, window)
+
+    result, _tab, sent = _submit_with_tab(
+        tmp_path,
+        returned_result_factory=lambda: dict(production_result),
+    )
+    assert result["state"] == "refused"
+    assert result["error"] == "body_transport_zero_accepted"
     assert sent == ["a"]
 
 

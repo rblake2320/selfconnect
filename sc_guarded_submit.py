@@ -1260,39 +1260,79 @@ class _InjectedTestAuthorities:
 def _production_send_body(window: Any, text: str, transport: str, deadline: float) -> dict[str, Any]:
     import self_connect as sc
 
-    if time.monotonic() >= deadline:
-        raise TimeoutError("body deadline expired before native transport")
     if window.class_name == sc.CONSOLE_HOST_CLASS:
         mode = "console"
     elif window.class_name == sc.WT_HOST_CLASS:
         mode = "postmessage"
     else:
-        return {"ok": False, "error": "guarded_body_transport_class_denied"}
+        return sc._input_delivery_result(
+            ok=False,
+            target=window,
+            transport="none",
+            chars_requested=len(text),
+            chars_accepted=0,
+            delivery_evidence="none",
+            error="guarded_body_transport_class_denied",
+        )
     if transport not in {"auto", mode}:
-        return {"ok": False, "error": "guarded_body_transport_override_denied"}
+        return sc._input_delivery_result(
+            ok=False,
+            target=window,
+            transport="none",
+            chars_requested=len(text),
+            chars_accepted=0,
+            delivery_evidence="none",
+            error="guarded_body_transport_override_denied",
+        )
+    if time.monotonic() >= deadline:
+        return sc._input_delivery_result(
+            ok=False,
+            target=window,
+            transport="win32_console_input" if mode == "console" else "postmessage_wm_char",
+            chars_requested=len(text),
+            chars_accepted=0,
+            delivery_evidence="none",
+            error="body_deadline_expired_before_native_transport",
+        )
     if mode == "console":
-        if time.monotonic() >= deadline:
-            raise TimeoutError("body deadline expired before console input")
         return sc.send_string(window, text, mode=mode, deadline=deadline)
     input_site = sc.find_child_by_class(window.hwnd, sc.WT_INPUT_CLASS)
     delivery_hwnd = input_site if input_site else window.hwnd
     accepted = 0
     for character in text:
         if time.monotonic() >= deadline:
-            return {
-                "ok": False, "transport": "postmessage_wm_char", "chars_requested": len(text),
-                "chars_accepted": accepted, "delivery_verified": False, "error": "body_deadline_expired",
-            }
+            return sc._input_delivery_result(
+                ok=False,
+                target=window,
+                transport="postmessage_wm_char",
+                chars_requested=len(text),
+                chars_accepted=accepted,
+                delivery_evidence="message_queue_acceptance_only",
+                error="body_deadline_expired",
+                delivery_hwnd=int(delivery_hwnd),
+            )
         if not sc._send_char_postmessage(delivery_hwnd, character):
-            return {
-                "ok": False, "transport": "postmessage_wm_char", "chars_requested": len(text),
-                "chars_accepted": accepted, "delivery_verified": False, "error": "postmessage_queue_rejected",
-            }
+            return sc._input_delivery_result(
+                ok=False,
+                target=window,
+                transport="postmessage_wm_char",
+                chars_requested=len(text),
+                chars_accepted=accepted,
+                delivery_evidence="message_queue_acceptance_only",
+                error="postmessage_queue_rejected",
+                winerror=int(sc.kernel32.GetLastError()),
+                delivery_hwnd=int(delivery_hwnd),
+            )
         accepted += 1
-    return {
-        "ok": True, "transport": "postmessage_wm_char", "chars_requested": len(text),
-        "chars_accepted": accepted, "delivery_verified": False, "delivery_hwnd": int(delivery_hwnd),
-    }
+    return sc._input_delivery_result(
+        ok=True,
+        target=window,
+        transport="postmessage_wm_char",
+        chars_requested=len(text),
+        chars_accepted=accepted,
+        delivery_evidence="message_queue_acceptance_only",
+        delivery_hwnd=int(delivery_hwnd),
+    )
 
 
 def _production_focus(hwnd: int, deadline: float) -> dict[str, Any]:
