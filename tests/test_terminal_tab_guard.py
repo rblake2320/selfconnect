@@ -311,6 +311,7 @@ def _submit_with_tab(
     raise_after_side_effect=False,
     malformed_result=False,
     zero_accepted=False,
+    zero_mutation=None,
 ):
     target = _target()
     identity = tabguard.TerminalTabIdentity(
@@ -333,13 +334,22 @@ def _submit_with_tab(
         if malformed_result:
             return None
         if zero_accepted:
-            return {
+            result = {
                 "ok": False,
                 "transport": "postmessage_wm_char",
+                "target_hwnd": target.hwnd,
+                "target_pid": target.pid,
                 "chars_requested": 1,
                 "chars_accepted": 0,
+                "delivery_evidence": "message_queue_acceptance_only",
                 "delivery_verified": False,
+                "error": "postmessage_queue_rejected",
+                "winerror": 5,
+                "delivery_hwnd": target.hwnd + 1,
             }
+            if zero_mutation is not None:
+                zero_mutation(result)
+            return result
         return {
             "ok": True,
             "transport": "postmessage_wm_char",
@@ -444,6 +454,29 @@ def test_batch_zero_explicit_zero_acceptance_is_refused(tmp_path):
     result, _tab, sent = _submit_with_tab(tmp_path, zero_accepted=True)
     assert result["state"] == "refused"
     assert result["error"] == "body_transport_zero_accepted"
+    assert sent == ["a"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda result: result.__setitem__("ok", True),
+        lambda result: result.__setitem__("chars_requested", 2),
+        lambda result: result.update({"ok": True, "chars_requested": 2}),
+        lambda result: result.__setitem__("chars_accepted", False),
+        lambda result: result.__setitem__("target_hwnd", 9999),
+        lambda result: result.__setitem__("extra", "unmodeled"),
+        lambda result: result.pop("error"),
+    ],
+)
+def test_malformed_or_inconsistent_zero_result_is_ambiguous(tmp_path, mutation):
+    result, _tab, sent = _submit_with_tab(
+        tmp_path,
+        zero_accepted=True,
+        zero_mutation=mutation,
+    )
+    assert result["state"] == "ambiguous"
+    assert result["error"] == "body_staged_partial_or_unknown"
     assert sent == ["a"]
 
 

@@ -532,6 +532,45 @@ _ACK_EVENT_FIELDS = frozenset({
 })
 _TARGET_IDENTITY_FIELDS = frozenset(TargetIdentity.__dataclass_fields__)
 _TERMINAL_TAB_IDENTITY_FIELDS = frozenset(TerminalTabIdentity.__dataclass_fields__)
+_POSTMESSAGE_RESULT_FIELDS = frozenset({
+    "ok", "transport", "target_hwnd", "target_pid", "chars_requested",
+    "chars_accepted", "delivery_evidence", "delivery_verified", "error", "winerror",
+})
+
+
+def _is_explicit_zero_postmessage_rejection(batch: Any, window: Any) -> bool:
+    """Return true only for the exact CASCADIA zero-acceptance result schema."""
+
+    if type(batch) is not dict:
+        return False
+    fields = set(batch)
+    if fields not in {_POSTMESSAGE_RESULT_FIELDS, _POSTMESSAGE_RESULT_FIELDS | {"delivery_hwnd"}}:
+        return False
+    if (
+        batch["ok"] is not False
+        or batch["transport"] != "postmessage_wm_char"
+        or type(batch["target_hwnd"]) is not int
+        or batch["target_hwnd"] != int(window.hwnd)
+        or type(batch["target_pid"]) is not int
+        or batch["target_pid"] != int(window.pid)
+        or type(batch["chars_requested"]) is not int
+        or batch["chars_requested"] != 1
+        or type(batch["chars_accepted"]) is not int
+        or batch["chars_accepted"] != 0
+        or type(batch["delivery_evidence"]) is not str
+        or not batch["delivery_evidence"]
+        or batch["delivery_verified"] is not False
+        or type(batch["error"]) is not str
+        or not batch["error"]
+        or type(batch["winerror"]) is not int
+        or batch["winerror"] < 0
+    ):
+        return False
+    if "delivery_hwnd" in batch and (
+        type(batch["delivery_hwnd"]) is not int or batch["delivery_hwnd"] <= 0
+    ):
+        return False
+    return True
 
 
 def _operation_snapshot_bytes(operation: dict[str, Any]) -> bytes:
@@ -1812,6 +1851,7 @@ def _guarded_submit_impl(
         else:
             accepted_count = 0
             native_batch_started = False
+            explicit_zero_rejection = False
             batch_transport = None
             last_checkpoint = initial_tab_guard
             for index, character in enumerate(text):
@@ -1823,7 +1863,10 @@ def _guarded_submit_impl(
                     raise TerminalTabGuardError("body transport batch result is malformed")
                 batch_accepted = int(batch.get("chars_accepted", -1))
                 if batch.get("ok") is not True or int(batch.get("chars_requested", -1)) != 1 or batch_accepted != 1:
-                    if batch_accepted == 0:
+                    explicit_zero_rejection = _is_explicit_zero_postmessage_rejection(
+                        batch, first_window
+                    )
+                    if explicit_zero_rejection:
                         native_batch_started = False
                     body = {
                         **batch,
@@ -1881,7 +1924,11 @@ def _guarded_submit_impl(
     )
     if not accepted:
         accepted_count = body.get("chars_accepted") if isinstance(body, dict) else None
-        state = "refused" if accepted_count == 0 else "ambiguous"
+        state = (
+            "refused"
+            if accepted_count == 0 and locals().get("explicit_zero_rejection", False)
+            else "ambiguous"
+        )
         error = "body_transport_zero_accepted" if state == "refused" else "body_staged_partial_or_unknown"
         return audit_failure(state, error, body=body, chars_accepted=accepted_count)
     try:

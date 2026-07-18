@@ -12,16 +12,16 @@
     "wrong_active_tab_denied": true
   },
   "identity": {
-    "peer_birth_id_sha256": "b940cdd303cf0b89a31e8ff6b600280a26fb15a21cf2b243b8fa90cea7a7fa4a",
+    "peer_birth_id_sha256": "4eaa517a10d1cd5298d81bfdd62320048141ec504f68c10f6b961d7e4a614535",
     "runtime_id_scope": "desktop-session-opaque-reusable",
     "tab_runtime_id_length": 4,
     "term_control_runtime_id_length": 4,
     "title_or_index_used_as_identity": false
   },
   "implementation": {
-    "sc_guarded_submit_canonical_lf_sha256": "816d61c7fdb90f7d9be285a8d259cbb27f00c6fe8dab74b52c1e92287c2025b0",
+    "sc_guarded_submit_canonical_lf_sha256": "64dab5fba908459333bb28892e01eeeb3667dc29ed54af1f10a032ea45ba7edd",
     "sc_terminal_tab_canonical_lf_sha256": "09832786ba85d7056512c2e1e825e4399d8e238c51d2714b9c60618a7f2fd737",
-    "working_tree_base": "81c221036bd5fe08579afc50eb0621e5ecc456e2"
+    "working_tree_base": "235d92487d3ea9db7039030526fe1c94159ed067"
   },
   "platform": "win32",
   "raw_terminal_text_included": false,
