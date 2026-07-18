@@ -1,10 +1,10 @@
 {
   "bundle_files": {
-    "manifest.json": "5621d997eb5b39715d3997147781d46ef7704cb9803ff1c0c86b965110cbffc1",
+    "manifest.json": "0504c7943c930f8df381561d94af162759a7d8bb66d008073896bfde1fa435cf",
     "rung-10.json": "d1f9192deb48429657b369634fedb65659ff9b6ee7691ca092666b95a15cc57d",
     "rung-15.json": "90190984bea50e769c348b986332c21961c13bb27e9b3cfa82698679dba05dfe",
     "rung-20.json": "a4ab16c887e94e767b897484e8569c3ed0633790a20cbfcb10c42ec0917df2c6"
   },
-  "generator_source_sha256": "b50f4f687711caf1565f1a4323eed741090de4347a9db7075910d5091bf1aa70",
+  "generator_source_sha256": "f1148133babe71ed40ec4d65441a617b3411a92e74c6847a8e0f1ee0bd42ffb0",
   "schema": "selfconnect.restricted_scale_contract_fixture.v1"
 }

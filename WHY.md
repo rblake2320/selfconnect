@@ -144,3 +144,28 @@ source from producing different identities on LF and CRLF checkouts.
 - The fixture proves deterministic contract compatibility only. Live readiness
   still requires a protected runner, provider credentials, GitHub attestation,
   successful 10/15/20 execution, and consumer acceptance.
+
+## 2026-07-18 - Publish Scale Evidence Only After Cleanup
+
+### Decision
+
+Do not make a portable rung visible as `PASS` until all captured process roots
+and still-live terminal launchers have completed bounded termination. Emit a
+strict cleanup receipt in a separately attested control archive and bind it to
+the exact portable rung digest.
+
+### Why
+
+Writing the rung inside the protected work block allowed a partial `PASS` file
+to exist before the `finally` cleanup ran. A later cleanup failure prevented the
+manifest, but the standalone rung still represented an ordering claim that had
+not yet become true. Adding cleanup fields to the rung would break the pinned
+consumer's exact schema, so operational cleanup controls remain separate.
+
+### Consequences
+
+- Cleanup failure suppresses the rung and bundle manifest.
+- Atomic writes prevent a torn rung or control receipt from being published.
+- The existing portable consumer bytes and exact-key schema do not change.
+- Cleanup controls establish process teardown for the producer-owned roots;
+  they do not attest runner ephemerality or complete a live scale run.

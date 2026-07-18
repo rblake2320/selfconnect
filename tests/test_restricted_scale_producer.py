@@ -408,6 +408,148 @@ def test_cleanup_reports_no_remaining_processes(monkeypatch: pytest.MonkeyPatch)
     assert receipt["remaining_count"] == 0
 
 
+def test_pass_rung_is_published_only_with_bound_cleanup_control(
+    tmp_path: producer.Path,
+) -> None:
+    output = tmp_path / "evidence" / "rung-10.json"
+    control_output = tmp_path / "control" / "cleanup-rung-10.json"
+    result = {
+        "schema": producer.RUNG_SCHEMA,
+        "run_id": "SC_SCALE_" + "a" * 32,
+        "agent_count": 10,
+        "verdict": "PASS",
+        "completed_at_utc": "2026-07-18T11:59:59Z",
+    }
+    cleanup = {
+        "requested": True,
+        "completed": True,
+        "target_count": 10,
+        "remaining_count": 0,
+        "identity_mismatch_count": 0,
+        "launcher_target_count": 0,
+        "completed_at_utc": "2026-07-18T12:00:00Z",
+    }
+
+    control = producer._publish_cleaned_rung(
+        output=output,
+        control_output=control_output,
+        result=result,
+        cleanup_receipt=cleanup,
+    )
+
+    assert producer.json.loads(output.read_text(encoding="utf-8")) == result
+    assert producer.json.loads(control_output.read_text(encoding="utf-8")) == control
+    assert control["schema"] == producer.CONTROL_SCHEMA
+    assert control["rung_sha256"] == producer.sha256_file(output)
+    assert control["cleanup"] == cleanup
+
+
+@pytest.mark.parametrize(
+    "cleanup",
+    [
+        {
+            "requested": True,
+            "completed": False,
+            "target_count": 10,
+            "remaining_count": 1,
+            "identity_mismatch_count": 0,
+            "launcher_target_count": 0,
+            "completed_at_utc": "2026-07-18T12:00:00Z",
+        },
+        {
+            "requested": True,
+            "completed": True,
+            "target_count": 10,
+            "remaining_count": 0,
+            "identity_mismatch_count": 0,
+            "launcher_target_count": 0,
+            "completed_at_utc": "2026-07-18T12:00:00Z",
+            "unexpected": "field",
+        },
+    ],
+)
+def test_invalid_cleanup_never_publishes_pass_artifact(
+    tmp_path: producer.Path, cleanup: dict[str, object]
+) -> None:
+    output = tmp_path / "evidence" / "rung-10.json"
+    control_output = tmp_path / "control" / "cleanup-rung-10.json"
+    with pytest.raises(producer.ProducerError, match="cleanup_receipt_invalid"):
+        producer._publish_cleaned_rung(
+            output=output,
+            control_output=control_output,
+            result={
+                "schema": producer.RUNG_SCHEMA,
+                "run_id": "SC_SCALE_" + "a" * 32,
+                "agent_count": 10,
+                "verdict": "PASS",
+                "completed_at_utc": "2026-07-18T11:59:59Z",
+            },
+            cleanup_receipt=cleanup,
+        )
+    assert not output.exists()
+    assert not control_output.exists()
+
+
+def test_rung_cleanup_waits_for_launcher_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[str] = []
+
+    class Launcher:
+        def poll(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            events.append("terminate")
+
+        def wait(self, timeout: float) -> int:
+            events.append(f"wait:{timeout}")
+            return 0
+
+        def kill(self) -> None:
+            events.append("kill")
+
+    monkeypatch.setattr(
+        producer,
+        "cleanup_process_tree",
+        lambda roots, wait_s: {  # noqa: ARG005
+            "target_count": 2,
+            "identity_mismatch_count": 0,
+        },
+    )
+    receipt = producer.cleanup_rung_processes([], [Launcher()], wait_s=0.5)  # type: ignore[list-item]
+    assert events == ["terminate", "wait:0.5"]
+    assert receipt["completed"] is True
+    assert receipt["target_count"] == 3
+    assert receipt["launcher_target_count"] == 1
+
+
+def test_rung_cleanup_fails_closed_on_hung_launcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class HungLauncher:
+        def poll(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            pass
+
+        def wait(self, timeout: float) -> int:  # noqa: ARG002
+            raise producer.subprocess.TimeoutExpired("launcher", timeout)
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        producer,
+        "cleanup_process_tree",
+        lambda roots, wait_s: {  # noqa: ARG005
+            "target_count": 0,
+            "identity_mismatch_count": 0,
+        },
+    )
+    with pytest.raises(producer.ProducerError, match="cleanup_incomplete"):
+        producer.cleanup_rung_processes([], [HungLauncher()], wait_s=0)  # type: ignore[list-item]
+
+
 def test_cleanup_never_terminates_reused_pid_victim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
