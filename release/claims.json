@@ -56,7 +56,7 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "5835da45c0629fc02b2f698a4685cb24fc255b81a42cc7220780d8b991aaa2d5"
+          "sha256_text": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
         },
         {
           "path": "sc_cli.py",
@@ -220,7 +220,7 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "5835da45c0629fc02b2f698a4685cb24fc255b81a42cc7220780d8b991aaa2d5"
+          "sha256_text": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
         },
         {
           "path": "tests/test_package_adapters.py",
@@ -355,7 +355,7 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "5835da45c0629fc02b2f698a4685cb24fc255b81a42cc7220780d8b991aaa2d5"
+          "sha256_text": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
         },
         {
           "path": "tests/test_console_io.py",
@@ -379,7 +379,7 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "5835da45c0629fc02b2f698a4685cb24fc255b81a42cc7220780d8b991aaa2d5"
+          "sha256_text": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
         },
         {
           "path": "tests/test_package_adapters.py",
@@ -511,7 +511,7 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "5835da45c0629fc02b2f698a4685cb24fc255b81a42cc7220780d8b991aaa2d5"
+          "sha256_text": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
         },
         {
           "path": "tests/test_console_io.py",
@@ -555,7 +555,7 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "5835da45c0629fc02b2f698a4685cb24fc255b81a42cc7220780d8b991aaa2d5"
+          "sha256_text": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
         },
         {
           "path": "sc_cli.py",
@@ -784,7 +784,7 @@
         },
         {
           "path": "self_connect.py",
-          "sha256_text": "5835da45c0629fc02b2f698a4685cb24fc255b81a42cc7220780d8b991aaa2d5"
+          "sha256_text": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
         }
       ]
     },

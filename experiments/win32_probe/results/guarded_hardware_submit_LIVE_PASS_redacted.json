@@ -1,5 +1,6 @@
 {
   "claim_boundaries": {
+    "authority_scope": "exported guarded_submit under a trusted non-monkeypatched interpreter; private helpers and module mutation excluded",
     "issue_22_open": true,
     "logical_sender_is_process_identity_claim": false,
     "production_readiness_claimed": false,
@@ -13,6 +14,12 @@
     "sender_finalization_store": "attested SQLite DELETE/FULL catalog; canonical audit envelope pending->audited",
     "stale_closed_hwnd_refused": true
   },
+  "implementation_evidence": {
+    "commit_scope": "implementation prior-head captured before committing this refreshed artifact",
+    "git_head": "45f5d19c61f85f207f7bade0ac9892b10a2e28ea",
+    "sc_guarded_submit_sha256": "5a5cc9912b2a82301f8cd95680ca980d03ed9c9d949cd24f1348c95980c027fa",
+    "self_connect_sha256": "28b1276de260e609be498536a9bcc8b3e1de3b6109d789943a18bdb38dbbba85"
+  },
   "input": {
     "contains_bmp_unicode": true,
     "contains_non_bmp_unicode": true,
@@ -20,21 +27,23 @@
     "utf8_bytes": 21
   },
   "peer_ack": {
-    "ack_sha256": "e4891979259cc8fbf36e4f4f0b05d292c3210b613aa24716d99cafc3dec95ed3",
+    "ack_sha256": "de210e94cfd756fbe38a3393d9b60b756d0e37c2a5b37c793a3f17289c268c58",
     "attempt_nonce_bound": true,
     "challenge_echo_matched": true,
     "decision": "accepted",
     "delivery_verified": true,
     "independent_response_key_id": "live-key-2026-07",
     "key_id": "live-key-2026-07",
+    "operation_snapshot_sha256": "b1b69437d6be538948e23e59f8d89b94a974c850143b03c219e6de963c602cc5",
     "receiver": "live-controller",
-    "schema": "selfconnect.peer-ack.v2",
+    "schema": "selfconnect.peer-ack.v3",
     "sender": "live-peer"
   },
   "pipe_security": {
-    "bounded_native_authority_contract": true,
     "client_token_logon_sid_checked": true,
     "first_instance": true,
+    "native_deadline_completion_boundary": "entered native calls may complete after the deadline; post-call expiry is ambiguous",
+    "native_deadline_pre_call_checks": true,
     "overlapped_buffers_retained_until_kernel_completion": true,
     "overlapped_total_deadline": true,
     "scope": "current logon SID, local clients only"
@@ -47,7 +56,7 @@
     "durable_admission_idempotency_required": true,
     "stdin_stdout_share_processor_deadline": true
   },
-  "schema": "selfconnect.guarded-hardware-submit-live.v3",
+  "schema": "selfconnect.guarded-hardware-submit-live.v4",
   "secrets_or_raw_input_included": false,
   "status": "PASS",
   "target": {
@@ -55,7 +64,7 @@
     "exe_name": "python.exe",
     "exe_path_sha256": "15e88d126372a2a88e8348acc28bd7ce56ca34446655609304961cb05a668cc8",
     "process_start_time_bound": true,
-    "title_sha256": "7c4332d5708376291e8d32596dd86d2b26ade9071e604e6201dde02eb99d404a"
+    "title_sha256": "f4e21c4d4e0a4930daa7bab6f3945ead0b6e71abf3b8f649b7032a45134d02e5"
   },
   "transport": {
     "hardware_enter_events_inserted": 2,
