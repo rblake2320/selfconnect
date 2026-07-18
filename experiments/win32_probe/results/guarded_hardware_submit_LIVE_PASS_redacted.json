@@ -1,0 +1,42 @@
+{
+  "claim_status": "candidate evidence only; issue #22 remains open",
+  "durability": {
+    "event_chain_verified": true,
+    "finalization_store": "sqlite synchronous=FULL pending->audited",
+    "stale_closed_hwnd_refused": true
+  },
+  "input": {
+    "contains_bmp_unicode": true,
+    "contains_non_bmp_unicode": true,
+    "sha256": "8d989fb0f89974663f89e3e7a760f6b15deeff0f5e3ba3430b29e2e2e123bd3f",
+    "utf8_bytes": 21
+  },
+  "peer_ack": {
+    "ack_sha256": "22b1e1badd140c57ad05fcf68fa2e0ce8f7bae7a8ac7e851656349c23183513f",
+    "challenge_echo_matched": true,
+    "decision": "accepted",
+    "delivery_verified": true,
+    "key_id": "live-key-2026-07",
+    "receiver": "live-controller",
+    "schema": "selfconnect.peer-ack.v2",
+    "sender": "live-peer"
+  },
+  "platform": "win32",
+  "schema": "selfconnect.guarded-hardware-submit-live.v2",
+  "secrets_or_raw_input_included": false,
+  "status": "PASS",
+  "target": {
+    "class_name": "ConsoleWindowClass",
+    "exe_name": "python.exe",
+    "exe_path_sha256": "15e88d126372a2a88e8348acc28bd7ce56ca34446655609304961cb05a668cc8",
+    "process_start_time_bound": true,
+    "title_sha256": "d3f9c8ea3bc1d2dac603dbb8fa01e0b03760eb1400fc6c3dabd09872e583af56"
+  },
+  "transport": {
+    "hardware_enter_events_inserted": 2,
+    "hardware_enter_events_requested": 2,
+    "name": "win32_console_input",
+    "records_requested": 34,
+    "records_written": 34
+  }
+}

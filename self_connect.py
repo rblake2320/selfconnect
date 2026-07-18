@@ -345,10 +345,17 @@ class KEYBDINPUT(ctypes.Structure):
     ]
 
 class _INPUT_UNION(ctypes.Union):
-    _fields_ = [("ki", KEYBDINPUT), ("_pad", ctypes.c_byte * 24)]  # noqa: RUF012
+    _fields_ = [  # noqa: RUF012
+        ("ki", KEYBDINPUT),
+        ("_pad", ctypes.c_byte * (32 if ctypes.sizeof(ctypes.c_void_p) == 8 else 24)),
+    ]
 
 class INPUT(ctypes.Structure):
     _fields_ = [("type", ctypes.c_ulong), ("u", _INPUT_UNION)]  # noqa: RUF012
+
+
+user32.SendInput.restype = wintypes.UINT
+user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
 
 class BITMAPINFOHEADER(ctypes.Structure):
     _fields_ = [  # noqa: RUF012
@@ -554,16 +561,18 @@ def _build_console_input_records(text: str) -> ctypes.Array:
         vk = scan = 0
         if ch in ("\r", "\n"):
             vk, scan = VK_RETURN, 0x1C
-        for down in (True, False):
-            record = _INPUT_RECORD()
-            record.EventType = KEY_EVENT_TYPE
-            record.Event.KeyEvent.bKeyDown = down
-            record.Event.KeyEvent.wRepeatCount = 1
-            record.Event.KeyEvent.wVirtualKeyCode = vk
-            record.Event.KeyEvent.wVirtualScanCode = scan
-            record.Event.KeyEvent.uChar.UnicodeChar = ch
-            record.Event.KeyEvent.dwControlKeyState = 0
-            records.append(record)
+        units = [ord(ch)] if ch in ("\r", "\n") else _utf16_code_units(ch)
+        for unit in units:
+            for down in (True, False):
+                record = _INPUT_RECORD()
+                record.EventType = KEY_EVENT_TYPE
+                record.Event.KeyEvent.bKeyDown = down
+                record.Event.KeyEvent.wRepeatCount = 1
+                record.Event.KeyEvent.wVirtualKeyCode = vk
+                record.Event.KeyEvent.wVirtualScanCode = scan
+                record.Event.KeyEvent.uChar.UnicodeChar = chr(unit)
+                record.Event.KeyEvent.dwControlKeyState = 0
+                records.append(record)
     return (_INPUT_RECORD * len(records))(*records)
 
 
@@ -1018,47 +1027,143 @@ def find_target(
 # ── Focus ─────────────────────────────────────────────────────────────────────
 def focus_window(hwnd: int) -> bool:
     """Bring a window to foreground using AttachThreadInput workaround."""
+    return bool(focus_window_checked(hwnd)["ok"])
+
+
+def focus_window_checked(hwnd: int, settle_seconds: float = 0.2) -> dict[str, object]:
+    """Focus ``hwnd`` and return checked Win32 acceptance and observation."""
+    hwnd = int(hwnd)
+    attached = False
+    result: dict[str, object]
     try:
         fg     = user32.GetForegroundWindow()
+        if int(fg or 0) == hwnd:
+            return {
+                "ok": True,
+                "hwnd": hwnd,
+                "already_foreground": True,
+                "set_foreground_accepted": None,
+                "bring_to_top_accepted": None,
+                "foreground_hwnd": hwnd,
+                "error": "",
+                "winerror": 0,
+            }
         fg_tid = user32.GetWindowThreadProcessId(fg, None)
         my_tid = kernel32.GetCurrentThreadId()
-        attached = False
         if fg_tid != my_tid:
-            user32.AttachThreadInput(my_tid, fg_tid, True)
-            attached = True
+            attach_ok = bool(user32.AttachThreadInput(my_tid, fg_tid, True))
+            attached = attach_ok
+            if not attach_ok:
+                result = {
+                    "ok": False,
+                    "hwnd": hwnd,
+                    "error": "attach_thread_input_failed",
+                    "winerror": int(kernel32.GetLastError()),
+                }
+                return result
         user32.ShowWindow(hwnd, SW_RESTORE)
-        user32.SetForegroundWindow(hwnd)
-        user32.BringWindowToTop(hwnd)
-        if attached:
-            user32.AttachThreadInput(my_tid, fg_tid, False)
-        time.sleep(0.2)
-        return True
+        set_ok = bool(user32.SetForegroundWindow(hwnd))
+        bring_ok = bool(user32.BringWindowToTop(hwnd))
+        if settle_seconds > 0:
+            time.sleep(settle_seconds)
+        observed = int(user32.GetForegroundWindow() or 0)
+        ok = set_ok and bring_ok and observed == hwnd
+        result = {
+            "ok": ok,
+            "hwnd": hwnd,
+            "set_foreground_accepted": set_ok,
+            "bring_to_top_accepted": bring_ok,
+            "foreground_hwnd": observed,
+            "error": "" if ok else "foreground_not_established",
+            "winerror": 0 if ok else int(kernel32.GetLastError()),
+        }
     except Exception as e:
-        print(f"[focus] error: {e}")
-        return False
+        result = {
+            "ok": False,
+            "hwnd": hwnd,
+            "error": f"focus_exception:{type(e).__name__}",
+            "winerror": int(kernel32.GetLastError()),
+        }
+    finally:
+        if attached:
+            if not user32.AttachThreadInput(my_tid, fg_tid, False):
+                result = {
+                    "ok": False,
+                    "hwnd": hwnd,
+                    "error": "detach_thread_input_failed",
+                    "winerror": int(kernel32.GetLastError()),
+                }
+    return result
 
 
 # ── Input delivery ────────────────────────────────────────────────────────────
 def _send_char_postmessage(hwnd: int, ch: str) -> bool:
     """Post one WM_CHAR and report queue acceptance, not delivery."""
     value = "\r" if ch == "\n" else ch
-    return bool(user32.PostMessageW(hwnd, WM_CHAR, ord(value), 0))
+    return all(
+        bool(user32.PostMessageW(hwnd, WM_CHAR, unit, 0))
+        for unit in _utf16_code_units(value)
+    )
+
+
+def _utf16_code_units(text: str) -> list[int]:
+    encoded = text.encode("utf-16-le")
+    return [int.from_bytes(encoded[index:index + 2], "little") for index in range(0, len(encoded), 2)]
 
 
 def _send_char_sendinput(ch: str) -> bool:
     """SendInput KEYEVENTF_UNICODE — for traditional Win32 windows."""
     extra = ctypes.pointer(ctypes.c_ulong(0))
     inserted = 0
-    for flag in (0, KEYEVENTF_KEYUP):
-        inp = INPUT()
-        inp.type = INPUT_KEYBOARD
-        inp.u.ki.wVk = 0
-        inp.u.ki.wScan = ord(ch) if ch not in ("\n", "\r") else VK_RETURN
-        inp.u.ki.dwFlags = (KEYEVENTF_UNICODE if ch not in ("\n", "\r") else 0) | flag
-        inp.u.ki.time = 0
-        inp.u.ki.dwExtraInfo = extra
-        inserted += int(user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT)))
-    return inserted == 2
+    units = [VK_RETURN] if ch in ("\n", "\r") else _utf16_code_units(ch)
+    for unit in units:
+        for flag in (0, KEYEVENTF_KEYUP):
+            inp = INPUT()
+            inp.type = INPUT_KEYBOARD
+            inp.u.ki.wVk = 0
+            inp.u.ki.wScan = unit
+            inp.u.ki.dwFlags = (KEYEVENTF_UNICODE if ch not in ("\n", "\r") else 0) | flag
+            inp.u.ki.time = 0
+            inp.u.ki.dwExtraInfo = extra
+            inserted += int(user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT)))
+    return inserted == len(units) * 2
+
+
+def hardware_enter_checked(expected_hwnd: int) -> dict[str, object]:
+    """Inject one physical Enter only while ``expected_hwnd`` is foreground."""
+    expected_hwnd = int(expected_hwnd)
+    observed = int(user32.GetForegroundWindow() or 0)
+    if observed != expected_hwnd:
+        return {
+            "ok": False,
+            "hwnd": expected_hwnd,
+            "foreground_hwnd": observed,
+            "events_requested": 2,
+            "events_inserted": 0,
+            "error": "foreground_changed_before_enter",
+            "winerror": 0,
+        }
+    extra = ctypes.pointer(ctypes.c_ulong(0))
+    inputs = (INPUT * 2)()
+    for index, flag in enumerate((0, KEYEVENTF_KEYUP)):
+        inputs[index].type = INPUT_KEYBOARD
+        inputs[index].u.ki.wVk = VK_RETURN
+        inputs[index].u.ki.wScan = 0x1C
+        inputs[index].u.ki.dwFlags = flag
+        inputs[index].u.ki.time = 0
+        inputs[index].u.ki.dwExtraInfo = extra
+    inserted = int(user32.SendInput(2, inputs, ctypes.sizeof(INPUT)))
+    foreground_after = int(user32.GetForegroundWindow() or 0)
+    ok = inserted == 2 and foreground_after == expected_hwnd
+    return {
+        "ok": ok,
+        "hwnd": expected_hwnd,
+        "foreground_hwnd": foreground_after,
+        "events_requested": 2,
+        "events_inserted": inserted,
+        "error": "" if ok else "hardware_enter_ambiguous",
+        "winerror": 0 if ok else int(kernel32.GetLastError()),
+    }
 
 
 def _input_delivery_result(

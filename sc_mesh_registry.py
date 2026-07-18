@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import sc_cli
+from sc_tasks import FileLock
 
 REGISTRY_VERSION = 1
 EVENT_LOG_VERSION = 1
@@ -33,6 +34,10 @@ OLD_SESSION_SECONDS = 2 * 60 * 60
 VERY_OLD_SESSION_SECONDS = 4 * 60 * 60
 HIGH_TOKEN_ESTIMATE = 120_000
 VERY_HIGH_TOKEN_ESTIMATE = 180_000
+
+
+class EventLogIntegrityError(RuntimeError):
+    """Raised when a strict event append cannot preserve durable history."""
 
 
 def _run_git(args: list[str], *, cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -229,7 +234,7 @@ def compute_event_hash(record: dict[str, Any]) -> str:
     return hashlib.sha256(_canonical_event_bytes(record)).hexdigest()
 
 
-def _last_event_hash(path: Path) -> str:
+def _last_event_hash(path: Path, *, strict: bool = False) -> str:
     if not path.exists():
         return EVENT_GENESIS_HASH
     try:
@@ -251,8 +256,9 @@ def _last_event_hash(path: Path) -> str:
                         if isinstance(item, dict):
                             return str(item.get("event_hash") or compute_event_hash(item))
                     break
-    except Exception:
-        pass
+    except Exception as exc:
+        if strict:
+            raise EventLogIntegrityError(f"cannot read event-log head: {exc}") from exc
     return EVENT_GENESIS_HASH
 
 
@@ -274,6 +280,8 @@ def append_event(
     event_log_path: str | Path | None = None,
     repo_path: str | Path | None = None,
     repo_snapshot: dict[str, Any] | None = None,
+    strict: bool = False,
+    strict_idempotency_key: str = "",
 ) -> dict[str, Any]:
     """Append a durable mesh event.
 
@@ -282,29 +290,57 @@ def append_event(
     """
     path = Path(event_log_path) if event_log_path else default_event_log_path(registry_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    prev_event_hash = _last_event_hash(path)
-    record = {
-        "version": EVENT_LOG_VERSION,
-        "event_id": uuid.uuid4().hex,
-        "event_type": event_type,
-        "created_at": _now(),
-        "prev_event_hash": prev_event_hash,
-        "mesh": mesh,
-        "role": role,
-        "birth_id": birth_id,
-        "generation": generation,
-        "agent": agent,
-        "hwnd": hwnd,
-        "task": task,
-        "status": status,
-        "profile": profile,
-        "summary": summary,
-        "repo": repo_snapshot if repo_snapshot is not None else git_snapshot(repo_path),
-        "data": data or {},
-    }
-    record["event_hash"] = compute_event_hash(record)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record, sort_keys=True, ensure_ascii=True) + "\n")
+    if strict_idempotency_key and not strict:
+        raise ValueError("strict_idempotency_key requires strict append mode")
+    event_data = dict(data or {})
+    if strict_idempotency_key:
+        event_data["strict_idempotency_key"] = strict_idempotency_key
+
+    def build_record(prev_event_hash: str) -> dict[str, Any]:
+        record = {
+            "version": EVENT_LOG_VERSION,
+            "event_id": uuid.uuid4().hex,
+            "event_type": event_type,
+            "created_at": _now(),
+            "prev_event_hash": prev_event_hash,
+            "mesh": mesh,
+            "role": role,
+            "birth_id": birth_id,
+            "generation": generation,
+            "agent": agent,
+            "hwnd": hwnd,
+            "task": task,
+            "status": status,
+            "profile": profile,
+            "summary": summary,
+            "repo": repo_snapshot if repo_snapshot is not None else git_snapshot(repo_path),
+            "data": event_data,
+        }
+        record["event_hash"] = compute_event_hash(record)
+        return record
+
+    if strict:
+        lock_path = path.with_name(f"{path.name}.lock")
+        with FileLock(lock_path):
+            verified = verify_events(event_log_path=path)
+            if not verified["ok"]:
+                raise EventLogIntegrityError("event log failed verification before strict append")
+            if strict_idempotency_key and path.exists():
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    if not line.strip():
+                        continue
+                    existing = json.loads(line)
+                    if existing.get("data", {}).get("strict_idempotency_key") == strict_idempotency_key:
+                        return {"ok": True, "path": str(path), "event": existing, "idempotent_replay": True}
+            record = build_record(str(verified["head_hash"]))
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, sort_keys=True, ensure_ascii=True) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+    else:
+        record = build_record(_last_event_hash(path))
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, sort_keys=True, ensure_ascii=True) + "\n")
     return {"ok": True, "path": str(path), "event": record}
 
 

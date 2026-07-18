@@ -56,7 +56,7 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "515614e5add74efc2fa43825e12ef5d208f3fee8c2d428148325812f3bace5bd"
+          "sha256_text": "c03f1e38535492d1d447be66d1b3fc8fb5d1ad60194a40d50518371f1a4b609b"
         },
         {
           "path": "sc_cli.py",
@@ -108,7 +108,7 @@
       "evidence": [
         {
           "path": "pyproject.toml",
-          "sha256_text": "a9e08e93885679ef55102fe835a20657b437316c39fac948563e2b1f91118729"
+          "sha256_text": "4c263fab0b77c586d59daa2141ba1aea18492da87ce9638faf94baf75d4d4c7b"
         }
       ]
     },
@@ -196,7 +196,7 @@
       "evidence": [
         {
           "path": "sc_mesh_registry.py",
-          "sha256_text": "f5b1bcd23c5bf779b75cbfd006d0d35d9696837aedc3ed82ce0a9265abd7548d"
+          "sha256_text": "29baedf89f65fdf25c490acb63bfde92f6d84e6fcd822997eccee2fca9db6fb5"
         },
         {
           "path": "tests/test_package_adapters.py",
@@ -220,7 +220,7 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "515614e5add74efc2fa43825e12ef5d208f3fee8c2d428148325812f3bace5bd"
+          "sha256_text": "c03f1e38535492d1d447be66d1b3fc8fb5d1ad60194a40d50518371f1a4b609b"
         },
         {
           "path": "tests/test_package_adapters.py",
@@ -355,7 +355,7 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "515614e5add74efc2fa43825e12ef5d208f3fee8c2d428148325812f3bace5bd"
+          "sha256_text": "c03f1e38535492d1d447be66d1b3fc8fb5d1ad60194a40d50518371f1a4b609b"
         },
         {
           "path": "tests/test_console_io.py",
@@ -379,7 +379,7 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "515614e5add74efc2fa43825e12ef5d208f3fee8c2d428148325812f3bace5bd"
+          "sha256_text": "c03f1e38535492d1d447be66d1b3fc8fb5d1ad60194a40d50518371f1a4b609b"
         },
         {
           "path": "tests/test_package_adapters.py",
@@ -511,7 +511,7 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "515614e5add74efc2fa43825e12ef5d208f3fee8c2d428148325812f3bace5bd"
+          "sha256_text": "c03f1e38535492d1d447be66d1b3fc8fb5d1ad60194a40d50518371f1a4b609b"
         },
         {
           "path": "tests/test_console_io.py",
@@ -555,7 +555,7 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "515614e5add74efc2fa43825e12ef5d208f3fee8c2d428148325812f3bace5bd"
+          "sha256_text": "c03f1e38535492d1d447be66d1b3fc8fb5d1ad60194a40d50518371f1a4b609b"
         },
         {
           "path": "sc_cli.py",
@@ -784,7 +784,7 @@
         },
         {
           "path": "self_connect.py",
-          "sha256_text": "515614e5add74efc2fa43825e12ef5d208f3fee8c2d428148325812f3bace5bd"
+          "sha256_text": "c03f1e38535492d1d447be66d1b3fc8fb5d1ad60194a40d50518371f1a4b609b"
         }
       ]
     },

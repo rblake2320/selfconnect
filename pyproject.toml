@@ -116,6 +116,7 @@ include = [
     "sc_fabric_service.py",
     "sc_fabric_v2.py",
     "sc_fabric_windows_svc.py",
+    "sc_guarded_submit.py",
     "sc_hook_emit.py",
     "sc_hooks.py",
     "sc_local_model_role.py",
