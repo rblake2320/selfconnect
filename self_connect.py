@@ -576,7 +576,9 @@ def _build_console_input_records(text: str) -> ctypes.Array:
     return (_INPUT_RECORD * len(records))(*records)
 
 
-def _write_console_input_result(target_pid: int, text: str) -> dict[str, object]:
+def _write_console_input_result(
+    target_pid: int, text: str, *, deadline: float | None = None,
+) -> dict[str, object]:
     """Write input records to a target console with explicit restoration state.
 
     The write is fail-closed: all records must be accepted and a caller that was
@@ -675,6 +677,8 @@ def _write_console_input_result(target_pid: int, text: str) -> dict[str, object]
                 operation_winerror = int(kernel32.GetLastError())
             else:
                 try:
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise TimeoutError("console input deadline expired before WriteConsoleInputW")
                     api_ok = bool(kernel32.WriteConsoleInputW(
                         handle,
                         records,
@@ -1030,7 +1034,9 @@ def focus_window(hwnd: int) -> bool:
     return bool(focus_window_checked(hwnd)["ok"])
 
 
-def focus_window_checked(hwnd: int, settle_seconds: float = 0.2) -> dict[str, object]:
+def focus_window_checked(
+    hwnd: int, settle_seconds: float = 0.2, *, deadline: float | None = None,
+) -> dict[str, object]:
     """Focus ``hwnd`` and return checked Win32 acceptance and observation."""
     hwnd = int(hwnd)
     attached = False
@@ -1061,8 +1067,14 @@ def focus_window_checked(hwnd: int, settle_seconds: float = 0.2) -> dict[str, ob
                     "winerror": int(kernel32.GetLastError()),
                 }
                 return result
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("focus deadline expired before ShowWindow")
         user32.ShowWindow(hwnd, SW_RESTORE)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("focus deadline expired before SetForegroundWindow")
         set_ok = bool(user32.SetForegroundWindow(hwnd))
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("focus deadline expired before BringWindowToTop")
         bring_ok = bool(user32.BringWindowToTop(hwnd))
         if settle_seconds > 0:
             time.sleep(settle_seconds)
@@ -1148,7 +1160,12 @@ def _enter_target_identity(expected_hwnd: int, process_handle: int) -> dict[str,
     }
 
 
-def hardware_enter_checked(expected_hwnd: int, *, expected_identity: dict[str, object] | None = None) -> dict[str, object]:
+def hardware_enter_checked(
+    expected_hwnd: int,
+    *,
+    expected_identity: dict[str, object] | None = None,
+    deadline: float | None = None,
+) -> dict[str, object]:
     """Validate a held target process immediately around one physical Enter.
 
     The irreducible boundary is the kernel scheduling interval inside SendInput:
@@ -1198,6 +1215,8 @@ def hardware_enter_checked(expected_hwnd: int, *, expected_identity: dict[str, o
         inputs[index].u.ki.time = 0
         inputs[index].u.ki.dwExtraInfo = extra
     try:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("Enter deadline expired before SendInput")
         inserted = int(user32.SendInput(2, inputs, ctypes.sizeof(INPUT)))
         foreground_after = int(user32.GetForegroundWindow() or 0)
         identity_after = _enter_target_identity(expected_hwnd, process_handle) if process_handle else None
@@ -1252,7 +1271,7 @@ def _input_delivery_result(
 
 
 def send_string(target: WindowTarget, text: str, char_delay: float = 0.05,
-                mode: str = "auto") -> dict[str, object]:
+                mode: str = "auto", *, deadline: float | None = None) -> dict[str, object]:
     """Send text through a target-specific native input transport.
 
     ``auto`` uses WriteConsoleInputW for ``ConsoleWindowClass``, exact-HWND
@@ -1300,7 +1319,11 @@ def send_string(target: WindowTarget, text: str, char_delay: float = 0.05,
         )
 
     if is_legacy_console:
-        console_result = _write_console_input_result(target.pid, text)
+        console_result = (
+            _write_console_input_result(target.pid, text)
+            if deadline is None else
+            _write_console_input_result(target.pid, text, deadline=deadline)
+        )
         return _input_delivery_result(
             ok=bool(console_result["ok"]),
             target=target,

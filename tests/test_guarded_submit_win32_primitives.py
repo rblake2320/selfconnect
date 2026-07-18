@@ -154,3 +154,28 @@ def test_hardware_enter_post_identity_change_is_ambiguous_after_two_events(monke
     assert result["ok"] is False
     assert result["events_inserted"] == 2
     assert result["identity_stable"] is False
+
+
+def test_focus_rechecks_shared_deadline_immediately_before_setforeground(monkeypatch):
+    fake = FakeUser32(foreground=999)
+    shown = []
+    fake.ShowWindow = lambda *_args: shown.append(True) or 1
+    fake.SetForegroundWindow = lambda *_args: pytest.fail("expired focus must not reach SetForegroundWindow")
+    ticks = iter((0.0, 2.0))
+    monkeypatch.setattr(sc.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(sc, "user32", fake)
+    monkeypatch.setattr(sc, "kernel32", SimpleNamespace(GetCurrentThreadId=lambda: 7, GetLastError=lambda: 0))
+    result = sc.focus_window_checked(123, settle_seconds=0, deadline=1.0)
+    assert shown == [True]
+    assert result["ok"] is False
+    assert "TimeoutError" in result["error"]
+
+
+def test_enter_rechecks_shared_deadline_immediately_before_sendinput(monkeypatch):
+    fake = FakeUser32(foreground=123)
+    fake.SendInput = lambda *_args: pytest.fail("expired Enter must not reach SendInput")
+    monkeypatch.setattr(sc.time, "monotonic", lambda: 2.0)
+    monkeypatch.setattr(sc, "user32", fake)
+    monkeypatch.setattr(sc, "kernel32", SimpleNamespace(GetLastError=lambda: 0))
+    with pytest.raises(TimeoutError, match="before SendInput"):
+        sc.hardware_enter_checked(123, deadline=1.0)

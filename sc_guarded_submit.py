@@ -480,18 +480,46 @@ LEGACY_FINALIZER_V2_COLUMNS = (
     ("raw_ack", "BLOB", 0, 0), ("key_id", "TEXT", 0, 0), ("decision", "TEXT", 0, 0),
     ("issued_at", "REAL", 0, 0), *LEGACY_FINALIZER_V1_COLUMNS[7:],
 )
-_AUDIT_EVENT_FIELDS = frozenset({
-    "event_type", "role", "mesh", "birth_id", "generation", "agent", "hwnd", "task", "status",
-    "profile", "summary", "data", "repo_path", "repo_snapshot", "strict_idempotency_key",
+_ACK_OPERATION_FIELDS = frozenset({
+    "message_id", "challenge", "key_id", "response_key_id", "input_sha256", "input_bytes",
+    "sender", "receiver", "target",
+})
+_ACK_RECEIPT_FIELDS = frozenset((*PeerAck.__dataclass_fields__, "ack_sha256"))
+_ACK_EVENT_FIELDS = frozenset({
+    "event_type", "status", "hwnd", "summary", "data", "strict_idempotency_key",
 })
 
 
-def _validated_ack_audit_event(audit_json: str, binding: dict[str, Any]) -> dict[str, Any]:
+def _canonical_ack_event(ack: PeerAck, raw: bytes, operation: dict[str, Any]) -> dict[str, Any]:
+    if set(operation) != _ACK_OPERATION_FIELDS or not isinstance(operation.get("target"), dict):
+        raise AckReplayError("peer ACK operation schema is invalid")
+    if operation["message_id"] != ack.message_id or operation["challenge"] != ack.challenge:
+        raise AckReplayError("peer ACK operation identity binding failed")
+    if operation["input_sha256"] != ack.input_sha256:
+        raise AckReplayError("peer ACK operation input binding failed")
+    if operation["sender"] != ack.receiver or operation["receiver"] != ack.sender:
+        raise AckReplayError("peer ACK operation peer binding failed")
+    receipt = {**asdict(ack), "ack_sha256": hashlib.sha256(raw).hexdigest()}
+    return {
+        "event_type": "guarded_submit_acknowledged",
+        "status": "acknowledged",
+        "hwnd": operation["target"].get("hwnd"),
+        "summary": "guarded submit acknowledged",
+        "data": {**operation, "ack": receipt},
+        "strict_idempotency_key": f"guarded-ack:{receipt['ack_sha256']}",
+    }
+
+
+def _validated_ack_audit_event(
+    audit_json: str,
+    binding: dict[str, Any],
+    expected: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     try:
         event = json.loads(audit_json)
     except Exception as exc:
         raise AckReplayError("peer ACK canonical audit envelope is malformed") from exc
-    if not isinstance(event, dict) or not set(event) <= _AUDIT_EVENT_FIELDS:
+    if not isinstance(event, dict) or set(event) != _ACK_EVENT_FIELDS:
         raise AckReplayError("peer ACK canonical audit envelope schema is invalid")
     try:
         if _canonical_bytes(event).decode("ascii") != audit_json:
@@ -503,6 +531,9 @@ def _validated_ack_audit_event(audit_json: str, binding: dict[str, Any]) -> dict
         raise AckReplayError("peer ACK audit envelope identity binding failed")
     data = event.get("data")
     receipt = data.get("ack") if isinstance(data, dict) else None
+    operation = {key: value for key, value in data.items() if key != "ack"} if isinstance(data, dict) else {}
+    if set(operation) != _ACK_OPERATION_FIELDS or not isinstance(receipt, dict) or set(receipt) != _ACK_RECEIPT_FIELDS:
+        raise AckReplayError("peer ACK canonical audit envelope data schema is invalid")
     expected_data = {
         "message_id": binding["message_id"], "challenge": binding["challenge"],
         "input_sha256": binding["input_sha256"], "sender": binding["receiver"], "receiver": binding["sender"],
@@ -512,10 +543,12 @@ def _validated_ack_audit_event(audit_json: str, binding: dict[str, Any]) -> dict
         "decision": binding["decision"], "key_id": binding["key_id"], "ack_sha256": binding["ack_sha256"],
         "sender": binding["sender"], "receiver": binding["receiver"],
     }
-    if not isinstance(receipt, dict) or any(data.get(key) != value for key, value in expected_data.items()):
+    if any(data.get(key) != value for key, value in expected_data.items()):
         raise AckReplayError("peer ACK audit envelope operation binding failed")
     if any(receipt.get(key) != value for key, value in expected_receipt.items()):
         raise AckReplayError("peer ACK audit envelope receipt binding failed")
+    if expected is not None and event != expected:
+        raise AckReplayError("peer ACK canonical audit envelope exact binding failed")
     return event
 
 
@@ -598,7 +631,14 @@ class DurableAckFinalizer:
         _configure_durable_sqlite(connection)
         return connection
 
-    def finalize(self, ack: PeerAck, raw: bytes, audit: Callable[[dict[str, Any]], None], audit_event: dict[str, Any]) -> None:
+    def finalize(
+        self,
+        ack: PeerAck,
+        raw: bytes,
+        audit: Callable[[dict[str, Any]], None],
+        audit_event: dict[str, Any],
+        operation: dict[str, Any],
+    ) -> None:
         ack_sha256 = hashlib.sha256(raw).hexdigest()
         values = (ack.sender, ack.receiver, ack.message_id, ack.challenge, ack.ack_nonce, ack.input_sha256, ack_sha256)
         binding = {
@@ -606,6 +646,7 @@ class DurableAckFinalizer:
             "challenge": ack.challenge, "ack_nonce": ack.ack_nonce, "input_sha256": ack.input_sha256,
             "ack_sha256": ack_sha256, "key_id": ack.key_id, "decision": ack.decision,
         }
+        expected_event = _canonical_ack_event(ack, raw, operation)
         with contextlib.closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
@@ -616,7 +657,7 @@ class DurableAckFinalizer:
             ).fetchone()
             if existing is None:
                 audit_json = _canonical_bytes(audit_event).decode("ascii")
-                event_to_audit = _validated_ack_audit_event(audit_json, binding)
+                event_to_audit = _validated_ack_audit_event(audit_json, binding, expected_event)
                 try:
                     connection.execute(
                         "INSERT INTO peer_ack_finalization "
@@ -634,7 +675,7 @@ class DurableAckFinalizer:
                     connection.rollback()
                     raise AckReplayError("peer acknowledgement replay rejected")
                 stored_binding = {**binding, "key_id": str(existing[5]), "decision": str(existing[6])}
-                event_to_audit = _validated_ack_audit_event(str(existing[7]), stored_binding)
+                event_to_audit = _validated_ack_audit_event(str(existing[7]), stored_binding, expected_event)
                 connection.commit()
         audit(event_to_audit)
         with contextlib.closing(self._connect()) as connection:
@@ -1044,22 +1085,30 @@ class _Authorities:
     focus: Callable[[int, float], dict[str, Any]]
     enter: Callable[[TargetIdentity, float], dict[str, Any]]
     receive_ack: Callable[[PeerAckRequest, float], bytes]
-    finalize_ack: Callable[[PeerAck, bytes, Callable[[dict[str, Any]], None], dict[str, Any]], None]
+    finalize_ack: Callable[[PeerAck, bytes, Callable[[dict[str, Any]], None], dict[str, Any], dict[str, Any]], None]
     audit_append: Callable[..., dict[str, Any]]
     token_hex: Callable[[int], str]
 
     def __post_init__(self) -> None:
-        for name in ("send_body", "focus", "enter"):
-            if getattr(getattr(self, name), "_sc_deadline_bounded", False) is not True:
-                raise ValueError(f"{name} authority must implement the bounded deadline contract")
+        fixed = (_production_send_body, _production_focus, _production_enter)
+        if (self.send_body, self.focus, self.enter) != fixed:
+            raise ValueError("physical authorities must be the fixed production native authority identities")
 
 
-def _deadline_bounded(callback: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
-    setattr(callback, "_sc_deadline_bounded", True)
-    return callback
+@dataclass(frozen=True)
+class _InjectedTestAuthorities:
+    """Private harness-only injection surface; the public path cannot construct this."""
+
+    snapshot: Callable[[int], tuple[Any | None, TargetIdentity | None]]
+    send_body: Callable[[Any, str, str, float], dict[str, Any]]
+    focus: Callable[[int, float], dict[str, Any]]
+    enter: Callable[[TargetIdentity, float], dict[str, Any]]
+    receive_ack: Callable[[PeerAckRequest, float], bytes]
+    finalize_ack: Callable[[PeerAck, bytes, Callable[[dict[str, Any]], None], dict[str, Any], dict[str, Any]], None]
+    audit_append: Callable[..., dict[str, Any]]
+    token_hex: Callable[[int], str]
 
 
-@_deadline_bounded
 def _production_send_body(window: Any, text: str, transport: str, deadline: float) -> dict[str, Any]:
     import self_connect as sc
 
@@ -1074,7 +1123,9 @@ def _production_send_body(window: Any, text: str, transport: str, deadline: floa
     if transport not in {"auto", mode}:
         return {"ok": False, "error": "guarded_body_transport_override_denied"}
     if mode == "console":
-        return sc.send_string(window, text, mode=mode)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("body deadline expired before console input")
+        return sc.send_string(window, text, mode=mode, deadline=deadline)
     input_site = sc.find_child_by_class(window.hwnd, sc.WT_INPUT_CLASS)
     delivery_hwnd = input_site if input_site else window.hwnd
     accepted = 0
@@ -1096,23 +1147,21 @@ def _production_send_body(window: Any, text: str, transport: str, deadline: floa
     }
 
 
-@_deadline_bounded
 def _production_focus(hwnd: int, deadline: float) -> dict[str, Any]:
     import self_connect as sc
 
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TimeoutError("focus deadline expired before native focus")
-    return sc.focus_window_checked(hwnd, settle_seconds=min(0.2, remaining))
+    return sc.focus_window_checked(hwnd, settle_seconds=min(0.2, remaining), deadline=deadline)
 
 
-@_deadline_bounded
 def _production_enter(target: TargetIdentity, deadline: float) -> dict[str, Any]:
     import self_connect as sc
 
     if time.monotonic() >= deadline:
         raise TimeoutError("Enter deadline expired before native SendInput")
-    return sc.hardware_enter_checked(target.hwnd, expected_identity=asdict(target))
+    return sc.hardware_enter_checked(target.hwnd, expected_identity=asdict(target), deadline=deadline)
 
 
 def _request_body(request: PeerAckRequest) -> dict[str, Any]:
@@ -1538,7 +1587,7 @@ def _guarded_submit_impl(
     keyring: AckKeyRing,
     key_id: str,
     event_log_path: str | Path,
-    authorities: _Authorities,
+    authorities: _Authorities | _InjectedTestAuthorities,
     transport: str,
     ack_timeout: float,
     max_ack_age_seconds: float,
@@ -1707,12 +1756,8 @@ def _guarded_submit_impl(
             }
         }
 
-        ack_sha256 = hashlib.sha256(raw_ack).hexdigest()
-        ack_event = audit_spec(
-            "guarded_submit_acknowledged", "acknowledged",
-            idempotency_key=f"guarded-ack:{ack_sha256}", **ack_data,
-        )
-        authorities.finalize_ack(ack, raw_ack, append_audit, ack_event)
+        ack_event = _canonical_ack_event(ack, raw_ack, base)
+        authorities.finalize_ack(ack, raw_ack, append_audit, ack_event, base)
     except Exception as exc:
         return audit_failure("ambiguous", f"peer_ack_failed:{type(exc).__name__}", enter=enter_result)
     return {
