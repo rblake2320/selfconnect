@@ -1,0 +1,78 @@
+{
+  "claim_boundaries": {
+    "authority_scope": "exported guarded_submit under a trusted non-monkeypatched interpreter; private helpers and module mutation excluded",
+    "authority_storage_scope": "receiver authority rows must remain in trusted, untampered storage; direct same-account database mutation is outside this candidate claim",
+    "issue_22_open": true,
+    "logical_sender_is_process_identity_claim": false,
+    "production_readiness_claimed": false,
+    "protected_parent_directory_is_deployer_precondition": true,
+    "windows_terminal_per_tab_claimed": false
+  },
+  "claim_status": "candidate evidence only; issue #22 remains open",
+  "durability": {
+    "event_chain_verified": true,
+    "receiver_admission_store": "attested SQLite DELETE/FULL stable full-operation digest excluding per-attempt keys plus durable one-use attempts",
+    "sender_finalization_store": "attested SQLite DELETE/FULL catalog; canonical audit envelope pending->audited",
+    "stale_closed_hwnd_refused": true
+  },
+  "implementation_evidence": {
+    "commit_scope": "implementation prior-head captured before committing this refreshed artifact",
+    "git_head": "4355898d4f11f91a73e926b3cbdaf83ed7bf47ea",
+    "hash_canonicalization": "UTF-8 source bytes with CRLF and CR normalized to LF before SHA-256",
+    "sc_guarded_submit_canonical_lf_sha256": "2fb046a12d19cc89be5c2807c119bb8513caaa3752fffd0a21401bd599bae9b5",
+    "self_connect_canonical_lf_sha256": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
+  },
+  "input": {
+    "contains_bmp_unicode": true,
+    "contains_non_bmp_unicode": true,
+    "sha256": "8d989fb0f89974663f89e3e7a760f6b15deeff0f5e3ba3430b29e2e2e123bd3f",
+    "utf8_bytes": 21
+  },
+  "peer_ack": {
+    "ack_sha256": "b59a277a17ccd2c1c5f824481b5ba9a665213819e76789f5e8c4616c8c54a73b",
+    "attempt_nonce_bound": true,
+    "challenge_echo_matched": true,
+    "decision": "accepted",
+    "delivery_verified": true,
+    "independent_response_key_id": "live-key-2026-07",
+    "key_id": "live-key-2026-07",
+    "receiver": "live-controller",
+    "schema": "selfconnect.peer-ack.v3",
+    "sender": "live-peer",
+    "stable_operation_sha256": "7741dd90f7312770b74ac8a0cb6fca4b729ef53bb96c1ef3cfa1b5491db5cd4f"
+  },
+  "pipe_security": {
+    "client_token_logon_sid_checked": true,
+    "first_instance": true,
+    "native_deadline_completion_boundary": "entered native calls may complete after the deadline; post-call expiry is ambiguous",
+    "native_deadline_pre_call_checks": true,
+    "overlapped_buffers_retained_until_kernel_completion": true,
+    "overlapped_total_deadline": true,
+    "scope": "current logon SID, local clients only"
+  },
+  "platform": "win32",
+  "processor": {
+    "descendants_prohibited_but_not_contained": true,
+    "digest_is_adapter_attestation": true,
+    "direct_child_killed_on_deadline": true,
+    "durable_admission_idempotency_required": true,
+    "stdin_stdout_share_processor_deadline": true
+  },
+  "schema": "selfconnect.guarded-hardware-submit-live.v5",
+  "secrets_or_raw_input_included": false,
+  "status": "PASS",
+  "target": {
+    "class_name": "ConsoleWindowClass",
+    "exe_name": "python.exe",
+    "exe_path_sha256": "15e88d126372a2a88e8348acc28bd7ce56ca34446655609304961cb05a668cc8",
+    "process_start_time_bound": true,
+    "title_sha256": "2622825e1f97372c748dda22eb3bacd5a1e1414c6f42772a413c7350bb96fef7"
+  },
+  "transport": {
+    "hardware_enter_events_inserted": 2,
+    "hardware_enter_events_requested": 2,
+    "name": "win32_console_input",
+    "records_requested": 34,
+    "records_written": 34
+  }
+}

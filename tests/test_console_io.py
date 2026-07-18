@@ -127,6 +127,21 @@ class TestWriteConsoleInput:
         free_console.assert_not_called()
         attach_console.assert_not_called()
 
+    def test_console_write_rechecks_deadline_immediately_before_native_write(self):
+        from self_connect import _write_console_input_result
+
+        with patch("self_connect._console_process_ids", return_value=([10, 1234], 0)), \
+             patch.object(ctypes.windll.kernel32, "GetCurrentProcessId", return_value=10), \
+             patch.object(ctypes.windll.kernel32, "CreateFileW", return_value=42), \
+             patch.object(ctypes.windll.kernel32, "WriteConsoleInputW") as native_write, \
+             patch.object(ctypes.windll.kernel32, "CloseHandle", return_value=True), \
+             patch("self_connect.time.monotonic", return_value=2.0):
+            result = _write_console_input_result(1234, "x", deadline=1.0)
+
+        native_write.assert_not_called()
+        assert result["ok"] is False
+        assert result["error"] == "console_input_exception:TimeoutError"
+
     def test_cross_console_write_restores_explicit_original_console(self):
         from self_connect import _write_console_input_result
 
