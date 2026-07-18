@@ -1,7 +1,9 @@
 """Candidate guarded Win32 submission with processing-bound peer ACKs.
 
-The public submit path fixes all actuation, guard, transport, audit, and replay
-authorities. Dependency injection exists only in the private test harness.
+The bounded claim covers exported ``guarded_submit`` in a trusted,
+non-monkeypatched interpreter. It selects built-in actuation, guard, transport,
+audit, and replay collaborators. Private helpers/test injection, hostile
+reflection, and module mutation are outside that boundary.
 """
 
 from __future__ import annotations
@@ -28,8 +30,8 @@ from typing import Any, Callable
 
 import sc_mesh_registry
 
-ACK_SCHEMA = "selfconnect.peer-ack.v2"
-REQUEST_SCHEMA = "selfconnect.peer-ack-request.v1"
+ACK_SCHEMA = "selfconnect.peer-ack.v3"
+REQUEST_SCHEMA = "selfconnect.peer-ack-request.v2"
 WIRE_PREFIX = b"SCACK1"
 ACK_DECISIONS = frozenset({"accepted", "rejected"})
 DEFAULT_ACK_MAX_AGE_SECONDS = 300.0
@@ -80,9 +82,11 @@ class TargetIdentity:
     process_start_time_ns: int
 
     def __post_init__(self) -> None:
+        if any(type(value) is not int for value in (self.hwnd, self.pid, self.process_start_time_ns)):
+            raise ValueError("target hwnd, pid, and process start time must be exact integers")
         if self.hwnd <= 0 or self.pid <= 0 or self.process_start_time_ns <= 0:
             raise ValueError("target hwnd, pid, and process start time must be positive")
-        if not all((self.exe_name, self.class_name, self.title, self.exe_path)):
+        if any(type(value) is not str or not value for value in (self.exe_name, self.class_name, self.title, self.exe_path)):
             raise ValueError("target exe, class, title, and executable path are required")
 
     @classmethod
@@ -161,6 +165,7 @@ class PeerAckRequest:
     issued_at: float
     response_key_id: str = ""
     attempt_nonce: str = ""
+    operation_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -172,6 +177,7 @@ class PeerAck:
     attempt_nonce: str
     ack_nonce: str
     input_sha256: str
+    operation_sha256: str
     processed_input_sha256: str
     sender: str
     receiver: str
@@ -274,6 +280,7 @@ def sign_peer_ack(
     attempt_nonce: str,
     ack_nonce: str,
     input_sha256: str,
+    operation_sha256: str,
     processed_input_sha256: str | None = None,
     sender: str,
     receiver: str,
@@ -294,6 +301,7 @@ def sign_peer_ack(
         "attempt_nonce": _validate_hex(attempt_nonce, "attempt nonce", TOKEN_BYTES),
         "ack_nonce": _validate_hex(ack_nonce, "ack nonce", TOKEN_BYTES),
         "input_sha256": _validate_hex(input_sha256, "input digest", 32),
+        "operation_sha256": _validate_hex(operation_sha256, "operation digest", 32),
         "processed_input_sha256": _validate_hex(attested_digest, "processed input digest", 32),
         "sender": sender,
         "receiver": receiver,
@@ -312,6 +320,7 @@ def verify_peer_ack(
     challenge: str,
     attempt_nonce: str,
     input_sha256: str,
+    operation_sha256: str,
     sender: str,
     receiver: str,
     now: float | None = None,
@@ -321,7 +330,7 @@ def verify_peer_ack(
     decoded, wire_key_id, signature = _wire_decode(raw, keyring=keyring)
     required = {
         "schema", "key_id", "message_id", "challenge", "attempt_nonce", "ack_nonce",
-        "input_sha256", "processed_input_sha256", "sender", "receiver", "decision", "issued_at",
+        "input_sha256", "operation_sha256", "processed_input_sha256", "sender", "receiver", "decision", "issued_at",
     }
     if set(decoded) != required:
         raise AckVerificationError("peer acknowledgement schema mismatch")
@@ -336,6 +345,7 @@ def verify_peer_ack(
         "challenge": (decoded["challenge"], challenge),
         "attempt_nonce": (decoded["attempt_nonce"], attempt_nonce),
         "input_sha256": (decoded["input_sha256"], input_sha256),
+        "operation_sha256": (decoded["operation_sha256"], operation_sha256),
         "sender": (decoded["sender"], sender),
         "receiver": (decoded["receiver"], receiver),
     }
@@ -346,6 +356,7 @@ def verify_peer_ack(
     _validate_hex(decoded["attempt_nonce"], "attempt nonce", TOKEN_BYTES)
     _validate_hex(decoded["ack_nonce"], "ack nonce", TOKEN_BYTES)
     _validate_hex(decoded["input_sha256"], "input digest", 32)
+    _validate_hex(decoded["operation_sha256"], "operation digest", 32)
     _validate_hex(decoded["processed_input_sha256"], "processed input digest", 32)
     if decoded["decision"] not in ACK_DECISIONS:
         raise AckVerificationError("unsupported peer acknowledgement decision")
@@ -361,7 +372,7 @@ def _validate_request(raw: bytes, *, keyring: AckKeyRing, max_age_seconds: float
     decoded, wire_key_id, _signature = _wire_decode(raw, keyring=keyring)
     required = {
         "schema", "key_id", "message_id", "challenge", "input_sha256", "sender", "receiver",
-        "issued_at", "response_key_id", "attempt_nonce",
+        "issued_at", "response_key_id", "attempt_nonce", "operation_sha256",
     }
     if set(decoded) != required or any(not isinstance(decoded[field], str) for field in required - {"issued_at"}):
         raise AckVerificationError("peer ACK request schema mismatch")
@@ -371,6 +382,7 @@ def _validate_request(raw: bytes, *, keyring: AckKeyRing, max_age_seconds: float
     _validate_hex(decoded["challenge"], "challenge", TOKEN_BYTES)
     _validate_hex(decoded["attempt_nonce"], "attempt nonce", TOKEN_BYTES)
     _validate_hex(decoded["input_sha256"], "input digest", 32)
+    _validate_hex(decoded["operation_sha256"], "operation digest", 32)
     age = time.time() - issued_at
     if age < -5.0 or age > max_age:
         raise AckVerificationError("peer ACK request outside freshness window")
@@ -488,17 +500,51 @@ _ACK_RECEIPT_FIELDS = frozenset((*PeerAck.__dataclass_fields__, "ack_sha256"))
 _ACK_EVENT_FIELDS = frozenset({
     "event_type", "status", "hwnd", "summary", "data", "strict_idempotency_key",
 })
+_TARGET_IDENTITY_FIELDS = frozenset(TargetIdentity.__dataclass_fields__)
 
 
-def _canonical_ack_event(ack: PeerAck, raw: bytes, operation: dict[str, Any]) -> dict[str, Any]:
+def _operation_snapshot_bytes(operation: dict[str, Any]) -> bytes:
     if set(operation) != _ACK_OPERATION_FIELDS or not isinstance(operation.get("target"), dict):
         raise AckReplayError("peer ACK operation schema is invalid")
+    target = operation["target"]
+    if set(target) != _TARGET_IDENTITY_FIELDS:
+        raise AckReplayError("peer ACK target identity schema is invalid")
+    try:
+        TargetIdentity(**target)
+    except (TypeError, ValueError) as exc:
+        raise AckReplayError("peer ACK target identity types are invalid") from exc
+    if type(operation["input_bytes"]) is not int or not 0 < operation["input_bytes"] <= MAX_INPUT_BYTES:
+        raise AckReplayError("peer ACK operation input_bytes is invalid")
+    for field in _ACK_OPERATION_FIELDS - {"target", "input_bytes"}:
+        if type(operation[field]) is not str or not operation[field]:
+            raise AckReplayError(f"peer ACK operation {field} is invalid")
+    return _canonical_bytes(operation)
+
+
+def _operation_from_snapshot(snapshot: bytes) -> dict[str, Any]:
+    if not isinstance(snapshot, bytes):
+        raise AckReplayError("peer ACK operation snapshot must be immutable bytes")
+    try:
+        operation = json.loads(snapshot.decode("ascii"))
+    except Exception as exc:
+        raise AckReplayError("peer ACK operation snapshot is malformed") from exc
+    if not isinstance(operation, dict) or _operation_snapshot_bytes(operation) != snapshot:
+        raise AckReplayError("peer ACK operation snapshot is not canonical")
+    return operation
+
+
+def _canonical_ack_event(ack: PeerAck, raw: bytes, operation_snapshot: bytes) -> dict[str, Any]:
+    operation = _operation_from_snapshot(operation_snapshot)
     if operation["message_id"] != ack.message_id or operation["challenge"] != ack.challenge:
         raise AckReplayError("peer ACK operation identity binding failed")
     if operation["input_sha256"] != ack.input_sha256:
         raise AckReplayError("peer ACK operation input binding failed")
     if operation["sender"] != ack.receiver or operation["receiver"] != ack.sender:
         raise AckReplayError("peer ACK operation peer binding failed")
+    if operation["response_key_id"] != ack.key_id:
+        raise AckReplayError("peer ACK response key binding failed")
+    if not hmac.compare_digest(hashlib.sha256(operation_snapshot).hexdigest(), ack.operation_sha256):
+        raise AckReplayError("peer ACK authenticated operation snapshot binding failed")
     receipt = {**asdict(ack), "ack_sha256": hashlib.sha256(raw).hexdigest()}
     return {
         "event_type": "guarded_submit_acknowledged",
@@ -637,7 +683,7 @@ class DurableAckFinalizer:
         raw: bytes,
         audit: Callable[[dict[str, Any]], None],
         audit_event: dict[str, Any],
-        operation: dict[str, Any],
+        operation_snapshot: bytes,
     ) -> None:
         ack_sha256 = hashlib.sha256(raw).hexdigest()
         values = (ack.sender, ack.receiver, ack.message_id, ack.challenge, ack.ack_nonce, ack.input_sha256, ack_sha256)
@@ -646,7 +692,7 @@ class DurableAckFinalizer:
             "challenge": ack.challenge, "ack_nonce": ack.ack_nonce, "input_sha256": ack.input_sha256,
             "ack_sha256": ack_sha256, "key_id": ack.key_id, "decision": ack.decision,
         }
-        expected_event = _canonical_ack_event(ack, raw, operation)
+        expected_event = _canonical_ack_event(ack, raw, operation_snapshot)
         with contextlib.closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
@@ -1085,14 +1131,14 @@ class _Authorities:
     focus: Callable[[int, float], dict[str, Any]]
     enter: Callable[[TargetIdentity, float], dict[str, Any]]
     receive_ack: Callable[[PeerAckRequest, float], bytes]
-    finalize_ack: Callable[[PeerAck, bytes, Callable[[dict[str, Any]], None], dict[str, Any], dict[str, Any]], None]
+    finalize_ack: Callable[[PeerAck, bytes, Callable[[dict[str, Any]], None], dict[str, Any], bytes], None]
     audit_append: Callable[..., dict[str, Any]]
     token_hex: Callable[[int], str]
 
     def __post_init__(self) -> None:
         fixed = (_production_send_body, _production_focus, _production_enter)
         if (self.send_body, self.focus, self.enter) != fixed:
-            raise ValueError("physical authorities must be the fixed production native authority identities")
+            raise ValueError("public guarded_submit requires its built-in physical authority identities")
 
 
 @dataclass(frozen=True)
@@ -1104,7 +1150,7 @@ class _InjectedTestAuthorities:
     focus: Callable[[int, float], dict[str, Any]]
     enter: Callable[[TargetIdentity, float], dict[str, Any]]
     receive_ack: Callable[[PeerAckRequest, float], bytes]
-    finalize_ack: Callable[[PeerAck, bytes, Callable[[dict[str, Any]], None], dict[str, Any], dict[str, Any]], None]
+    finalize_ack: Callable[[PeerAck, bytes, Callable[[dict[str, Any]], None], dict[str, Any], bytes], None]
     audit_append: Callable[..., dict[str, Any]]
     token_hex: Callable[[int], str]
 
@@ -1338,7 +1384,8 @@ class ProcessingAckServer:
                     keyring=self.keyring, key_id=request.response_key_id,
                     message_id=request.message_id, challenge=request.challenge,
                     attempt_nonce=request.attempt_nonce, ack_nonce=secrets.token_hex(TOKEN_BYTES),
-                    input_sha256=request.input_sha256, processed_input_sha256=processed_digest,
+                    input_sha256=request.input_sha256, operation_sha256=request.operation_sha256,
+                    processed_input_sha256=processed_digest,
                     sender=request.receiver, receiver=request.sender, decision=decision,
                 )
 
@@ -1611,6 +1658,8 @@ def _guarded_submit_impl(
         "input_sha256": input_sha256, "input_bytes": len(encoded_input),
         "sender": sender, "receiver": receiver, "target": asdict(target),
     }
+    operation_snapshot = _operation_snapshot_bytes(base)
+    operation_sha256 = hashlib.sha256(operation_snapshot).hexdigest()
     body_evidence: dict[str, Any] = {}
 
     def audit_spec(event_type: str, status: str, *, idempotency_key: str = "", **data: Any) -> dict[str, Any]:
@@ -1728,6 +1777,7 @@ def _guarded_submit_impl(
         challenge=challenge, input_sha256=input_sha256, sender=sender,
         receiver=receiver, issued_at=time.time(), response_key_id=response_key,
         attempt_nonce=authorities.token_hex(TOKEN_BYTES),
+        operation_sha256=operation_sha256,
     )
     try:
         remaining = operation_deadline - time.monotonic()
@@ -1739,7 +1789,7 @@ def _guarded_submit_impl(
         ack = verify_peer_ack(
             raw_ack, keyring=keyring, key_id=response_key, message_id=message_id,
             challenge=challenge, attempt_nonce=request.attempt_nonce,
-            input_sha256=input_sha256, sender=receiver,
+            input_sha256=input_sha256, operation_sha256=operation_sha256, sender=receiver,
             receiver=sender, max_age_seconds=max_age,
         )
         if time.monotonic() >= operation_deadline:
@@ -1749,6 +1799,7 @@ def _guarded_submit_impl(
                 "schema": ack.schema, "key_id": ack.key_id,
                 "challenge": ack.challenge, "ack_nonce": ack.ack_nonce,
                 "attempt_nonce": ack.attempt_nonce,
+                "operation_sha256": ack.operation_sha256,
                 "processed_input_sha256": ack.processed_input_sha256,
                 "sender": ack.sender, "receiver": ack.receiver,
                 "decision": ack.decision, "issued_at": ack.issued_at,
@@ -1756,8 +1807,8 @@ def _guarded_submit_impl(
             }
         }
 
-        ack_event = _canonical_ack_event(ack, raw_ack, base)
-        authorities.finalize_ack(ack, raw_ack, append_audit, ack_event, base)
+        ack_event = _canonical_ack_event(ack, raw_ack, operation_snapshot)
+        authorities.finalize_ack(ack, raw_ack, append_audit, ack_event, operation_snapshot)
     except Exception as exc:
         return audit_failure("ambiguous", f"peer_ack_failed:{type(exc).__name__}", enter=enter_result)
     return {
@@ -1786,7 +1837,11 @@ def guarded_submit(
     ack_timeout: float = 10.0,
     max_ack_age_seconds: float = DEFAULT_ACK_MAX_AGE_SECONDS,
 ) -> dict[str, Any]:
-    """Run the fixed-authority candidate guarded-submit transaction."""
+    """Run guarded submit under a trusted, non-monkeypatched interpreter.
+
+    The exported path fixes its collaborators. Private helpers, test injection,
+    hostile reflection, and module mutation are outside this bounded claim.
+    """
     client = RawJsonNamedPipeClient(ack_pipe, keyring)
     _protect_evidence_path(Path(event_log_path))
     finalizer = DurableAckFinalizer(replay_path)

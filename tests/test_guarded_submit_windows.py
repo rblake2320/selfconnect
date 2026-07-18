@@ -28,6 +28,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_real_receiver_hashes_unicode_stdin_and_returns_signed_ack(tmp_path):
+    repo_root = Path(__file__).resolve().parents[1]
     title = f"SC_GUARDED_{os.getpid()}_{time.time_ns()}"
     pipe = guarded.make_private_pipe_address()
     key = os.urandom(32)
@@ -127,7 +128,7 @@ except Exception:
         evidence_path = os.environ.get("SELFCONNECT_REAL_EVIDENCE_PATH")
         if evidence_path:
             evidence = {
-                "schema": "selfconnect.guarded-hardware-submit-live.v3",
+                "schema": "selfconnect.guarded-hardware-submit-live.v4",
                 "status": "PASS",
                 "claim_status": "candidate evidence only; issue #22 remains open",
                 "platform": sys.platform,
@@ -156,6 +157,7 @@ except Exception:
                     "key_id": result["ack"]["key_id"],
                     "challenge_echo_matched": result["ack"]["challenge"] == result["challenge"],
                     "attempt_nonce_bound": bool(result["ack"]["attempt_nonce"]),
+                    "operation_snapshot_sha256": result["ack"]["operation_sha256"],
                     "independent_response_key_id": result["ack"]["key_id"],
                     "sender": result["ack"]["sender"],
                     "receiver": result["ack"]["receiver"],
@@ -177,7 +179,8 @@ except Exception:
                     "client_token_logon_sid_checked": True,
                     "overlapped_total_deadline": True,
                     "overlapped_buffers_retained_until_kernel_completion": True,
-                    "bounded_native_authority_contract": True,
+                    "native_deadline_pre_call_checks": True,
+                    "native_deadline_completion_boundary": "entered native calls may complete after the deadline; post-call expiry is ambiguous",
                 },
                 "processor": {
                     "direct_child_killed_on_deadline": True,
@@ -188,10 +191,23 @@ except Exception:
                 },
                 "claim_boundaries": {
                     "issue_22_open": True,
+                    "authority_scope": "exported guarded_submit under a trusted non-monkeypatched interpreter; private helpers and module mutation excluded",
                     "production_readiness_claimed": False,
                     "windows_terminal_per_tab_claimed": False,
                     "logical_sender_is_process_identity_claim": False,
                     "protected_parent_directory_is_deployer_precondition": True,
+                },
+                "implementation_evidence": {
+                    "commit_scope": "implementation prior-head captured before committing this refreshed artifact",
+                    "git_head": subprocess.check_output(
+                        ["git", "rev-parse", "HEAD"], cwd=repo_root, text=True,
+                    ).strip(),
+                    "sc_guarded_submit_sha256": hashlib.sha256(
+                        (repo_root / "sc_guarded_submit.py").read_bytes(),
+                    ).hexdigest(),
+                    "self_connect_sha256": hashlib.sha256(
+                        (repo_root / "self_connect.py").read_bytes(),
+                    ).hexdigest(),
                 },
                 "secrets_or_raw_input_included": False,
             }

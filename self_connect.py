@@ -1037,7 +1037,12 @@ def focus_window(hwnd: int) -> bool:
 def focus_window_checked(
     hwnd: int, settle_seconds: float = 0.2, *, deadline: float | None = None,
 ) -> dict[str, object]:
-    """Focus ``hwnd`` and return checked Win32 acceptance and observation."""
+    """Focus ``hwnd`` and return checked Win32 acceptance and observation.
+
+    ``deadline`` is checked immediately before each native call. A call already
+    entered may complete after the deadline; callers must classify that outcome
+    from post-call observation rather than treating the deadline as cancellation.
+    """
     hwnd = int(hwnd)
     attached = False
     result: dict[str, object]
@@ -1168,7 +1173,8 @@ def hardware_enter_checked(
 ) -> dict[str, object]:
     """Validate a held target process immediately around one physical Enter.
 
-    The irreducible boundary is the kernel scheduling interval inside SendInput:
+    A deadline prevents entering SendInput after expiry but cannot cancel a native
+    call already entered. The irreducible boundary is the kernel scheduling interval inside SendInput:
     foreground can change after the last user-mode check. The post-check detects
     that case and reports ambiguity; it cannot retract already inserted events.
     """
@@ -1282,6 +1288,9 @@ def send_string(target: WindowTarget, text: str, char_delay: float = 0.05,
     ``delivery_verified`` false until an independent readback or ACK observes
     receiver state. In particular, PostMessage success establishes only that a
     message was placed in the target thread queue.
+
+    ``deadline`` is a pre-call admission check, not a guarantee that an entered
+    native operation completes before that time. Post-call expiry is ambiguous.
     """
     normalized_mode = str(mode).strip().lower()
     if normalized_mode not in {"auto", "console", "postmessage"}:

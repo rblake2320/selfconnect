@@ -59,6 +59,7 @@ def _ack(request: guarded.PeerAckRequest, *, decision="accepted", **overrides) -
         "attempt_nonce": request.attempt_nonce,
         "ack_nonce": ACK_NONCE,
         "input_sha256": request.input_sha256,
+        "operation_sha256": request.operation_sha256,
         "sender": request.receiver,
         "receiver": request.sender,
         "decision": decision,
@@ -67,15 +68,23 @@ def _ack(request: guarded.PeerAckRequest, *, decision="accepted", **overrides) -
     return guarded.sign_peer_ack(**values)
 
 
-def _ack_operation(ack: guarded.PeerAck, **overrides):
+def _operation_snapshot(*, message_id=MESSAGE_ID, challenge=CHALLENGE, input_sha256=None, response_key_id=KEY_ID, **overrides):
     operation = {
-        "message_id": ack.message_id, "challenge": ack.challenge,
-        "key_id": KEY_ID, "response_key_id": ack.key_id,
-        "input_sha256": ack.input_sha256, "input_bytes": len(TEXT.encode()),
-        "sender": ack.receiver, "receiver": ack.sender, "target": asdict(TARGET),
+        "message_id": message_id, "challenge": challenge,
+        "key_id": KEY_ID, "response_key_id": response_key_id,
+        "input_sha256": input_sha256 or hashlib.sha256(TEXT.encode()).hexdigest(),
+        "input_bytes": len(TEXT.encode()),
+        "sender": SENDER, "receiver": RECEIVER, "target": asdict(TARGET),
     }
     operation.update(overrides)
-    return operation
+    return guarded._operation_snapshot_bytes(operation)
+
+
+def _ack_operation(ack: guarded.PeerAck):
+    return _operation_snapshot(
+        message_id=ack.message_id, input_sha256=ack.input_sha256,
+        response_key_id=ack.key_id,
+    )
 
 
 def _ack_event(ack: guarded.PeerAck, raw: bytes, operation=None):
@@ -326,6 +335,7 @@ def test_named_pipe_connect_uses_total_deadline():
     request = guarded.PeerAckRequest(
         guarded.REQUEST_SCHEMA, KEY_ID, MESSAGE_ID, CHALLENGE,
         hashlib.sha256(TEXT.encode()).hexdigest(), SENDER, RECEIVER, time.time(), KEY_ID, ATTEMPT_NONCE,
+        hashlib.sha256(_operation_snapshot()).hexdigest(),
     )
     started = time.monotonic()
     with pytest.raises(TimeoutError, match="deadline"):
@@ -400,6 +410,7 @@ def test_bool_or_nonfinite_ack_timestamp_rejected(timestamp):
         "challenge": CHALLENGE, "ack_nonce": ACK_NONCE,
         "attempt_nonce": ATTEMPT_NONCE,
         "input_sha256": hashlib.sha256(TEXT.encode()).hexdigest(),
+        "operation_sha256": "55" * 32,
         "processed_input_sha256": hashlib.sha256(TEXT.encode()).hexdigest(),
         "sender": RECEIVER, "receiver": SENDER, "decision": "accepted", "issued_at": timestamp,
     }
@@ -414,6 +425,7 @@ def test_bool_or_nonfinite_ack_timestamp_rejected(timestamp):
         guarded.verify_peer_ack(
             raw, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID,
             challenge=CHALLENGE, attempt_nonce=ATTEMPT_NONCE, input_sha256=body["input_sha256"],
+            operation_sha256=body["operation_sha256"],
             sender=RECEIVER, receiver=SENDER,
         )
 
@@ -440,11 +452,13 @@ def test_pending_ack_can_reconcile_once_then_replay_is_rejected(tmp_path):
     request = guarded.PeerAckRequest(
         guarded.REQUEST_SCHEMA, KEY_ID, MESSAGE_ID, CHALLENGE,
         hashlib.sha256(TEXT.encode()).hexdigest(), SENDER, RECEIVER, 1.0, KEY_ID, ATTEMPT_NONCE,
+        hashlib.sha256(_operation_snapshot()).hexdigest(),
     )
     raw = _ack(request, issued_at=1.0)
     ack = guarded.verify_peer_ack(
         raw, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID,
         challenge=CHALLENGE, attempt_nonce=ATTEMPT_NONCE, input_sha256=request.input_sha256,
+        operation_sha256=request.operation_sha256,
         sender=RECEIVER, receiver=SENDER, now=1.0,
     )
     operation = _ack_operation(ack)
@@ -464,7 +478,7 @@ def test_pending_retry_cannot_replace_persisted_audit_envelope(tmp_path):
     raw = _ack(request, issued_at=1.0)
     ack = guarded.verify_peer_ack(
         raw, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID, challenge=CHALLENGE,
-        attempt_nonce=ATTEMPT_NONCE, input_sha256=request.input_sha256,
+        attempt_nonce=ATTEMPT_NONCE, input_sha256=request.input_sha256, operation_sha256=request.operation_sha256,
         sender=RECEIVER, receiver=SENDER, now=1.0,
     )
     operation = _ack_operation(ack)
@@ -498,6 +512,7 @@ def test_finalizer_rejects_any_noncanonical_ack_event_field(tmp_path, path, muta
     ack = guarded.verify_peer_ack(
         raw, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID,
         challenge=CHALLENGE, attempt_nonce=ATTEMPT_NONCE, input_sha256=request.input_sha256,
+        operation_sha256=request.operation_sha256,
         sender=RECEIVER, receiver=SENDER, now=1.0,
     )
     operation = _ack_operation(ack)
@@ -517,6 +532,7 @@ def test_finalizer_rejects_missing_authenticated_ack_field(tmp_path):
     ack = guarded.verify_peer_ack(
         raw, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID,
         challenge=CHALLENGE, attempt_nonce=ATTEMPT_NONCE, input_sha256=request.input_sha256,
+        operation_sha256=request.operation_sha256,
         sender=RECEIVER, receiver=SENDER, now=1.0,
     )
     operation = _ack_operation(ack)
@@ -525,6 +541,45 @@ def test_finalizer_rejects_missing_authenticated_ack_field(tmp_path):
     store = guarded.DurableAckFinalizer(tmp_path / "finalize.sqlite3")
     with pytest.raises(guarded.AckReplayError, match="data schema"):
         store.finalize(ack, raw, lambda _event: None, event, operation)
+
+
+@pytest.mark.parametrize(
+    "target_mutation",
+    [
+        lambda target: target.__setitem__("extra", True),
+        lambda target: target.pop("title"),
+        lambda target: target.__setitem__("hwnd", True),
+        lambda target: target.__setitem__("pid", "123"),
+        lambda target: target.__setitem__("title", 7),
+    ],
+)
+def test_operation_snapshot_rejects_nonexact_nested_target_identity(target_mutation):
+    operation = json.loads(_operation_snapshot().decode("ascii"))
+    target_mutation(operation["target"])
+    with pytest.raises(guarded.AckReplayError, match="target identity"):
+        guarded._operation_snapshot_bytes(operation)
+
+
+def test_operation_snapshot_is_deeply_detached_before_event_creation():
+    operation = json.loads(_operation_snapshot().decode("ascii"))
+    snapshot = guarded._operation_snapshot_bytes(operation)
+    operation["target"]["title"] = "MUTATED"
+    operation["input_bytes"] = 1
+    assert guarded._operation_from_snapshot(snapshot)["target"]["title"] == TARGET.title
+    assert guarded._operation_from_snapshot(snapshot)["input_bytes"] == len(TEXT.encode())
+
+
+def test_signed_ack_response_key_must_match_authenticated_operation_snapshot():
+    request, _ = _request_wire(issued_at=1.0)
+    raw = _ack(request, issued_at=1.0, key_id=OLD_KEY_ID)
+    ack = guarded.verify_peer_ack(
+        raw, keyring=KEYRING, key_id=OLD_KEY_ID, message_id=MESSAGE_ID,
+        challenge=CHALLENGE, attempt_nonce=ATTEMPT_NONCE,
+        input_sha256=request.input_sha256, operation_sha256=request.operation_sha256,
+        sender=RECEIVER, receiver=SENDER, now=1.0,
+    )
+    with pytest.raises(guarded.AckReplayError, match="response key binding"):
+        guarded._canonical_ack_event(ack, raw, _operation_snapshot())
 
 
 def test_strict_idempotent_audit_append_does_not_duplicate(tmp_path):
@@ -557,10 +612,13 @@ def _request_wire(
     *, issued_at: float = 1.0, attempt_nonce: str = ATTEMPT_NONCE,
     input_sha256: str | None = None, request_key_id: str = KEY_ID, response_key_id: str = KEY_ID,
 ) -> tuple[guarded.PeerAckRequest, bytes]:
+    digest = input_sha256 or hashlib.sha256(TEXT.encode()).hexdigest()
+    operation_sha256 = hashlib.sha256(_operation_snapshot(
+        input_sha256=digest, response_key_id=response_key_id,
+    )).hexdigest()
     request = guarded.PeerAckRequest(
         guarded.REQUEST_SCHEMA, request_key_id, MESSAGE_ID, CHALLENGE,
-        input_sha256 or hashlib.sha256(TEXT.encode()).hexdigest(), SENDER, RECEIVER, issued_at,
-        response_key_id, attempt_nonce,
+        digest, SENDER, RECEIVER, issued_at, response_key_id, attempt_nonce, operation_sha256,
     )
     return request, guarded._wire_encode(
         guarded._request_body(request), key_id=request_key_id, key=KEYRING.resolve(request_key_id),
@@ -790,7 +848,8 @@ def test_finalizer_ack_nonce_is_globally_single_use(tmp_path):
     ack1 = guarded.verify_peer_ack(
         raw1, keyring=KEYRING, key_id=KEY_ID, message_id=request1.message_id,
         challenge=request1.challenge, attempt_nonce=request1.attempt_nonce,
-        input_sha256=request1.input_sha256, sender=RECEIVER, receiver=SENDER, now=1.0,
+        input_sha256=request1.input_sha256, operation_sha256=request1.operation_sha256,
+        sender=RECEIVER, receiver=SENDER, now=1.0,
     )
     operation1 = _ack_operation(ack1)
     event1 = _ack_event(ack1, raw1, operation1)
@@ -799,14 +858,16 @@ def test_finalizer_ack_nonce_is_globally_single_use(tmp_path):
     request2 = replace(
         request1, message_id="88" * 16, challenge="99" * 32, attempt_nonce="aa" * 32,
     )
+    operation2 = _operation_snapshot(message_id=request2.message_id, challenge=request2.challenge)
+    request2 = replace(request2, operation_sha256=hashlib.sha256(operation2).hexdigest())
     raw2 = _ack(request2, issued_at=1.0)
     ack2 = guarded.verify_peer_ack(
         raw2, keyring=KEYRING, key_id=KEY_ID, message_id=request2.message_id,
         challenge=request2.challenge, attempt_nonce=request2.attempt_nonce,
-        input_sha256=request2.input_sha256, sender=RECEIVER, receiver=SENDER, now=1.0,
+        input_sha256=request2.input_sha256, operation_sha256=request2.operation_sha256,
+        sender=RECEIVER, receiver=SENDER, now=1.0,
     )
     with pytest.raises(guarded.AckReplayError, match="nonce replay"):
-        operation2 = _ack_operation(ack2)
         store.finalize(ack2, raw2, lambda _event: None, _ack_event(ack2, raw2, operation2), operation2)
 
 
@@ -817,6 +878,7 @@ def test_audit_append_then_failure_recovers_exact_persisted_event(tmp_path):
     ack = guarded.verify_peer_ack(
         raw, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID,
         challenge=CHALLENGE, attempt_nonce=ATTEMPT_NONCE, input_sha256=request.input_sha256,
+        operation_sha256=request.operation_sha256,
         sender=RECEIVER, receiver=SENDER, now=1.0,
     )
     operation = _ack_operation(ack)
@@ -845,7 +907,7 @@ def test_public_pending_reconciliation_is_audit_only_and_idempotent(tmp_path):
     raw = _ack(request, issued_at=1.0)
     ack = guarded.verify_peer_ack(
         raw, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID, challenge=CHALLENGE,
-        attempt_nonce=ATTEMPT_NONCE, input_sha256=request.input_sha256,
+        attempt_nonce=ATTEMPT_NONCE, input_sha256=request.input_sha256, operation_sha256=request.operation_sha256,
         sender=RECEIVER, receiver=SENDER, now=1.0,
     )
     operation = _ack_operation(ack)
@@ -886,6 +948,7 @@ def test_receiver_rejects_revoked_or_expired_response_key_before_admission(tmp_p
     request = guarded.PeerAckRequest(
         guarded.REQUEST_SCHEMA, KEY_ID, MESSAGE_ID, CHALLENGE,
         hashlib.sha256(TEXT.encode()).hexdigest(), SENDER, RECEIVER, time.time(), "denied", ATTEMPT_NONCE,
+        "55" * 32,
     )
     server = guarded.ProcessingAckServer(pipe, ring, KEY_ID, tmp_path / "admission.sqlite3")
     errors = []
@@ -910,6 +973,7 @@ def test_request_rotation_authenticates_old_key_and_binds_new_response_key():
     request = guarded.PeerAckRequest(
         guarded.REQUEST_SCHEMA, OLD_KEY_ID, MESSAGE_ID, CHALLENGE,
         hashlib.sha256(TEXT.encode()).hexdigest(), SENDER, RECEIVER, time.time(), KEY_ID, ATTEMPT_NONCE,
+        "55" * 32,
     )
     raw = guarded._wire_encode(guarded._request_body(request), key_id=OLD_KEY_ID, key=OLD_KEY)
     assert guarded._validate_request(raw, keyring=KEYRING, max_age_seconds=300) == request
@@ -960,7 +1024,7 @@ def test_unbounded_physical_authority_is_refused_without_invocation():
         threading.Event().wait()
 
     hung_body._sc_deadline_bounded = True
-    with pytest.raises(ValueError, match="fixed production native authority identities"):
+    with pytest.raises(ValueError, match="built-in physical authority identities"):
         guarded._Authorities(
             snapshot=lambda _hwnd: (None, None), send_body=hung_body,
             focus=guarded._production_focus, enter=guarded._production_enter,
@@ -976,12 +1040,13 @@ def test_signed_rejection_binds_adapter_attested_digest_separately():
     raw = guarded.sign_peer_ack(
         keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID, challenge=CHALLENGE,
         attempt_nonce=ATTEMPT_NONCE, ack_nonce=ACK_NONCE,
-        input_sha256=requested, processed_input_sha256=processed,
+        input_sha256=requested, operation_sha256="55" * 32, processed_input_sha256=processed,
         sender=RECEIVER, receiver=SENDER, decision="rejected",
     )
     ack = guarded.verify_peer_ack(
         raw, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID, challenge=CHALLENGE,
-        attempt_nonce=ATTEMPT_NONCE, input_sha256=requested, sender=RECEIVER, receiver=SENDER,
+        attempt_nonce=ATTEMPT_NONCE, input_sha256=requested, operation_sha256="55" * 32,
+        sender=RECEIVER, receiver=SENDER,
     )
     assert ack.decision == "rejected" and ack.processed_input_sha256 == processed
 
@@ -1016,6 +1081,7 @@ def test_private_overlapped_pipe_loopback_and_governed_processor(tmp_path):
     request = guarded.PeerAckRequest(
         guarded.REQUEST_SCHEMA, OLD_KEY_ID, MESSAGE_ID, CHALLENGE,
         hashlib.sha256(TEXT.encode()).hexdigest(), SENDER, RECEIVER, time.time(), KEY_ID, ATTEMPT_NONCE,
+        "55" * 32,
     )
     adapter = tmp_path / "adapter.py"
     adapter.write_text(
@@ -1046,7 +1112,7 @@ def test_private_overlapped_pipe_loopback_and_governed_processor(tmp_path):
     assert not thread.is_alive() and errors == []
     ack = guarded.verify_peer_ack(
         raw_ack, keyring=KEYRING, key_id=KEY_ID, message_id=MESSAGE_ID, challenge=CHALLENGE,
-        attempt_nonce=ATTEMPT_NONCE, input_sha256=request.input_sha256,
+        attempt_nonce=ATTEMPT_NONCE, input_sha256=request.input_sha256, operation_sha256=request.operation_sha256,
         sender=RECEIVER, receiver=SENDER,
     )
     assert ack.decision == "accepted"
@@ -1073,7 +1139,8 @@ def test_private_overlapped_pipe_loopback_and_governed_processor(tmp_path):
     guarded.verify_peer_ack(
         new_raw_ack, keyring=KEYRING, key_id=KEY_ID, message_id=new_request.message_id,
         challenge=new_request.challenge, attempt_nonce=new_request.attempt_nonce,
-        input_sha256=new_request.input_sha256, sender=RECEIVER, receiver=SENDER,
+        input_sha256=new_request.input_sha256, operation_sha256=new_request.operation_sha256,
+        sender=RECEIVER, receiver=SENDER,
     )
 
     # A lost first response redelivery returns the durable signed result and
@@ -1104,6 +1171,7 @@ def test_private_overlapped_pipe_loopback_and_governed_processor(tmp_path):
     replay = guarded.verify_peer_ack(
         replay_ack, keyring=KEYRING, key_id=OLD_KEY_ID, message_id=MESSAGE_ID, challenge=CHALLENGE,
         attempt_nonce=retry.attempt_nonce, input_sha256=request.input_sha256,
+        operation_sha256=retry.operation_sha256,
         sender=RECEIVER, receiver=SENDER,
     )
     assert replay.decision == ack.decision
