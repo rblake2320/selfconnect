@@ -161,6 +161,8 @@ class FabricService:
         state = self._router.snapshot_state()
         if self._session is not None:
             state["accepted_sequences"] = self._session.export_replay_state()
+        if self._host is not None:
+            state["host_stats"] = self._host.stats()
         state["service_pid"] = os.getpid()
         state["schema_version"] = SCHEMA_VERSION
         try:

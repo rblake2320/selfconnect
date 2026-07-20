@@ -94,7 +94,7 @@
     },
     {
       "id": "package.installation_extras",
-      "statement": "The package declares optional UIA, MCP, Windows service, Telegram, ClaudeGo, and full dependency groups.",
+      "statement": "The package declares optional UIA, trust, MCP, Windows service, Telegram, ClaudeGo, and full dependency groups.",
       "status": "proven",
       "release": true,
       "scope": "Dependency declarations in pyproject.toml.",
@@ -108,7 +108,7 @@
       "evidence": [
         {
           "path": "pyproject.toml",
-          "sha256_text": "3421c7c0961457d891f207d27c683536a3f661a1ee10389aeb50318b1fa2c9de"
+          "sha256_text": "ce2a1f486016b1a3fff5f1962e834f541cd375a5b0d276a7c4c2c6c45f6d5c49"
         }
       ]
     },
@@ -704,6 +704,37 @@
       ]
     },
     {
+      "id": "fabric_v2.scm_live_service",
+      "statement": "The SelfConnect Fabric V2 service is installed as an auto-start LocalSystem Windows service on the release workstation and passed live ACK, graceful-restart replay, forced-crash recovery, and post-recovery traffic checks.",
+      "status": "proven",
+      "release": true,
+      "scope": "The SelfConnectFabricV2 SCM service on the tested Windows release workstation.",
+      "boundary": "This one-host result does not establish fleet deployment, signed-installer policy, every target machine, or default routing of every SelfConnect workload through Fabric V2.",
+      "verified_on": "2026-07-20",
+      "evidence": [
+        {
+          "path": "experiments/fabric_v2/results/fabric_v2_scm_live_20260720_redacted.json",
+          "sha256_text": "24f7ca09dce2c0aadc855949014ce1867abf1a02ec450daf6a793effd708505b",
+          "assertions": [
+            {"path": "ok", "equals": true},
+            {"path": "installed", "equals": true},
+            {"path": "live_roundtrip", "equals": true},
+            {"path": "replay_rejected_after_graceful_restart", "equals": true},
+            {"path": "scm_restarted_with_new_pid", "equals": true},
+            {"path": "post_crash_roundtrip", "equals": true}
+          ]
+        },
+        {
+          "path": "sc_fabric_host.py",
+          "sha256_text": "e4817749e2d05f8db69dda7a476cc5f8a18f0bb75fdb4b4e9057ce960bb75fb5"
+        },
+        {
+          "path": "sc_fabric_windows_svc.py",
+          "sha256_text": "4ab1d65ba24160b7089a116556bc8ffa988991bf87b6be0fd0ab0bec175bd885"
+        }
+      ]
+    },
+    {
       "id": "real_agent.twenty_agent_portable_release_evidence",
       "statement": "A portable release claim for the twenty-real-agent ladder is not yet approved because the raw local evidence is intentionally ignored and no tracked redacted run artifact is attached to this ledger.",
       "status": "evidence-local-only",
@@ -719,15 +750,42 @@
     },
     {
       "id": "identity.tpm_platform_attestation",
-      "statement": "TPM platform attestation is pending.",
-      "status": "pending",
-      "release": false,
-      "scope": "No production attestation claim.",
-      "boundary": "A TPM capability probe or TPM-backed signing must not be described as remote-verifiable platform attestation.",
-      "verified_on": "2026-07-09",
+      "statement": "SelfConnect provisions a machine-scoped non-exportable PCP identity key and locally issues and verifies nonce-bound TPM platform quotes covering PCR 0 through PCR 23 with durable replay rejection.",
+      "status": "proven",
+      "release": true,
+      "scope": "The packaged Windows TPM 2.0 mechanism and the tested release workstation's SelfConnectPlatformAIK-v1 key.",
+      "boundary": "This does not establish manufacturer or endorsement-key certificate-chain trust, remote fleet enrollment, verifier-policy distribution, certificate revocation, independent assessment, or authorization to operate.",
+      "verified_on": "2026-07-20",
       "evidence": [
         {
-          "path": "experiments/win32_probe/CAPABILITY_BACKLOG.md"
+          "path": "experiments/win32_probe/results/tpm_platform_attestation_live_20260720_redacted.json",
+          "sha256_text": "788945911da23576ea262a77d05c7f0f455a7637ab7333bcc1e22d5f66e6ab35",
+          "assertions": [
+            {"path": "ok", "equals": true},
+            {"path": "pcr_mask", "equals": 16777215},
+            {"path": "replay_checked", "equals": true},
+            {"path": "replay_rejected", "equals": true},
+            {"path": "manufacturer_chain_verified", "equals": false},
+            {"path": "raw_claim_included", "equals": false}
+          ]
+        },
+        {
+          "path": "experiments/win32_probe/results/tpm_platform_attestation_selftest_20260720_redacted.json",
+          "sha256_text": "700f8db598d302a5fa2e03ac1500fb596af52146d58ad4b8cc0a05c9aad4149b",
+          "assertions": [
+            {"path": "quote_verified", "equals": true},
+            {"path": "nonce_mismatch_rejected", "equals": true},
+            {"path": "tampered_pcr_rejected", "equals": true},
+            {"path": "private_key_exportable", "equals": false}
+          ]
+        },
+        {
+          "path": "sc_tpm_attestation.py",
+          "sha256_text": "9ca6abbb1b4b704f82413a600d221051a7900f5e10e428a063a35f20446cff7e"
+        },
+        {
+          "path": "tests/test_tpm_attestation.py",
+          "sha256_text": "ecfd175db3e009cc126933e0098dcb603b8ae67255e53d6c43354602dd0efda2"
         }
       ]
     },

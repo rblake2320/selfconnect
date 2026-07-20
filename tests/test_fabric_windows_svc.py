@@ -51,6 +51,44 @@ def test_install_remove_noop_when_not_available() -> None:
     assert remove_result == {"ok": False, "error": "win32service not available"}
 
 
+def test_install_uses_supported_pywin32_arguments() -> None:
+    import sc_fabric_windows_svc as winsvc
+
+    with (
+        mock.patch.object(winsvc, "_WIN32_SVC", True),
+        mock.patch.object(winsvc.sys, "platform", "win32"),
+        mock.patch.object(winsvc.win32serviceutil, "InstallService") as install,
+    ):
+        result = winsvc.install_service()
+
+    assert result == {
+        "ok": True,
+        "action": "installed",
+        "service_name": winsvc.SVC_NAME,
+    }
+    install.assert_called_once_with(
+        pythonClassString="sc_fabric_windows_svc.SelfConnectFabricWinSvc",
+        serviceName=winsvc.SVC_NAME,
+        displayName=winsvc.SVC_DISPLAY,
+        description=winsvc.SVC_DESCRIPTION,
+        startType=winsvc.win32service.SERVICE_AUTO_START,
+    )
+
+
+def test_service_stop_wait_is_bounded() -> None:
+    import sc_fabric_windows_svc as winsvc
+
+    with mock.patch.object(
+        winsvc.win32event,
+        "WaitForSingleObject",
+        side_effect=[winsvc.win32event.WAIT_TIMEOUT, winsvc.win32event.WAIT_OBJECT_0],
+    ) as wait:
+        winsvc._wait_for_stop(object(), poll_ms=125)
+
+    assert wait.call_count == 2
+    assert all(call.args[1] == 125 for call in wait.call_args_list)
+
+
 # ---------------------------------------------------------------------------
 # 4. Module-level constants are present and correct
 # ---------------------------------------------------------------------------

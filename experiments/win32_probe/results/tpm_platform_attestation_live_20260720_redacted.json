@@ -1,0 +1,16 @@
+{
+  "claim_sha256": "d45817c097ff944dfc1762359db127161962feaad23a857c4d9b245654022285",
+  "key_name": "SelfConnectPlatformAIK-v1",
+  "manufacturer_chain_verified": false,
+  "nonce_sha256": "ffc471d499db1085f953919a9d9d3724c5f9ae283805d239b6a86684929185c2",
+  "ok": true,
+  "pcr_algorithm": 11,
+  "pcr_mask": 16777215,
+  "pcr_values_sha256": "cfa6d2a34942a42a3e96ce4ed26037f138d6695ad8d127824a13ccba6d22540d",
+  "provider": "Microsoft Platform Crypto Provider",
+  "public_key_sha256": "e5954da7514dcc6574cd9d429d7cf36fa3fa0ca8a57da348fb6e99d48402ba96",
+  "raw_claim_included": false,
+  "replay_checked": true,
+  "replay_rejected": true,
+  "schema_version": 1
+}
