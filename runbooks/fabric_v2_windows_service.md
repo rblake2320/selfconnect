@@ -24,13 +24,15 @@ Key files:
 
 ## Prerequisites
 
-1. **Python with pywin32 installed:**
+1. **The service interpreter with SelfConnect and pywin32 installed system-wide:**
    ```
-   pip install pywin32
-   python Scripts/pywin32_postinstall.py -install
+   python -m pip install --no-user ".[service]"
+   python -m pywin32_postinstall -install
    ```
-   The post-install step registers the pywin32 service DLLs with Windows.
-   Skip this and the service will fail to start with a DLL-not-found error.
+   `LocalSystem` cannot see packages installed only in a user's site directory.
+   The post-install step registers the pywin32 service DLLs with Windows. Skip
+   either system-scope installation or the DLL registration and the service can
+   fail during import before it reaches SelfConnect.
 
 2. **Admin rights** — install, remove, start, and stop all require an elevated prompt.
    Query and status checks do not require elevation.
@@ -189,6 +191,12 @@ Then restart the elevated prompt and retry.
 
 ## Verified
 
+- 2026-07-20 — Installed as the auto-start `SelfConnectFabricV2` LocalSystem
+  service on the release workstation. A real named-pipe ACK completed, replay
+  rejection survived graceful restart, forced process termination triggered SCM
+  recovery with a new PID, and a post-recovery roundtrip completed. Recovery
+  delays are 5/15/60 seconds with a one-day reset period. Evidence:
+  `experiments/fabric_v2/results/fabric_v2_scm_live_20260720_redacted.json`.
 - Session 15 (2026-06-21) — `SelfConnectFabricV2` SCM service install/start/stop/remove
   proved; pywin32 `ServiceFramework` wrapper confirmed; state restore and watchdog checks
   passed; DACL hardening (owner SID + SYSTEM, deny-all fallback) confirmed in pipe layer.

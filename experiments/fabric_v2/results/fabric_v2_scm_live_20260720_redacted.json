@@ -1,0 +1,18 @@
+{
+  "account": "LocalSystem",
+  "auto_start": true,
+  "failure_restart_delays_ms": [5000, 15000, 60000],
+  "failure_reset_period_s": 86400,
+  "forced_process_termination": true,
+  "installed": true,
+  "live_roundtrip": true,
+  "ok": true,
+  "post_crash_roundtrip": true,
+  "raw_payload_included": false,
+  "replay_rejected_after_graceful_restart": true,
+  "schema_version": 1,
+  "scm_restarted_with_new_pid": true,
+  "service_name": "SelfConnectFabricV2",
+  "source_parent_commit": "569f456a81b22905c0f96827471cb2cdcb65bf01",
+  "system_scope_dependencies": true
+}

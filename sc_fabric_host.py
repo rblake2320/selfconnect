@@ -9,6 +9,7 @@ with direct overlapped pipe reads/writes associated with the completion port.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import sys
@@ -60,22 +61,57 @@ class IocpCompletionQueue:
     """Small wrapper over Win32 IOCP post/get used by the host worker."""
 
     def __init__(self) -> None:
-        if win32file is None or sys.platform != "win32":
+        if sys.platform != "win32":
             raise IocpUnavailableError("Windows IOCP APIs are unavailable")
-        self.handle = win32file.CreateIoCompletionPort(win32file.INVALID_HANDLE_VALUE, None, 0, 0)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self._create = kernel32.CreateIoCompletionPort
+        self._create.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32]
+        self._create.restype = ctypes.c_void_p
+        self._post = kernel32.PostQueuedCompletionStatus
+        self._post.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_size_t, ctypes.c_void_p]
+        self._post.restype = ctypes.c_int
+        self._get = kernel32.GetQueuedCompletionStatus
+        self._get.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_uint32),
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.c_uint32,
+        ]
+        self._get.restype = ctypes.c_int
+        self._close = kernel32.CloseHandle
+        self._close.argtypes = [ctypes.c_void_p]
+        self._close.restype = ctypes.c_int
+        self.handle = self._create(ctypes.c_void_p(-1), None, 0, 0)
+        if not self.handle:
+            raise ctypes.WinError(ctypes.get_last_error())
 
     def post(self, *, completion_id: int, byte_count: int = 0) -> None:
-        win32file.PostQueuedCompletionStatus(self.handle, int(byte_count), int(completion_id), None)
+        if not self._post(self.handle, int(byte_count), int(completion_id), None):
+            raise ctypes.WinError(ctypes.get_last_error())
 
     def get(self, timeout_ms: int) -> tuple[int, int]:
-        _rc, byte_count, completion_id, _overlapped = win32file.GetQueuedCompletionStatus(
+        byte_count = ctypes.c_uint32()
+        completion_id = ctypes.c_size_t()
+        overlapped = ctypes.c_void_p()
+        ok = self._get(
             self.handle,
+            ctypes.byref(byte_count),
+            ctypes.byref(completion_id),
+            ctypes.byref(overlapped),
             int(timeout_ms),
         )
-        return int(completion_id), int(byte_count)
+        if not ok:
+            error = ctypes.get_last_error()
+            if error == 258:  # WAIT_TIMEOUT
+                raise TimeoutError("IOCP completion wait timed out")
+            raise ctypes.WinError(error)
+        return int(completion_id.value), int(byte_count.value)
 
     def close(self) -> None:
-        self.handle.Close()
+        if self.handle:
+            self._close(self.handle)
+            self.handle = None
 
 
 def _require_overlapped_win32() -> None:
@@ -285,7 +321,12 @@ class FabricHostService:
         while not self._stop.is_set():
             try:
                 completion_id, _byte_count = self._iocp.get(500)
-            except Exception:
+            except Exception as exc:
+                message = f"iocp_wait:{exc.__class__.__name__}:{exc}"
+                with self._lock:
+                    if not self._errors or self._errors[-1] != message:
+                        self._errors.append(message)
+                        del self._errors[:-20]
                 continue
             if completion_id == STOP_KEY:
                 break

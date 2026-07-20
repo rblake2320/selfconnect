@@ -1,6 +1,6 @@
 # SelfConnect Claim Evidence Matrix
 
-Last updated: 2026-07-18
+Last updated: 2026-07-20
 
 This matrix ties current SelfConnect positioning to concrete proof artifacts on
 `test/win32-hardening-v1`. It is intentionally conservative: if a capability has
@@ -29,10 +29,10 @@ not been live-tested or committed as a probe, it is marked as pending.
 | Pipe-authenticated role leases/generations | Proven as isolated control-plane proof | `sc_mesh_lease.py`, `experiments/win32_probe/pipe_role_lease_probe.py`, redacted PASS artifact |
 | Governed lease gate on guarded send/read path | Proven as optional in-process runtime gate | optional runtime governed enforcement on the guarded send/read path (role+birth_id+generation+hwnd+owner_sid_hash) layered over the explore-mode target guard; `sc_mesh_lease.evaluate_lease_gate`, `sc_mesh_lease.current_owner_sid`, `sc_cli.send_text_to_window`/`read_window`, `sc_mcp` tools, `tests/test_mesh_lease.py`, `tests/test_package_adapters.py`, `experiments/win32_probe/runtime_sid_probe.py`, `experiments/win32_probe/results/runtime_sid_probe_PASS_redacted.json`. Boundary: OPTIONAL, in-process, NOT a full daemon; explore mode unchanged (no-op); birth_id optional in gate (checked when provided, skipped when omitted for backward compat); runtime OS SID lookup now uses `OpenProcessToken` -> `GetTokenInformation(TokenUser)` -> `ConvertSidToStringSidW` and fails closed on `<unknown-sid>` |
 | Channel-router composition proof | Proven as redacted model proof plus live throwaway/local proof | `experiments/win32_probe/channel_router_composition_probe.py`, `experiments/win32_probe/results/channel_router_composition_PASS_redacted.json`, `experiments/win32_probe/results/channel_router_composition_LIVE_PASS_redacted.json`, `tests/test_channel_router_composition.py`, `docs/CHANNEL_ROUTER_COMPOSITION_PROOF.md`. Boundary: the recorded model selected terminal `WM_CHAR` for its CASCADIA fixture; current production auto routing is class-aware and uses `WriteConsoleInputW` for `ConsoleWindowClass`. The browser route remains UIA Value/Invoke |
-| TPM/CNG key use | Proven in experiment/enterprise lane | `experiments/win32_probe/CAPABILITY_BACKLOG.md`; full attestation pending |
-| TPM platform attestation | Pending | `NCryptCreateClaim` descriptor fix still required |
+| TPM/CNG key use | Proven in package path | `sc_tpm_attestation.py`, `tests/test_tpm_attestation.py`; the installed identity key is machine-scoped, hardware-backed, PCP-identity marked, and non-exportable |
+| TPM platform attestation | Proven locally with an explicit remote-trust boundary | `sc_tpm_attestation.py`, `tests/test_tpm_attestation.py`, `docs/TPM_PLATFORM_ATTESTATION.md`, and the 2026-07-20 redacted live/selftest artifacts prove nonce-bound `NCRYPT_CLAIM_PLATFORM`, PCR 0-23 digest verification, pinned-key signature verification, and durable replay rejection. Manufacturer/EK chain trust, fleet enrollment/revocation, and an external relying-party policy remain deployment gates |
 | ETW provider smoke | Proven as isolated probe | `experiments/win32_probe/etw_provider.py`, `CAPABILITY_BACKLOG.md` |
-| Windows SCM service wrapper | Implemented and test-covered; live installation evidence pending | `sc_fabric_windows_svc.py`, `tests/test_fabric_windows_svc.py`; SelfConnectFabricV2 service name and install/remove/start/stop/query code exist. Boundary: this is not evidence that the service is installed, running, or production-ready on a release machine. |
+| Windows SCM service wrapper | Proven live on the release workstation | `sc_fabric_windows_svc.py`, `tests/test_fabric_windows_svc.py`, `experiments/fabric_v2/results/fabric_v2_scm_live_20260720_redacted.json`; auto-start LocalSystem installation, real named-pipe ACK, graceful restart replay persistence, forced-process SCM recovery, and post-recovery traffic passed. Boundary: one-host proof is not fleet deployment evidence |
 | Job Object containment | Proven in experiment/enterprise lane | `CAPABILITY_BACKLOG.md`; runtime adapter pending |
 | MCP/package distribution | Proven as optional adapter | `sc_mcp.py`, `pyproject.toml`, package tests, built wheel inspection. Boundary: MCP is not required for the proven WM_CHAR terminal path, UIA browser path, echo-filtered readback, target guard, or lease-gate model |
 | Fabric V0 logical scale harness | Proven as benchmark/evidence harness | `sc_fabric_benchmark.py`, `docs/FABRIC_V2_BENCHMARK_RESULTS.md`; 5/10/15/20 logical agents passed with flat sub-ms transport/governance p99 and `0.0` model calls per known task |
@@ -59,13 +59,12 @@ The current non-claims are:
 - first AI-to-AI communication through desktop automation;
 - unrestricted browser automation across public sites;
 - CAPTCHA bypass or anti-bot evasion;
-- production TPM attestation;
+- manufacturer/EK-chain-approved remote TPM attestation or fleet enrollment;
 - production named-pipe control-plane replacement for terminal-visible routing.
 
-Note: the Windows SCM wrapper is implemented and test-covered
-(`sc_fabric_windows_svc.py`, `sc_fabric_service.py`). Live installation,
-startup/restart behavior under SCM, and full governed daemon coverage remain
-release evidence gaps.
+The Windows SCM wrapper is installed and live-tested on the release workstation.
+Fleet rollout, signed installer policy, and independent deployment evidence are
+separate gates.
 
 ## Next Highest-Value Evidence
 
@@ -74,8 +73,10 @@ release evidence gaps.
    as an opt-in gate. Runtime OS owner SID lookup is proven via
    `OpenProcessToken` -> `GetTokenInformation(TokenUser)` ->
    `ConvertSidToStringSidW`.
-2. Capture live installed-service evidence for the existing Fabric V2 SCM wrapper.
-3. Finish TPM platform attestation with correct `NCryptBufferDesc`.
+2. Done on the release workstation: capture live installed-service evidence for
+   the Fabric V2 SCM wrapper.
+3. Done for the local mechanism: provision and verify a nonce-bound TPM platform
+   quote with replay rejection. Manufacturer/EK trust remains external policy.
 4. Add browser multi-tab/stale-tab proof.
 5. Add governed audit event for protected checkpoint pause.
 6. Wrap job-object containment as an optional runtime adapter.

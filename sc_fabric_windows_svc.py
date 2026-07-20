@@ -27,6 +27,16 @@ SVC_DESCRIPTION = (
 )
 
 
+def _wait_for_stop(stop_handle: Any, *, poll_ms: int = 250) -> None:
+    """Poll the SCM stop event without pinning the service's Python thread."""
+    while True:
+        result = win32event.WaitForSingleObject(stop_handle, int(poll_ms))
+        if result == win32event.WAIT_OBJECT_0:
+            return
+        if result != win32event.WAIT_TIMEOUT:
+            raise RuntimeError(f"unexpected service stop wait result: {result}")
+
+
 if _WIN32_SVC:
 
     class SelfConnectFabricWinSvc(win32serviceutil.ServiceFramework):
@@ -55,7 +65,7 @@ if _WIN32_SVC:
             self._fabric = svc_mod.FabricService(config)
             try:
                 self._fabric.start()
-                win32event.WaitForSingleObject(self._hWaitStop, win32event.INFINITE)
+                _wait_for_stop(self._hWaitStop)
             finally:
                 if self._fabric is not None:
                     self._fabric.stop()
@@ -96,11 +106,6 @@ def install_service() -> dict[str, Any]:
             displayName=SVC_DISPLAY,
             description=SVC_DESCRIPTION,
             startType=win32service.SERVICE_AUTO_START,
-        )
-        win32serviceutil.ChangeServiceConfig(
-            pythonClassString=None,
-            serviceName=SVC_NAME,
-            serviceName2=SVC_NAME,
         )
         return {"ok": True, "action": "installed", "service_name": SVC_NAME}
     except Exception as exc:
