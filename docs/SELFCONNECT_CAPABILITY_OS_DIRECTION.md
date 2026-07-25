@@ -269,11 +269,21 @@ Progress:
 - durable source-attributed observations, TTL freshness, confidence, sensitive
   value hashing, change feed, evidence linkage, broker query capability, CLI
   inspection, and runtime-state seeding are implemented;
+- bounded read-only collectors now cover mesh roles, visible windows, process
+  inventory, Windows services, NVIDIA GPU resources, and SelfConnect platform
+  capabilities without collecting process command lines, executable paths,
+  raw window text, environment variables, or credentials;
+- missing or stale state triggers one broker-owned authoritative refresh and
+  records refresh request/completion evidence;
 - live proof passed with a fresh Qwen discovering and reading its own current
   runtime identity/model/authority observation and returning
   `WORLD_STATE_MAGIC_OK`;
-- process/window/mesh/resource event collectors and automatic stale refresh are
-  still required to close M2 fully.
+- a second live proof started with missing GPU state, refreshed it through
+  `nvidia-smi`, observed the RTX 5090, and returned
+  `GPU_ACTIVE_REFRESH_OK`;
+- event-driven UIA/process/service subscriptions remain future active-perception
+  work; M2's deterministic on-demand observation and stale-refresh foundation
+  is complete.
 
 ### M3 — MCP capability bridge
 

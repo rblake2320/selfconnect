@@ -12,6 +12,8 @@
   first world-state slice: source attribution, confidence, TTL freshness,
   sensitive-value hashing, change feeds, broker access, evidence linkage, and
   live local-agent runtime observations.
+- Added bounded mesh/window/process/service/GPU/platform collectors and
+  broker-owned automatic refresh for missing or expired world-state prefixes.
 
 All notable changes to SelfConnect are documented here.
 

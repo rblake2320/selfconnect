@@ -5,6 +5,7 @@ permissions, and verification outside the model process.
 """
 
 from .broker import CapabilityBroker, CapabilityResult
+from .collectors import CollectedObservation, HostCollectors
 from .kernel import CapabilityKernel, KernelConfig
 from .models import SkillManifest
 from .permissions import Authority, PermissionDenied
@@ -17,6 +18,8 @@ __all__ = [
     "CapabilityBroker",
     "CapabilityKernel",
     "CapabilityResult",
+    "CollectedObservation",
+    "HostCollectors",
     "KernelConfig",
     "Observation",
     "PermissionDenied",

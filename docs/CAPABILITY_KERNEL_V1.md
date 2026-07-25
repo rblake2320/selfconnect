@@ -128,6 +128,13 @@ kernel is enabled. Trusted adapters can refresh runtime, mesh, and platform
 state. Models receive read-only state access through the
 `selfconnect.world-state` capability; they cannot write observations.
 
+Additional bounded collectors cover visible-window identity fields, mesh roles,
+process names/status, Windows service status, NVIDIA GPU resources, and
+SelfConnect platform capabilities. Missing or expired prefixes are refreshed
+once through a trusted host callback. Process command lines, executable paths,
+raw window text, environment variables, and credentials are intentionally not
+collected.
+
 ## Inspection CLI
 
 ```powershell

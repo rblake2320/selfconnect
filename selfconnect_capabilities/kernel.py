@@ -69,15 +69,19 @@ class CapabilityKernel:
                 self.registry.load_directory(path, require_digest=True)
         self.evidence = EvidenceStore(config.state_dir / "evidence.jsonl")
         self.world = WorldStateStore(config.state_dir)
+        self._state_refresher: Callable[[str], dict[str, Any]] | None = None
         self.broker = CapabilityBroker(self.registry, self.evidence)
         self.broker.register_verifier(
             "output-ok",
             lambda arguments, output: {"ok": bool(output.get("ok"))},
         )
-        self.broker.register_adapter("world-state-query", self.world.snapshot)
+        self.broker.register_adapter("world-state-query", self.query_world_state)
 
     def bind_adapter(self, adapter: str, callback: Callable[..., dict[str, Any]]) -> None:
         self.broker.register_adapter(adapter, callback)
+
+    def register_state_refresher(self, callback: Callable[[str], dict[str, Any]]) -> None:
+        self._state_refresher = callback
 
     def discover(self, query: str, limit: int = 5) -> dict[str, Any]:
         self._require_enabled()
@@ -98,6 +102,37 @@ class CapabilityKernel:
     def execute(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self._require_enabled()
         return self.broker.execute(capability, arguments, self.authority).as_dict()
+
+    def query_world_state(
+        self,
+        prefix: str = "",
+        include_stale: bool = False,
+        limit: int = 100,
+        refresh_if_stale: bool = True,
+    ) -> dict[str, Any]:
+        before = self.world.snapshot(prefix=prefix, include_stale=True, limit=limit)
+        refreshed = False
+        refresh_result: dict[str, Any] = {}
+        if refresh_if_stale and before["fresh"] == 0 and self._state_refresher is not None:
+            record = self.evidence.append("world_refresh_requested", prefix=prefix)
+            refresh_result = self._state_refresher(prefix)
+            refreshed = bool(refresh_result.get("ok"))
+            self.evidence.append(
+                "world_refresh_completed",
+                prefix=prefix,
+                request_evidence_id=record["event_id"],
+                ok=refreshed,
+                result=refresh_result,
+            )
+        result = self.world.snapshot(
+            prefix=prefix,
+            include_stale=include_stale,
+            limit=limit,
+        )
+        result["refreshed"] = refreshed
+        if refresh_result and not refreshed:
+            result["refresh_error"] = refresh_result.get("error", "refresh failed")
+        return result
 
     def observe(
         self,

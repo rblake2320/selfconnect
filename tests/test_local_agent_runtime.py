@@ -126,6 +126,12 @@ def test_kernel_runtime_seeds_source_attributed_world_state(monkeypatch, tmp_pat
     assert "execute.command" not in state["value"]["permissions"]
 
 
+def test_runtime_maps_world_prefixes_to_bounded_collectors() -> None:
+    assert runtime_mod.LocalAgentRuntime._world_scope_for_prefix("gpu.") == "gpu"
+    assert runtime_mod.LocalAgentRuntime._world_scope_for_prefix("windows.visible") == "windows"
+    assert runtime_mod.LocalAgentRuntime._world_scope_for_prefix("unknown.") == "all"
+
+
 def test_contract_filters_visible_tools_and_retries_missing_call(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SC_LOCAL_AGENT_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(

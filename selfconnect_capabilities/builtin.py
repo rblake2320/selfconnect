@@ -83,6 +83,7 @@ BUILTIN_SKILLS = (
             "prefix": {"type": "string"},
             "include_stale": {"type": "boolean"},
             "limit": {"type": "integer"},
+            "refresh_if_stale": {"type": "boolean"},
         }),
         verification=("output-ok",), tags=("state", "memory", "machine", "fresh", "observations"),
     ),

@@ -32,7 +32,7 @@ import sc_mesh_registry
 from sc_local_agent_harness import HarnessProfile, ToolContract, resolve_harness_profile
 from sc_qwen_core import CORE_KNOWLEDGE, CORE_VERSION
 from sc_tasks import FileLock
-from selfconnect_capabilities import Authority, CapabilityKernel, KernelConfig
+from selfconnect_capabilities import Authority, CapabilityKernel, HostCollectors, KernelConfig
 
 warnings.filterwarnings(
     "ignore",
@@ -650,6 +650,12 @@ class LocalAgentRuntime:
                 permissions=frozenset(permissions),
             ),
         )
+        self.collectors = HostCollectors(
+            mesh=config.mesh,
+            window_reader=sc_cli.list_window_records,
+            mesh_reader=self.tools.mesh_roster,
+            platform_reader=self.tools.doctor,
+        )
         adapter_methods = {
             "doctor": "doctor",
             "mesh-roster": "mesh_roster",
@@ -664,6 +670,9 @@ class LocalAgentRuntime:
         for adapter, method in adapter_methods.items():
             self.kernel.bind_adapter(adapter, self.dispatch[method])
         self.kernel.bind_adapter("runtime-refresh-state", self.refresh_world_state)
+        self.kernel.register_state_refresher(
+            lambda prefix: self.refresh_world_state(scope=self._world_scope_for_prefix(prefix))
+        )
         self.dispatch.update({
             "capability_discover": self.kernel.discover,
             "capability_inspect": self.kernel.inspect,
@@ -684,8 +693,9 @@ class LocalAgentRuntime:
     def refresh_world_state(self, scope: str = "all") -> dict[str, Any]:
         if not self.kernel_config.enabled:
             return {"ok": False, "error": "SelfConnect Capability Kernel is disabled"}
-        if scope not in {"runtime", "mesh", "platform", "all"}:
-            return {"ok": False, "error": "scope must be runtime, mesh, platform, or all"}
+        valid_scopes = {"runtime", "mesh", "windows", "processes", "services", "gpu", "platform", "all"}
+        if scope not in valid_scopes:
+            return {"ok": False, "error": f"scope must be one of {sorted(valid_scopes)}"}
         observed = []
         if scope in {"runtime", "all"}:
             facts = {
@@ -702,23 +712,34 @@ class LocalAgentRuntime:
                 source="local-agent-runtime",
                 ttl_seconds=300,
             )["observation"]["key"])
-        if scope in {"mesh", "all"}:
-            roster = self.tools.mesh_roster()
-            observed.append(self.kernel.observe(
-                f"mesh.{self.config.mesh}.roles",
-                roster.get("agents", []),
-                source="mesh-registry",
-                ttl_seconds=15,
-            )["observation"]["key"])
-        if scope in {"platform", "all"}:
-            platform = self.tools.doctor()
-            observed.append(self.kernel.observe(
-                "platform.selfconnect.capabilities",
-                platform,
-                source="selfconnect-doctor",
-                ttl_seconds=300,
-            )["observation"]["key"])
+        if scope != "runtime":
+            collector_scope = scope
+            if scope == "all":
+                collector_scope = "all"
+            for item in self.collectors.collect(collector_scope):
+                observation = self.kernel.observe(
+                    item.key,
+                    item.value,
+                    source=item.source,
+                    confidence=item.confidence,
+                    ttl_seconds=item.ttl_seconds,
+                    sensitive=item.sensitive,
+                )
+                observed.append(observation["observation"]["key"])
         return {"ok": True, "scope": scope, "observed": observed}
+
+    @staticmethod
+    def _world_scope_for_prefix(prefix: str) -> str:
+        root = prefix.split(".", 1)[0].casefold()
+        return {
+            "runtime": "runtime",
+            "mesh": "mesh",
+            "windows": "windows",
+            "processes": "processes",
+            "services": "services",
+            "gpu": "gpu",
+            "platform": "platform",
+        }.get(root, "all")
 
     def system_prompt(self) -> str:
         state = sc_local_model_role.ensure_role(
