@@ -211,6 +211,59 @@ def test_evidence_chain_detects_tampering_and_redacts_content(tmp_path: Path) ->
     assert evidence.verify()["ok"] is False
 
 
+def test_evidence_sequence_and_witness_detect_tail_truncation(tmp_path: Path) -> None:
+    evidence = EvidenceStore(tmp_path / "evidence.jsonl")
+    first = evidence.append("first", ok=True)
+    second = evidence.append("second", ok=True)
+
+    assert first["sequence"] == 1
+    assert second["sequence"] == 2
+    rows = evidence.path.read_text(encoding="utf-8").splitlines()
+    evidence.path.write_text(rows[0] + "\n", encoding="utf-8")
+
+    result = evidence.verify()
+
+    assert result["ok"] is False
+    assert result["reason"] == "tail_truncation_or_rollback"
+
+
+def test_evidence_key_is_dpapi_protected_and_entropy_is_redacted(tmp_path: Path) -> None:
+    evidence = EvidenceStore(tmp_path / "evidence.jsonl")
+    secret = "sk-live-A7f9Q2m8Z4x6C1v3B5n7K9p2"
+    record = evidence.append("secret-boundary", free_form=secret)
+
+    assert record["details"]["free_form"] == "[redacted]"
+    protected = evidence.integrity.path.read_bytes()
+    assert evidence.integrity.key not in protected
+
+
+def test_evidence_redacts_positional_command_secrets(tmp_path: Path) -> None:
+    evidence = EvidenceStore(tmp_path / "evidence.jsonl")
+
+    record = evidence.append(
+        "command",
+        arguments={
+            "argv": [
+                "client.exe",
+                "--token",
+                "short-secret",
+                "--api-key=another-short-secret",
+                "--safe",
+                "visible",
+            ],
+        },
+    )
+
+    assert record["details"]["arguments"]["argv"] == [
+        "client.exe",
+        "--token",
+        "[redacted]",
+        "--api-key=[redacted]",
+        "--safe",
+        "visible",
+    ]
+
+
 def test_task_graph_dependencies_and_resume(tmp_path: Path) -> None:
     path = tmp_path / "task.json"
     graph = TaskGraph(path, goal="diagnose app")

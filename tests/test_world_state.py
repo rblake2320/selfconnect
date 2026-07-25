@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 from selfconnect_capabilities import (
@@ -59,6 +61,24 @@ def test_world_state_change_feed_records_replacements(tmp_path: Path) -> None:
     assert len(changes) == 1
     assert changes[0]["value_digest"] == second.value_digest
     assert changes[0]["previous_digest"] == first.value_digest
+
+
+def test_world_state_digest_is_keyed_not_plain_sha256(tmp_path: Path) -> None:
+    store = WorldStateStore(tmp_path)
+    value = {"title": "private-low-entropy-window-title"}
+
+    observation = store.observe("window.title", value, source="win32")
+    plain = hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    assert observation.value_digest != plain
+    assert WorldStateStore(tmp_path).integrity.digest(value) == observation.value_digest
 
 
 def test_world_state_capability_is_permission_gated(tmp_path: Path) -> None:

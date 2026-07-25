@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import time
@@ -11,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from sc_tasks import FileLock
+
+from .integrity import IntegrityKey
 
 
 @dataclass(frozen=True)
@@ -48,11 +49,7 @@ class WorldStateStore:
         self.path = root / "world_state.json"
         self.changes_path = root / "world_changes.jsonl"
         root.mkdir(parents=True, exist_ok=True)
-
-    @staticmethod
-    def _digest(value: Any) -> str:
-        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        self.integrity = IntegrityKey(root)
 
     def observe(
         self,
@@ -66,7 +63,7 @@ class WorldStateStore:
         now: float | None = None,
     ) -> Observation:
         observed_at = time.time() if now is None else now
-        digest = self._digest(value)
+        digest = self.integrity.digest(value)
         stored_value = "[sensitive]" if sensitive else value
         observation = Observation(
             key=key,
