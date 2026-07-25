@@ -201,6 +201,7 @@ def test_kernel_loads_only_digest_pinned_external_skills(monkeypatch, tmp_path: 
         encoding="utf-8",
     )
     monkeypatch.setenv("SC_CAPABILITY_SKILL_PATHS", str(skills))
+    monkeypatch.setenv("SC_CAPABILITY_KERNEL", "1")
 
     config = KernelConfig.from_env(tmp_path / "state")
     kernel = CapabilityKernel(config, Authority("qwen"))

@@ -200,6 +200,7 @@ include = [
     "docs/SELFCONNECT_PRODUCT_BOUNDARIES.md",
     "docs/TPM_PLATFORM_ATTESTATION.md",
     "docs/CAPABILITY_KERNEL_V1.md",
+    "docs/SELFCONNECT_CAPABILITY_OS_DIRECTION.md",
     "skills/selfconnect-win32/**",
 ]
 

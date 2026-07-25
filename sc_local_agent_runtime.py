@@ -634,6 +634,7 @@ class LocalAgentRuntime:
         }
         permissions = {
             "observe.system", "read.mesh", "read.window", "capture.window", "read.file",
+            "read.state",
         }
         if config.allow_input:
             permissions.add("input.window")
@@ -662,6 +663,7 @@ class LocalAgentRuntime:
         }
         for adapter, method in adapter_methods.items():
             self.kernel.bind_adapter(adapter, self.dispatch[method])
+        self.kernel.bind_adapter("runtime-refresh-state", self.refresh_world_state)
         self.dispatch.update({
             "capability_discover": self.kernel.discover,
             "capability_inspect": self.kernel.inspect,
@@ -670,12 +672,53 @@ class LocalAgentRuntime:
         self.messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt()}
         ]
+        if self.kernel_config.enabled:
+            self.refresh_world_state(scope="runtime")
         self.ledger.append(
             "session_started",
             harness_profile=self.harness.name,
             capability_kernel=self.kernel_config.enabled,
             dynamic_skills=self.kernel_config.dynamic_skills,
         )
+
+    def refresh_world_state(self, scope: str = "all") -> dict[str, Any]:
+        if not self.kernel_config.enabled:
+            return {"ok": False, "error": "SelfConnect Capability Kernel is disabled"}
+        if scope not in {"runtime", "mesh", "platform", "all"}:
+            return {"ok": False, "error": "scope must be runtime, mesh, platform, or all"}
+        observed = []
+        if scope in {"runtime", "all"}:
+            facts = {
+                "role": self.config.role,
+                "instance_id": self.config.instance_id,
+                "model": self.config.model,
+                "mesh": self.config.mesh,
+                "harness_profile": self.harness.name,
+                "permissions": sorted(self.kernel.authority.permissions),
+            }
+            observed.append(self.kernel.observe(
+                f"runtime.{self.config.role}",
+                facts,
+                source="local-agent-runtime",
+                ttl_seconds=300,
+            )["observation"]["key"])
+        if scope in {"mesh", "all"}:
+            roster = self.tools.mesh_roster()
+            observed.append(self.kernel.observe(
+                f"mesh.{self.config.mesh}.roles",
+                roster.get("agents", []),
+                source="mesh-registry",
+                ttl_seconds=15,
+            )["observation"]["key"])
+        if scope in {"platform", "all"}:
+            platform = self.tools.doctor()
+            observed.append(self.kernel.observe(
+                "platform.selfconnect.capabilities",
+                platform,
+                source="selfconnect-doctor",
+                ttl_seconds=300,
+            )["observation"]["key"])
+        return {"ok": True, "scope": scope, "observed": observed}
 
     def system_prompt(self) -> str:
         state = sc_local_model_role.ensure_role(

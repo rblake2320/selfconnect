@@ -14,6 +14,7 @@ from .evidence import EvidenceStore
 from .permissions import Authority
 from .registry import SkillRegistry
 from .task_graph import TaskGraph
+from .world_state import WorldStateStore
 
 
 def _enabled(name: str, default: bool = False) -> bool:
@@ -67,11 +68,13 @@ class CapabilityKernel:
             for path in config.skill_paths:
                 self.registry.load_directory(path, require_digest=True)
         self.evidence = EvidenceStore(config.state_dir / "evidence.jsonl")
+        self.world = WorldStateStore(config.state_dir)
         self.broker = CapabilityBroker(self.registry, self.evidence)
         self.broker.register_verifier(
             "output-ok",
             lambda arguments, output: {"ok": bool(output.get("ok"))},
         )
+        self.broker.register_adapter("world-state-query", self.world.snapshot)
 
     def bind_adapter(self, adapter: str, callback: Callable[..., dict[str, Any]]) -> None:
         self.broker.register_adapter(adapter, callback)
@@ -95,6 +98,39 @@ class CapabilityKernel:
     def execute(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self._require_enabled()
         return self.broker.execute(capability, arguments, self.authority).as_dict()
+
+    def observe(
+        self,
+        key: str,
+        value: Any,
+        *,
+        source: str,
+        confidence: float = 1.0,
+        ttl_seconds: float = 60.0,
+        sensitive: bool = False,
+    ) -> dict[str, Any]:
+        """Trusted-host observation path; intentionally not exposed as a model tool."""
+        self._require_enabled()
+        observation = self.world.observe(
+            key,
+            value,
+            source=source,
+            confidence=confidence,
+            ttl_seconds=ttl_seconds,
+            sensitive=sensitive,
+        )
+        record = self.evidence.append(
+            "world_observation",
+            key=key,
+            source=source,
+            confidence=confidence,
+            expires_at=observation.expires_at,
+            value_digest=observation.value_digest,
+            sensitive=sensitive,
+        )
+        result = observation.public_dict()
+        result["evidence_id"] = record["event_id"]
+        return {"ok": True, "observation": result}
 
     def new_task(self, goal: str, task_id: str = "") -> TaskGraph:
         self._require_enabled()

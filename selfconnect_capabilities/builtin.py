@@ -75,4 +75,22 @@ BUILTIN_SKILLS = (
         _object({"argv": {"type": "array"}}, ["argv"]),
         verification=("output-ok",), tags=("cli", "shell", "command", "powershell"),
     ),
+    SkillManifest(
+        "selfconnect.world-state", "1.0.0",
+        "Read fresh, source-attributed SelfConnect machine and mesh observations.",
+        "world-state-query", ("read.state",),
+        _object({
+            "prefix": {"type": "string"},
+            "include_stale": {"type": "boolean"},
+            "limit": {"type": "integer"},
+        }),
+        verification=("output-ok",), tags=("state", "memory", "machine", "fresh", "observations"),
+    ),
+    SkillManifest(
+        "selfconnect.refresh-world-state", "1.0.0",
+        "Refresh runtime, mesh, and platform observations from authoritative local sources.",
+        "runtime-refresh-state", ("observe.system", "read.mesh"),
+        _object({"scope": {"type": "string"}}),
+        verification=("output-ok",), tags=("state", "refresh", "mesh", "machine", "observations"),
+    ),
 )

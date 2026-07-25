@@ -8,6 +8,10 @@
   completion, hash-linked evidence, and durable task graphs.
 - Added optional local-agent dynamic skill tools and a read-only
   `selfconnect-capabilities` inspection CLI.
+- Added Capability OS direction and novelty-boundary documentation plus the
+  first world-state slice: source attribution, confidence, TTL freshness,
+  sensitive-value hashing, change feeds, broker access, evidence linkage, and
+  live local-agent runtime observations.
 
 All notable changes to SelfConnect are documented here.
 

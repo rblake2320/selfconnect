@@ -10,6 +10,7 @@ from .models import SkillManifest
 from .permissions import Authority, PermissionDenied
 from .registry import SkillRegistry
 from .task_graph import TaskGraph, TaskStep
+from .world_state import Observation, WorldStateStore
 
 __all__ = [
     "Authority",
@@ -17,9 +18,11 @@ __all__ = [
     "CapabilityKernel",
     "CapabilityResult",
     "KernelConfig",
+    "Observation",
     "PermissionDenied",
     "SkillManifest",
     "SkillRegistry",
     "TaskGraph",
     "TaskStep",
+    "WorldStateStore",
 ]

@@ -108,6 +108,24 @@ def test_capability_kernel_does_not_change_default_tool_catalog() -> None:
     assert len(names) == 13
 
 
+def test_kernel_runtime_seeds_source_attributed_world_state(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SC_CAPABILITY_KERNEL", "1")
+    monkeypatch.setenv("SC_CAPABILITY_STATE_DIR", str(tmp_path / "capabilities"))
+    monkeypatch.setattr(
+        runtime_mod.sc_local_model_role,
+        "ensure_role",
+        lambda *args, **kwargs: {"ok": True, "state": {}},
+    )
+
+    runtime = runtime_mod.LocalAgentRuntime(_config(tmp_path))
+    state = runtime.kernel.world.get("runtime.local-test")
+
+    assert state["fresh"] is True
+    assert state["source"] == "local-agent-runtime"
+    assert state["value"]["model"] == "qwen3.6:27b"
+    assert "execute.command" not in state["value"]["permissions"]
+
+
 def test_contract_filters_visible_tools_and_retries_missing_call(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SC_LOCAL_AGENT_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(

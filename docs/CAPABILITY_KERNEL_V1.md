@@ -110,12 +110,32 @@ validates the chain.
 The v1 chain is tamper-evident, not tamper-resistant. Production deployments
 should anchor the head hash to the existing TPM or off-host/WORM evidence path.
 
+## World state
+
+The kernel stores structured observations with:
+
+- stable keys;
+- authoritative source names;
+- confidence;
+- observation and expiration timestamps;
+- current/stale status;
+- value digests;
+- sensitive-value replacement before persistence;
+- a durable change feed.
+
+The local-agent runtime seeds a fresh `runtime.<role>` observation when the
+kernel is enabled. Trusted adapters can refresh runtime, mesh, and platform
+state. Models receive read-only state access through the
+`selfconnect.world-state` capability; they cannot write observations.
+
 ## Inspection CLI
 
 ```powershell
 selfconnect-capabilities list
 selfconnect-capabilities discover "read a terminal window"
 selfconnect-capabilities inspect selfconnect.read-window
+selfconnect-capabilities state --prefix runtime.
+selfconnect-capabilities changes --since 0
 selfconnect-capabilities verify-evidence
 ```
 
