@@ -59,6 +59,7 @@ class RuntimeConfig:
     allow_input: bool = False
     allow_commands: bool = False
     allow_writes: bool = False
+    trace_tools: bool = False
     repo_root: Path = Path(__file__).resolve().parent
 
     @classmethod
@@ -73,6 +74,7 @@ class RuntimeConfig:
             "allow_input": _env_enabled("SC_LOCAL_AGENT_ALLOW_INPUT"),
             "allow_commands": _env_enabled("SC_LOCAL_AGENT_ALLOW_COMMANDS"),
             "allow_writes": _env_enabled("SC_LOCAL_AGENT_ALLOW_WRITES"),
+            "trace_tools": _env_enabled("SC_LOCAL_AGENT_TRACE_TOOLS"),
             "repo_root": Path(os.environ.get("SC_LOCAL_AGENT_ROOT", Path(__file__).resolve().parent)).resolve(),
         }
         values.update({key: value for key, value in overrides.items() if value is not None})
@@ -484,9 +486,13 @@ operator explicitly enables their independent runtime gates."""
                     seen.add(signature)
                     handler = self.dispatch.get(name)
                     try:
+                        if self.config.trace_tools:
+                            print(f"\n[Qwen tool call] {name} {_compact(args, 2_000)}", flush=True)
                         result = handler(**args) if handler else {"ok": False, "error": "unknown tool"}
                     except Exception as exc:
                         result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                if self.config.trace_tools:
+                    print(f"[Qwen tool result] {name} {_compact(result, 4_000)}", flush=True)
                 self.messages.append({"role": "tool", "content": _compact(result)})
         return "[maximum tool iterations reached]"
 

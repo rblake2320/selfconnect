@@ -35,6 +35,14 @@ def test_mutation_tools_fail_closed_by_default(tmp_path: Path) -> None:
     assert tools.command(["python", "--version"])["error"] == "command execution is disabled"
 
 
+def test_trace_tools_can_be_enabled_from_environment(monkeypatch) -> None:
+    monkeypatch.setenv("SC_LOCAL_AGENT_TRACE_TOOLS", "1")
+
+    config = runtime_mod.RuntimeConfig.from_env()
+
+    assert config.trace_tools is True
+
+
 def test_file_tools_are_repo_bounded(tmp_path: Path) -> None:
     inside = tmp_path / "inside.txt"
     inside.write_text("hello", encoding="utf-8")
