@@ -43,6 +43,21 @@ def test_trace_tools_can_be_enabled_from_environment(monkeypatch) -> None:
     assert config.trace_tools is True
 
 
+def test_visible_trace_summaries_hide_raw_tool_payloads() -> None:
+    call = runtime_mod._trace_call_summary(
+        "send_role_message",
+        {"role": "peer", "text": "hello"},
+    )
+    result = runtime_mod._trace_summary(
+        "read_role_window",
+        {"ok": True, "method": "uia_text", "text": "large terminal buffer"},
+    )
+
+    assert call == "Sending to peer: hello"
+    assert result == "window read: method=uia_text characters=21"
+    assert "large terminal buffer" not in result
+
+
 def test_file_tools_are_repo_bounded(tmp_path: Path) -> None:
     inside = tmp_path / "inside.txt"
     inside.write_text("hello", encoding="utf-8")

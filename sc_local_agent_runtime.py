@@ -8,6 +8,8 @@ Messages target registered mesh roles rather than model-supplied raw HWNDs.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import re
@@ -65,8 +67,46 @@ def _trace_summary(name: str, value: dict[str, Any]) -> str:
         )
     if name == "wait_role_reply":
         reply = str(value.get("new_text", value.get("error", ""))).replace("\r", " ").replace("\n", " ")
-        return f"ok={ok} marker={value.get('marker', '')!r} reply={reply.strip()!r}"
-    return _compact(value, 1_000).replace("\r", "\\r").replace("\n", "\\n")
+        return f"reply received: {reply.strip()}" if ok else f"waiting failed: {reply.strip()}"
+    if name == "read_role_window":
+        text = str(value.get("text", ""))
+        return (
+            f"window read: method={value.get('method', 'unknown')} characters={len(text)}"
+            if ok else f"window read failed: {value.get('error', 'unknown error')}"
+        )
+    if name == "capture_role_window":
+        ocr_text = str(value.get("ocr_text", ""))
+        return (
+            f"screen captured: OCR characters={len(ocr_text)}"
+            if ok else f"capture failed: {value.get('error', value.get('ocr_error', 'unknown error'))}"
+        )
+    if name == "mesh_events":
+        return f"mesh events read: {len(value.get('events', []))}"
+    if not ok:
+        return f"{name} failed: {value.get('error', 'unknown error')}"
+    return f"{name} completed"
+
+
+def _trace_call_summary(name: str, args: dict[str, Any]) -> str:
+    role = str(args.get("role", ""))
+    if name == "mesh_roster":
+        return "Discovering mesh peers"
+    if name == "verify_role_window":
+        return f"Verifying target {role}"
+    if name == "send_role_message":
+        text = str(args.get("text", "")).replace("\r", " ").replace("\n", " ")
+        if len(text) > 180:
+            text = text[:177] + "..."
+        return f"Sending to {role}: {text}"
+    if name == "wait_role_reply":
+        return f"Waiting for {role}: {args.get('marker', 'new reply')}"
+    if name == "read_role_window":
+        return f"Reading {role}"
+    if name == "capture_role_window":
+        return f"Reading {role} with screen capture/OCR"
+    if name == "mesh_events":
+        return f"Reading mesh history for {role or 'all roles'}"
+    return name.replace("_", " ").capitalize()
 
 
 def strip_reasoning(message: dict[str, Any]) -> dict[str, Any]:
@@ -528,12 +568,16 @@ operator explicitly enables their independent runtime gates."""
                     handler = self.dispatch.get(name)
                     try:
                         if self.config.trace_tools:
-                            print(f"\n[Qwen → tool] {name} {_compact(args, 500)}", flush=True)
-                        result = handler(**args) if handler else {"ok": False, "error": "unknown tool"}
+                            print(f"\nQwen: {_trace_call_summary(name, args)}…", flush=True)
+                        if self.config.trace_tools:
+                            with contextlib.redirect_stdout(io.StringIO()):
+                                result = handler(**args) if handler else {"ok": False, "error": "unknown tool"}
+                        else:
+                            result = handler(**args) if handler else {"ok": False, "error": "unknown tool"}
                     except Exception as exc:
                         result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
                 if self.config.trace_tools:
-                    print(f"[tool → Qwen] {_trace_summary(name, result)}", flush=True)
+                    print(f"SelfConnect: {_trace_summary(name, result)}", flush=True)
                 self.messages.append({"role": "tool", "content": _compact(result)})
         return "[maximum tool iterations reached]"
 
