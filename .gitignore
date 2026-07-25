@@ -28,6 +28,9 @@ tmp_*.png
 
 # Test temp output
 tests/_tmp/
+.pytest-*/
+.*-live-test/
+.*-audit.json
 
 # Fabric benchmark artifacts stay local unless deliberately redacted/promoted.
 experiments/fabric_v2/results/
