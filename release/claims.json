@@ -60,7 +60,7 @@
         },
         {
           "path": "sc_cli.py",
-          "sha256_text": "f3f3b671278e640fff9dfba6ee07af25b3a459e433ae17d3e8606db5d13704ca"
+          "sha256_text": "2848c116b08b53949b526785b267ba0d738ea14cb3b0e35df07c7fbe9399a9cd"
         },
         {
           "path": "tests/test_package_adapters.py",
@@ -128,7 +128,7 @@
       "evidence": [
         {
           "path": "sc_cli.py",
-          "sha256_text": "f3f3b671278e640fff9dfba6ee07af25b3a459e433ae17d3e8606db5d13704ca"
+          "sha256_text": "2848c116b08b53949b526785b267ba0d738ea14cb3b0e35df07c7fbe9399a9cd"
         },
         {
           "path": "tests/test_package_adapters.py",
@@ -559,7 +559,7 @@
         },
         {
           "path": "sc_cli.py",
-          "sha256_text": "f3f3b671278e640fff9dfba6ee07af25b3a459e433ae17d3e8606db5d13704ca"
+          "sha256_text": "2848c116b08b53949b526785b267ba0d738ea14cb3b0e35df07c7fbe9399a9cd"
         },
         {
           "path": "docs/SELFCONNECT_PRODUCT_BOUNDARIES.md",

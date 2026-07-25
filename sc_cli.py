@@ -418,6 +418,17 @@ def send_text_to_window(
     target = find_window_by_hwnd(hwnd)
     if target is None:
         return {"ok": False, "hwnd": hwnd, "error": "window disappeared after verification"}
+    point_of_use = window_to_dict(target)
+    verified_actual = guard.get("actual", {})
+    identity_fields = ("hwnd", "pid", "exe_name", "class_name", "title")
+    if any(point_of_use.get(field) != verified_actual.get(field) for field in identity_fields):
+        return {
+            "ok": False,
+            "hwnd": hwnd,
+            "error": "target identity changed after verification",
+            "guard": guard,
+            "point_of_use": point_of_use,
+        }
 
     payload = text + ("\r" if submit else "")
     delivery = sc.send_string(target, payload, char_delay=char_delay, mode=transport)
