@@ -51,6 +51,28 @@ class CapabilityBroker:
     def register_verifier(self, name: str, verifier: Verifier) -> None:
         self._verifiers[name] = verifier
 
+    def authorize(self, capability: str, authority: Authority) -> dict[str, Any]:
+        """Record and return the broker's policy decision before any adapter runs."""
+        manifest = self.registry.get(capability)
+        missing = authority.missing(manifest.permissions)
+        allowed = not missing
+        record = self.evidence.append(
+            "capability_policy_decision",
+            capability=capability,
+            principal=authority.principal,
+            allowed=allowed,
+            missing_permissions=missing,
+            manifest_digest=manifest.manifest_digest or manifest.digest(),
+        )
+        return {
+            "ok": allowed,
+            "allowed": allowed,
+            "capability": capability,
+            "missing_permissions": missing,
+            "manifest_digest": manifest.manifest_digest or manifest.digest(),
+            "evidence_id": record["event_id"],
+        }
+
     def execute(
         self,
         capability: str,
@@ -59,22 +81,28 @@ class CapabilityBroker:
     ) -> CapabilityResult:
         started = time.perf_counter()
         manifest = self.registry.get(capability)
-        validate_inputs(manifest, arguments)
-        try:
-            authority.require(manifest.permissions)
-        except PermissionDenied as exc:
+        decision = self.authorize(capability, authority)
+        if not decision["allowed"]:
+            try:
+                authority.require(manifest.permissions)
+            except PermissionDenied as exc:
+                reason = str(exc)
+            else:  # pragma: no cover - defensive consistency guard
+                reason = "capability policy denied execution"
             record = self.evidence.append(
                 "capability_denied",
                 capability=capability,
                 principal=authority.principal,
-                reason=str(exc),
+                reason=reason,
+                policy_evidence_id=decision["evidence_id"],
                 manifest_digest=manifest.manifest_digest or manifest.digest(),
             )
             return CapabilityResult(
-                False, capability, {"ok": False, "error": str(exc)},
+                False, capability, {"ok": False, "error": reason},
                 {"ok": False, "reason": "permission_denied"},
                 record["event_id"], round((time.perf_counter() - started) * 1000, 3),
             )
+        validate_inputs(manifest, arguments)
         adapter = self._adapters.get(manifest.adapter)
         if adapter is None:
             raise RuntimeError(f"trusted adapter is not registered: {manifest.adapter}")

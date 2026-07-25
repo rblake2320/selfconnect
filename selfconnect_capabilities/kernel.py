@@ -99,6 +99,11 @@ class CapabilityKernel:
         result["missing_permissions"] = self.authority.missing(manifest.permissions)
         return {"ok": True, "skill": result}
 
+    def authorize(self, capability: str) -> dict[str, Any]:
+        """Trusted-host preflight that always emits the broker policy decision."""
+        self._require_enabled()
+        return self.broker.authorize(capability, self.authority)
+
     def execute(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self._require_enabled()
         return self.broker.execute(capability, arguments, self.authority).as_dict()

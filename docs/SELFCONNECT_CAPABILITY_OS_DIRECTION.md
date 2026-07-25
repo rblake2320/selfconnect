@@ -187,6 +187,10 @@ verification cost. It must not create uncontrolled group chat.
 - expose only selected tools to the model;
 - quarantine changed schemas until reviewed.
 
+Threat-model gate: MCP implementation does not advance until injection
+hardening, completion-integrity predicates, and full task recovery are proven.
+External schemas, descriptions, and results are untrusted planner data.
+
 ### G. Experience-to-skill compiler
 
 Successful traces may produce shadow skill candidates:
@@ -285,7 +289,21 @@ Progress:
   work; M2's deterministic on-demand observation and stale-refresh foundation
   is complete.
 
-### M3 — MCP capability bridge
+### M3 — Task runtime, completion integrity, and recovery
+
+Deliverables:
+
+- evidence-satisfies-predicate completion gates;
+- budgets, deadlines, bounded retries, repair policies;
+- resume after process termination;
+- task ownership and cancellation;
+- scheduler/heartbeat integration.
+
+Gate: kill and replace a Qwen process mid-task; the successor re-derives current
+authority, resumes from the checkpoint, does not repeat completed mutations,
+and cannot mark completion without verifier evidence.
+
+### M4 — MCP capability bridge
 
 Deliverables:
 
@@ -295,10 +313,10 @@ Deliverables:
 - server-side credentials;
 - timeout and evidence handling.
 
-Gate: Qwen discovers and uses one read-only MCP tool without receiving the
+Gate: after a written threat model, Qwen discovers and uses one read-only MCP tool without receiving the
 entire server catalog or credentials; a changed schema fails closed.
 
-### M4 — Visual specialist
+### M5 — Visual specialist
 
 Deliverables:
 
@@ -311,18 +329,6 @@ Deliverables:
 Gate: primary Qwen and visual specialist coexist safely on the RTX 5090 or
 swap predictably, identify an owned test UI, and complete a verified state
 transition without raw coordinate guessing.
-
-### M5 — Task runtime and recovery
-
-Deliverables:
-
-- budgets, deadlines, bounded retries, repair policies;
-- resume after process termination;
-- task ownership and cancellation;
-- scheduler/heartbeat integration.
-
-Gate: kill and replace a Qwen process mid-task; the successor resumes from the
-checkpoint without repeating completed mutations.
 
 ### M6 — Shadow skill compiler
 
@@ -377,3 +383,22 @@ the claim/evidence matrix.
 - Treat the capability kernel as strong product engineering. Center novelty
   investigation on SelfConnect's identity-bound OS transport and verified
   dual-plane composition.
+- Separate ledger integrity from completion integrity. The broker records every
+  attempted action and runtime policy decision. A model's completion claim is
+  never evidence; task completion is accepted only when independent evidence
+  satisfies the task predicate.
+- Do not require ceremonial denied mutation calls. Trusted-host preflight
+  evaluates the policy question and emits its decision before model execution.
+- Treat exact required-call contracts as legacy trajectory diagnostics, not
+  task-success enforcement or the primary model-selection score.
+- Select models with hard gates first (zero false completion, zero policy
+  violations, working dialect adapter), then rank survivors by outcome,
+  latency, and VRAM.
+- Re-sequence full task recovery and injection hardening before the MCP bridge
+  because external schemas, descriptions, and results expand the attack and
+  partial-state surface.
+- Manifest digests are computed from canonical parsed content, not raw file
+  bytes; Git CRLF/LF conversion must not change a manifest identity.
+- Nemotron-Terminal-32B remains not evaluated for terminal competence. Its
+  historical 10/18 run measured Ollama/OpenAI tool-call dialect incompatibility
+  against a model trained for the Terminus 2 structured-command scaffold.

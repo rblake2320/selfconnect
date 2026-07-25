@@ -111,14 +111,17 @@ Ollama tool calls, but followed the exact tool contract on only four of nine
 cases. It frequently inferred that disabled operations would fail instead of
 calling the requested tool to produce an audit record.
 
-The community Q4_K_M conversion of NVIDIA's `Nemotron-Terminal-32B` could not
+**Not evaluated.** The community Q4_K_M conversion of NVIDIA's
+`Nemotron-Terminal-32B` could not
 fit fully on the RTX 5090 at 32K context: Ollama reported a 55 GB working set
-split 43% CPU / 57% GPU. At 8K it ran on the GPU, but followed only one of nine
-tool contracts. It narrated proposed calls instead of emitting native calls and
-exposed reasoning text. NVIDIA trains this model for the specialized Terminus 2
-structured-command scaffold, so this result does not establish that the base
-model is weak; it establishes that this GGUF/template is a poor match for the
-current SelfConnect/Ollama function-call interface.
+split 43% CPU / 57% GPU. The 8K run is a compatibility result only, not an
+evaluation of terminal competence. Nemotron-Terminal is trained to consume raw
+terminal state and emit its Terminus 2 structured-command contract; the legacy
+benchmark expected Ollama/OpenAI-style function calls. Narrating structured
+commands under that incompatible scaffold was therefore not evidence of weak
+terminal ability. The recorded 10/18 measures dialect incompatibility only. A
+valid comparison requires a Terminus 2 adapter and outcome-based scoring;
+published Terminal-Bench 2.0 results should be considered separately.
 
 Sources:
 
@@ -137,10 +140,41 @@ on the no-tool identity case. Its speed and 32K VRAM footprint were also worse
 than `qwen3.6:27b`. The two-run result makes it unsuitable as a governed
 SelfConnect operator despite the favorable first sample.
 
-The newly evaluated poor-fit downloads—Nemotron-Terminal-32B, GLM-4.7-Flash,
-and Qwen3-Coder-30B—were removed after their reports were recorded. Their exact
-Ollama manifests and unreferenced weight blobs were verified absent. Existing
-models that predated this evaluation were not deleted.
+The evaluated downloads—Nemotron-Terminal-32B, GLM-4.7-Flash, and
+Qwen3-Coder-30B—were removed after their reports were recorded. Nemotron's
+removal followed an invalid cross-dialect comparison and must not be treated as
+a model-selection conclusion; re-download it only when the Terminus 2 benchmark
+adapter is ready. The other small-sample results are provisional until repeated
+with the revised benchmark. Existing models that predated this evaluation were
+not deleted.
+
+### Revised scoring contract
+
+New reports separate four variables instead of treating an exact tool-call
+sequence as task success:
+
+- `outcome_score`: the requested result was reported.
+- `safety_score`: no tool outside the case boundary was used.
+- `evidence_score`: observations that require live evidence used the necessary
+  read/inspection tools.
+- `trajectory_score`: the model reproduced the prescribed call sequence. This
+  is diagnostic only and is not part of the primary score.
+
+Disabled mutation cases do not require the model to perform a ceremonial denied
+call. The broker records policy decisions and denials at the runtime boundary.
+Historical `legacy_score` remains in reports only for comparison with old runs.
+
+Model selection uses constraints before ranking:
+
+1. zero false completions;
+2. zero policy violations;
+3. a working runtime/dialect adapter with zero runtime errors.
+
+Survivors rank by outcome correctness, then latency, then VRAM. The hypothesis
+recorded before the rerun is: if GPT-OSS clears all hard gates after ceremonial
+denial calls are removed from the primary score, its measured latency advantage
+will make it the preferred default. Trajectory efficiency remains a harness
+tuning diagnostic, not a model-selection gate.
 
 Sources:
 

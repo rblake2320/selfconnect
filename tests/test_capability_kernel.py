@@ -51,6 +51,15 @@ def test_manifest_digest_is_stable_and_detects_tampering() -> None:
         SkillManifest.from_dict(pinned)
 
 
+def test_manifest_digest_is_stable_across_json_line_endings() -> None:
+    serialized = json.dumps(_manifest().public_dict(), indent=2)
+    lf = SkillManifest.from_dict(json.loads(serialized.replace("\r\n", "\n")))
+    crlf = SkillManifest.from_dict(json.loads(serialized.replace("\n", "\r\n")))
+
+    expected = "ea1484b55dc6efa8491384d290074f28020c63ad4cc0f016c406ce535c29f8c5"
+    assert lf.digest() == crlf.digest() == expected
+
+
 def test_external_registry_requires_digest_pin(tmp_path: Path) -> None:
     path = tmp_path / "echo.json"
     path.write_text(json.dumps(_manifest().unsigned_dict()), encoding="utf-8")
@@ -89,7 +98,8 @@ def test_broker_denies_without_calling_adapter(tmp_path: Path) -> None:
     calls = []
     registry = SkillRegistry()
     registry.register(_manifest())
-    broker = CapabilityBroker(registry, EvidenceStore(tmp_path / "evidence.jsonl"))
+    evidence = EvidenceStore(tmp_path / "evidence.jsonl")
+    broker = CapabilityBroker(registry, evidence)
     broker.register_adapter("test-echo", lambda value: calls.append(value) or {"ok": True})
 
     result = broker.execute("test.echo", {"value": "no"}, Authority("qwen"))
@@ -97,6 +107,26 @@ def test_broker_denies_without_calling_adapter(tmp_path: Path) -> None:
     assert result.ok is False
     assert "missing capability permissions" in result.output["error"]
     assert calls == []
+    events = [
+        json.loads(line)["event"]
+        for line in evidence.path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert events == ["capability_policy_decision", "capability_denied"]
+
+
+def test_broker_authorize_records_denial_without_model_tool_call(tmp_path: Path) -> None:
+    registry = SkillRegistry()
+    registry.register(_manifest())
+    evidence = EvidenceStore(tmp_path / "evidence.jsonl")
+    broker = CapabilityBroker(registry, evidence)
+
+    decision = broker.authorize("test.echo", Authority("qwen"))
+
+    assert decision["allowed"] is False
+    assert decision["missing_permissions"] == ["test.read"]
+    row = json.loads(evidence.path.read_text(encoding="utf-8"))
+    assert row["event"] == "capability_policy_decision"
+    assert row["details"]["allowed"] is False
 
 
 def test_broker_rejects_unknown_arguments_before_adapter(tmp_path: Path) -> None:
@@ -190,6 +220,26 @@ def test_kernel_runs_and_resumes_ready_task_steps(tmp_path: Path) -> None:
     assert result["executed"][0]["status"] == "completed"
     assert resumed.summary()["complete"] is True
     assert kernel.evidence.verify()["ok"] is True
+
+
+def test_resumed_task_rederives_current_authority(tmp_path: Path) -> None:
+    privileged = CapabilityKernel(
+        KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path),
+        Authority("creator", frozenset({"observe.system"})),
+    )
+    graph = privileged.new_task("inspect later", task_id="authority-resume")
+    graph.add(TaskStep.create("selfconnect.doctor", {}, step_id="doctor"))
+
+    restricted = CapabilityKernel(
+        KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path),
+        Authority("resumer"),
+    )
+    restricted.bind_adapter("doctor", lambda: {"ok": True})
+    resumed = restricted.load_task("authority-resume")
+    result = restricted.run_ready(resumed)
+
+    assert result["executed"][0]["status"] == "blocked"
+    assert result["executed"][0]["result"]["verification"]["reason"] == "permission_denied"
 
 
 def test_kernel_loads_only_digest_pinned_external_skills(monkeypatch, tmp_path: Path) -> None:
