@@ -113,7 +113,7 @@ def _trace_call_summary(name: str, args: dict[str, Any]) -> str:
     if name == "mesh_events":
         return f"Reading mesh history for {role or 'all roles'}"
     if name == "activity_history":
-        return "Reading Qwen activity history"
+        return "Reading local-agent activity history"
     return name.replace("_", " ").capitalize()
 
 
@@ -529,7 +529,7 @@ def tool_schemas() -> list[dict[str, Any]]:
         schema("mesh_events", "Read recent tamper-evident mesh events.", {
             "role": {"type": "string"}, "limit": {"type": "integer"},
         }),
-        schema("activity_history", "Read durable Qwen activity for this role or one process instance.", {
+        schema("activity_history", "Read durable local-agent activity for this role or one process instance.", {
             "limit": {"type": "integer"}, "instance_id": {"type": "string"},
         }),
         schema("list_windows", "List visible Win32 windows.", {
@@ -593,7 +593,7 @@ class LocalAgentRuntime:
             replace=True,
         )
         identity = state.get("state", {})
-        return f"""You are {self.config.role}, a local Qwen agent inside SelfConnect.
+        return f"""You are {self.config.role}, a local model agent inside SelfConnect.
 Identity: mesh={self.config.mesh}; role={self.config.role};
 birth_id={identity.get('birth_id', '')}; generation={identity.get('generation', 0)}.
 instance_id={self.config.instance_id}; core_version={CORE_VERSION}.
