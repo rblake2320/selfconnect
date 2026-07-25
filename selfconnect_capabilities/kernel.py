@@ -12,6 +12,7 @@ from typing import Any
 from .broker import CapabilityBroker
 from .builtin import BUILTIN_SKILLS
 from .evidence import EvidenceStore
+from .models import validate_inputs
 from .permissions import Authority
 from .registry import SkillRegistry
 from .shadow_compiler import ShadowSkillCompiler
@@ -32,6 +33,7 @@ class KernelConfig:
     dynamic_skills: bool = False
     task_graphs: bool = False
     skill_learning: str = "off"
+    governance_profile: str = "observe"
     state_dir: Path = Path.cwd() / ".selfconnect-capabilities"
     skill_paths: tuple[Path, ...] = ()
 
@@ -40,6 +42,12 @@ class KernelConfig:
         learning = os.environ.get("SC_SKILL_LEARNING", "off").strip().casefold()
         if learning not in {"off", "shadow"}:
             raise ValueError("SC_SKILL_LEARNING supports only off or shadow in v1")
+        governance = os.environ.get(
+            "SC_CAPABILITY_GOVERNANCE_PROFILE",
+            "observe",
+        ).strip().casefold()
+        if governance not in {"observe", "governed", "restricted"}:
+            raise ValueError("unknown Capability OS governance profile")
         root = state_dir or Path(os.environ.get(
             "SC_CAPABILITY_STATE_DIR",
             Path(os.environ.get("LOCALAPPDATA", Path.cwd())) / "SelfConnect" / "capabilities",
@@ -54,6 +62,7 @@ class KernelConfig:
             dynamic_skills=_enabled("SC_DYNAMIC_SKILLS"),
             task_graphs=_enabled("SC_TASK_GRAPH"),
             skill_learning=learning,
+            governance_profile=governance,
             state_dir=root.resolve(),
             skill_paths=skill_paths,
         )
@@ -234,6 +243,94 @@ class CapabilityKernel:
         self._require_task_owner(graph)
         self._reconcile_running(graph)
         return graph
+
+    def create_task_plan(
+        self,
+        goal: str,
+        steps: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Create a digest-bound durable plan from strict model-supplied steps."""
+        self._require_enabled()
+        if not self.config.task_graphs:
+            raise RuntimeError("durable task graphs are disabled")
+        if not isinstance(goal, str) or not goal.strip() or len(goal) > 4_000:
+            raise ValueError("task goal must be a non-empty bounded string")
+        if not isinstance(steps, list) or not 1 <= len(steps) <= 20:
+            raise ValueError("task plan requires between 1 and 20 steps")
+        normalized = []
+        known_ids: set[str] = set()
+        for index, value in enumerate(steps, 1):
+            if not isinstance(value, dict):
+                raise ValueError("task steps must be objects")
+            allowed = {
+                "step_id", "capability", "arguments", "depends_on",
+                "expected_manifest_digest",
+            }
+            unexpected = set(value) - allowed
+            if unexpected:
+                raise ValueError(f"unexpected task step fields: {sorted(unexpected)}")
+            capability = value.get("capability", "")
+            if not isinstance(capability, str) or not capability:
+                raise ValueError("task capability must be a non-empty string")
+            arguments = value.get("arguments", {})
+            if not isinstance(arguments, dict):
+                raise ValueError("task step arguments must be an object")
+            raw_dependencies = value.get("depends_on", [])
+            if not isinstance(raw_dependencies, list) or not all(
+                isinstance(item, str) for item in raw_dependencies
+            ):
+                raise ValueError("task dependencies must be an array of step-id strings")
+            depends_on = tuple(raw_dependencies)
+            if any(dependency not in known_ids for dependency in depends_on):
+                raise ValueError("task dependencies must reference earlier step ids")
+            raw_step_id = value.get("step_id", f"step-{index}")
+            if not isinstance(raw_step_id, str) or not raw_step_id:
+                raise ValueError("task step id must be a non-empty string")
+            step_id = raw_step_id
+            if step_id in known_ids:
+                raise ValueError(f"duplicate task step id: {step_id}")
+            manifest = self.registry.get(capability)
+            digest = manifest.manifest_digest or manifest.digest()
+            expected = value.get("expected_manifest_digest", "")
+            if not isinstance(expected, str):
+                raise ValueError("expected manifest digest must be a string")
+            if expected and expected != digest:
+                raise ValueError("task step manifest digest mismatch")
+            normalized.append({
+                "step_id": step_id,
+                "capability": capability,
+                "arguments": arguments,
+                "depends_on": depends_on,
+            })
+            validate_inputs(manifest, arguments)
+            known_ids.add(step_id)
+        graph = self.new_task(goal)
+        for step in normalized:
+            self.add_task_step(
+                graph,
+                step["capability"],
+                step["arguments"],
+                depends_on=step["depends_on"],
+                step_id=step["step_id"],
+            )
+        record = self.evidence.append(
+            "task_plan_created",
+            task_id=graph.task_id,
+            owner=graph.owner,
+            goal=goal,
+            step_count=len(steps),
+            capabilities=[step.capability for step in graph.steps.values()],
+        )
+        return {
+            "ok": True,
+            "task": graph.summary(),
+            "evidence_id": record["event_id"],
+        }
+
+    def continue_task_plan(self, task_id: str, max_steps: int = 1) -> dict[str, Any]:
+        """Recover current durable state and execute only currently ready steps."""
+        graph = self.load_task(task_id)
+        return self.run_ready(graph, max_steps=max_steps)
 
     def add_task_step(
         self,

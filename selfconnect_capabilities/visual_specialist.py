@@ -13,6 +13,27 @@ from typing import Any
 
 from sc_local_agent_runtime import RuntimeConfig, SelfConnectTools
 
+from .models import SkillManifest
+
+VISUAL_OBSERVE_SKILL = SkillManifest(
+    name="selfconnect.observe-window-visual",
+    version="1.0.0",
+    description=(
+        "Observe a verified mesh role through target-bound UIA, OCR, and a local "
+        "visual specialist with measured GPU admission."
+    ),
+    adapter="visual-observe-role",
+    permissions=("read.window", "capture.window"),
+    input_schema={
+        "type": "object",
+        "properties": {"role": {"type": "string"}},
+        "required": ["role"],
+        "additionalProperties": False,
+    },
+    verification=("output-ok",),
+    tags=("visual", "perception", "ocr", "uia", "window"),
+)
+
 
 @dataclass(frozen=True)
 class GPUAdmission:

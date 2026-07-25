@@ -28,11 +28,11 @@
       "evidence": [
         {
           "path": "tools/release_gate.py",
-          "sha256_text": "871945bdb744eaa177f733979826c3a1b7beecaf76e5fd277320a02a5bd24aab"
+          "sha256_text": "bb481b6fc25bbcc0448ddbced7d0e53467c950aee9e7310892de3ca2b7485e5f"
         },
         {
           "path": "tests/test_release_gate.py",
-          "sha256_text": "6bbb7cdad7638bcac400a7c50be146ec3514bc882319dfb17e38af5b7acbcf77"
+          "sha256_text": "9295c5e098d1ad3d5a71178b8ba7258ed74cffcbda0bc4b0c280da772cac2044"
         },
         {
           "path": ".github/workflows/ci.yml",
@@ -108,7 +108,7 @@
       "evidence": [
         {
           "path": "pyproject.toml",
-          "sha256_text": "b431c2f401ea2e793f35b80a8127732b1e9c629ee6b422c0070b9cc1612798bb"
+          "sha256_text": "0eef5079281b8ac26f01ce7240a2e50bfd4e646b58c58073dd90519613185420"
         }
       ]
     },
@@ -874,6 +874,185 @@
       "evidence": [
         {
           "path": "docs/FABRIC_V2_BUILD_TARGETS.md"
+        }
+      ]
+    },
+    {
+      "id": "capability_os.release_candidate",
+      "statement": "The disabled-by-default Capability OS release candidate integrates progressive routing, world state, durable tasks, guarded read-only MCP, target-bound perception, authenticated evidence, governance admission, and shadow-only skill learning.",
+      "status": "proven",
+      "release": true,
+      "scope": "Feature branch capability-kernel-v1 on the recorded Windows RTX 5090 host, governed profile, Qwen 3.6 27B, owned resources, and the linked M1-M7 evidence.",
+      "boundary": "This is not an authorization, compliance, universal desktop-control, arbitrary MCP mutation, cross-user key migration, or autonomous skill-publication claim. All feature and mutation gates remain independently controlled.",
+      "verified_on": "2026-07-25",
+      "public_readme": {
+        "tag": "capability_os.release_candidate",
+        "path": "README.md",
+        "sha256_text": "1f6f4f2bca8a0a4584ee45bddad182497927506e50bba5a9145b26bd6747d8b4"
+      },
+      "evidence": [
+        {
+          "path": "proofs/capability_os/m7_live_capability_os_rc_20260725.json",
+          "sha256_text": "a18e8ef15773abd4b3c8bb974fe862e75fbe748061c7eb6a6d75d4967e03f8f9",
+          "assertions": [
+            {"path": "ok", "equals": true},
+            {"path": "governance.profile", "equals": "governed"},
+            {"path": "evidence.ok", "equals": true}
+          ]
+        },
+        {
+          "path": "proofs/capability_os/m7_live_capability_os_rc_repeat2_20260725.json",
+          "sha256_text": "6f03a9511b8d936e05e78a9672ede85b98cff90ed77f0a1400e43d0af04519a6",
+          "assertions": [{"path": "ok", "equals": true}]
+        },
+        {
+          "path": "proofs/capability_os/m7_live_capability_os_rc_repeat3_20260725.json",
+          "sha256_text": "551538b1a1809ee83c9d7a8b5f29c1864c2d4acf38f0396bce9506acc63df171",
+          "assertions": [{"path": "ok", "equals": true}]
+        }
+      ]
+    },
+    {
+      "id": "capability_os.routing_tasks",
+      "statement": "The governed local runtime exposes five meta-tools and executes transactional, manifest-digest-bound durable task plans through current authority and broker verification.",
+      "status": "proven",
+      "release": false,
+      "scope": "Capability Kernel task plane and the three owned-file Qwen release-candidate runs.",
+      "boundary": "The runtime does not grant permissions through a task, accept forward dependencies, persist malformed partial plans, or treat model completion text as evidence.",
+      "verified_on": "2026-07-25",
+      "evidence": [
+        {"path": "selfconnect_capabilities/kernel.py"},
+        {"path": "sc_local_agent_runtime.py"},
+        {"path": "tests/test_capability_os_integration.py"},
+        {
+          "path": "proofs/capability_os/m7_live_capability_os_rc_20260725.json",
+          "sha256_text": "a18e8ef15773abd4b3c8bb974fe862e75fbe748061c7eb6a6d75d4967e03f8f9",
+          "assertions": [
+            {"path": "ok", "equals": true},
+            {"path": "task.steps.0.status", "equals": "completed"},
+            {"path": "task.steps.1.status", "equals": "completed"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capability_os.world_evidence_governance",
+      "statement": "Capability world state is source-attributed and untrusted, while execution evidence and policy decisions are HMAC-authenticated under a DPAPI-protected key and governance profiles are enforced by the trusted runtime.",
+      "status": "proven",
+      "release": false,
+      "scope": "Capability state, evidence, integrity, governance, migration, and their release tests.",
+      "boundary": "DPAPI migration is same-user by default; off-host WORM anchoring and deployment-specific relying-party policy remain external controls.",
+      "verified_on": "2026-07-25",
+      "evidence": [
+        {"path": "selfconnect_capabilities/world_state.py"},
+        {"path": "selfconnect_capabilities/evidence.py"},
+        {"path": "selfconnect_capabilities/integrity.py"},
+        {"path": "selfconnect_capabilities/governance.py"},
+        {"path": "sc_capability_migrate.py"},
+        {"path": "tests/test_capability_migration.py"},
+        {"path": "tests/test_capability_os_integration.py"}
+      ]
+    },
+    {
+      "id": "capability_os.mcp_read_only",
+      "statement": "The optional Capability OS MCP bridge admits digest-pinned read-only stdio tools only after authenticated schema approval and quarantines first-seen, changed, hostile, or permission-unmapped tools.",
+      "status": "proven",
+      "release": false,
+      "scope": "M4 read-only bridge and its real stdio server and Qwen proof.",
+      "boundary": "Mutation-capable MCP and network transports are outside this claim.",
+      "verified_on": "2026-07-25",
+      "evidence": [
+        {"path": "selfconnect_capabilities/mcp_bridge.py"},
+        {"path": "tests/test_mcp_bridge.py"},
+        {
+          "path": "proofs/capability_os/m4_live_qwen_mcp_20260725.json",
+          "sha256_text": "7a5787d2da4ad872ba134d92c881abd1434bf7169e916640345aa5e7266366cd",
+          "assertions": [{"path": "ok", "equals": true}]
+        }
+      ]
+    },
+    {
+      "id": "capability_os.visual_specialist",
+      "statement": "Target-bound UIA, OCR, and Qwen3-VL perception completed three owned Win32 state transitions with measured primary-model swap and restoration and no raw coordinate action.",
+      "status": "proven",
+      "release": false,
+      "scope": "M5 on the recorded RTX 5090 desktop with Qwen 3.6 27B and Qwen3-VL 8B.",
+      "boundary": "This does not establish universal application accessibility, simultaneous model residency under every desktop load, or authority to act on visual text as instructions.",
+      "verified_on": "2026-07-25",
+      "evidence": [
+        {"path": "selfconnect_capabilities/visual_specialist.py"},
+        {"path": "tests/test_live_visual_specialist_proof.py"},
+        {
+          "path": "proofs/capability_os/m5_live_visual_specialist_20260725.json",
+          "sha256_text": "6b8d795534d520317c6594ffb79d01e5ed0669b739930a07517dff5d99d0f2ef",
+          "assertions": [{"path": "ok", "equals": true}]
+        },
+        {
+          "path": "proofs/capability_os/m5_live_visual_specialist_repeat2_20260725.json",
+          "sha256_text": "7cae610a015b03bb7b51aeaa91981a9945c315316870e98d303baf1f9dc93c66",
+          "assertions": [{"path": "ok", "equals": true}]
+        },
+        {
+          "path": "proofs/capability_os/m5_live_visual_specialist_repeat3_20260725.json",
+          "sha256_text": "c0d7ab7fb0d16e6fc434b257bf84de1285cf060221f226c8a7d1a1012586d395",
+          "assertions": [{"path": "ok", "equals": true}]
+        }
+      ]
+    },
+    {
+      "id": "capability_os.shadow_skills",
+      "statement": "Authenticated successful traces can produce HMAC-authenticated shadow candidates that pass real replay and adversarial gates but cannot register, self-promote, or approve themselves.",
+      "status": "proven",
+      "release": false,
+      "scope": "M6 real-file trace compilation, replay, adversarial validation, and independent Ed25519 review workflow.",
+      "boundary": "No generated candidate is a runtime adapter, and no production skill publication is claimed.",
+      "verified_on": "2026-07-25",
+      "evidence": [
+        {"path": "selfconnect_capabilities/shadow_compiler.py"},
+        {"path": "tests/test_shadow_skill_compiler.py"},
+        {
+          "path": "proofs/capability_os/m6_live_shadow_skill_20260725.json",
+          "sha256_text": "a4c36c53e16f255a8f5358ed3445779a5dd38eb01836e4df647e99db134d6ef4",
+          "assertions": [{"path": "ok", "equals": true}]
+        },
+        {
+          "path": "proofs/capability_os/m6_live_shadow_skill_repeat2_20260725.json",
+          "sha256_text": "e1466f4ebd7dcc17715831e91ddd18569be1d6262a5f1cbc497988653c48674d",
+          "assertions": [{"path": "ok", "equals": true}]
+        },
+        {
+          "path": "proofs/capability_os/m6_live_shadow_skill_repeat3_20260725.json",
+          "sha256_text": "9b2e56c790191089d53a262a3d6bd493dc26d55af4b0063afc0f7e88258ea902",
+          "assertions": [{"path": "ok", "equals": true}]
+        }
+      ]
+    },
+    {
+      "id": "capability_os.local_model_selection",
+      "statement": "Under the published temperature-0, seed-42, 32K protocol, Qwen 3.6 27B passed all ten known and ten holdout hard-gate runs and remains the governed local default.",
+      "status": "proven",
+      "release": false,
+      "scope": "The clean repeated known and sealed-holdout matrices on the recorded RTX 5090 host.",
+      "boundary": "This ranking is workload-, quantization-, runtime-, context-, and host-specific; GPT-OSS remains a faster lower-risk option and other dialects require valid adapters.",
+      "verified_on": "2026-07-25",
+      "evidence": [
+        {
+          "path": "proofs/capability_os/model_matrix_known_clean_n10_20260725.json",
+          "sha256_text": "cbe72690422a8d589e5e7570deb239bda752bf31b998328db11cd635824e6e0e",
+          "assertions": [
+            {"path": "models.0.model", "equals": "qwen3.6:27b"},
+            {"path": "models.0.runs", "equals": 10},
+            {"path": "models.0.eligible", "equals": true}
+          ]
+        },
+        {
+          "path": "proofs/capability_os/model_matrix_holdout_clean_n10_20260725.json",
+          "sha256_text": "4d5fb189fc2394a73460ae0b7a50e19209de6f627b841ac6950ced4ad140ff8a",
+          "assertions": [
+            {"path": "models.0.model", "equals": "qwen3.6:27b"},
+            {"path": "models.0.runs", "equals": 10},
+            {"path": "models.0.eligible", "equals": true}
+          ]
         }
       ]
     }

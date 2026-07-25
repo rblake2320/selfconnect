@@ -634,7 +634,21 @@ def audit(
     claims = _audit_claims(root, claims_doc, checks, readme_text=readme)
     command_results: dict[str, Any] = {}
     if run_tests:
-        command_results["tests"] = _run([sys.executable, "-m", "pytest", "-q"], root)
+        with tempfile.TemporaryDirectory(
+            prefix=".release-pytest-",
+            dir=root,
+        ) as test_temp:
+            command_results["tests"] = _run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "-q",
+                    "--basetemp",
+                    test_temp,
+                ],
+                root,
+            )
         tests = command_results["tests"]
         checks.append(
             Check(

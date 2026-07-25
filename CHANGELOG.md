@@ -14,13 +14,19 @@
   live local-agent runtime observations.
 - Added bounded mesh/window/process/service/GPU/platform collectors and
   broker-owned automatic refresh for missing or expired world-state prefixes.
+- Added the governed Capability OS release candidate with five-tool progressive
+  routing, transactional durable task plans, target-bound visual-specialist
+  registration, mechanical governance profiles, authenticated shadow-skill
+  compilation, and a verified same-user state migration utility.
+- Added repeated real Qwen, MCP, perception, shadow-replay, model-selection,
+  and integrated release-candidate evidence plus a claim/evidence matrix.
 
 All notable changes to SelfConnect are documented here.
 
 ## [Unreleased]
 
 ### Added
-- Added 24 stable public README claim blocks bound to scoped
+- Added 25 stable public README claim blocks bound to scoped
   `release/claims.json` entries and exact excerpt hashes.
 - Added an explicit release claim/package audit step to the Windows CI workflow.
 - The release gate now reports the valid tagged numerator and total tagged

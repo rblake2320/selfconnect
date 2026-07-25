@@ -451,6 +451,34 @@ Gate: defaults remain fail-closed, proven SelfConnect tests pass, repeated local
 agent evaluations meet published thresholds, and every claim is reflected in
 the claim/evidence matrix.
 
+Status: release candidate complete.
+
+- the local-model harness exposes exactly five progressive meta-tools when
+  durable tasks are enabled: discover, inspect, execute, task-create, and
+  task-continue;
+- task creation validates the complete plan, named dependencies, arguments,
+  and optional inspected manifest digests before persisting any state;
+- world state, authenticated evidence, task recovery, read-only MCP,
+  visual-specialist perception, and shadow learning are connected through the
+  same runtime, registry, immutable authority, and broker;
+- `observe`, `governed`, and `restricted` Capability OS profiles are admitted
+  by deterministic trusted-runtime checks and cannot be waived by the model;
+- the `capability-os` package extra and
+  `selfconnect-capabilities-migrate` provide an install and verified same-user
+  DPAPI state-migration path;
+- three fresh governed Qwen 3.6 27B runs independently discovered and
+  inspected file reading, created and completed two-step durable tasks, and
+  returned exact owned-file values:
+  `proofs/capability_os/m7_live_capability_os_rc_20260725.json`,
+  `proofs/capability_os/m7_live_capability_os_rc_repeat2_20260725.json`, and
+  `proofs/capability_os/m7_live_capability_os_rc_repeat3_20260725.json`;
+- the release ledger contains bounded component claims and one public release
+  claim with 100% mechanically validated release-ledger and tagged-README
+  coverage;
+- the real-test skip audit remains explicit at
+  `docs/REAL_TEST_SKIP_AUDIT.md`; no unavailable prerequisite is replaced by a
+  mock or synthetic pass.
+
 ## Current implementation map
 
 - Capability kernel: `selfconnect_capabilities/`
@@ -461,6 +489,10 @@ the claim/evidence matrix.
 - Fabric/control plane: `sc_fabric_*.py`
 - Identity/TPM: `sc_identity.py`, `sc_tpm_attestation.py`
 - Existing visual server: `vision_server/`
+- Capability governance and migration:
+  `selfconnect_capabilities/governance.py`,
+  `sc_capability_migrate.py`
+- Shadow learning: `selfconnect_capabilities/shadow_compiler.py`
 - Capability proofs: `tests/test_capability_kernel.py`,
   `benchmarks/local_agent_model_benchmark.py`
 

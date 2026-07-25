@@ -8,7 +8,8 @@ import json
 import os
 import re
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -424,6 +425,7 @@ class StdioMCPClient:
 
     def _session_context(self):
         from contextlib import asynccontextmanager
+
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
@@ -436,13 +438,12 @@ class StdioMCPClient:
 
         @asynccontextmanager
         async def session_context():
-            async with stdio_client(parameters) as (read_stream, write_stream):
-                async with ClientSession(
-                    read_stream,
-                    write_stream,
-                    read_timeout_seconds=timedelta(seconds=self.config.timeout_seconds),
-                ) as session:
-                    await session.initialize()
-                    yield session
+            async with stdio_client(parameters) as (read_stream, write_stream), ClientSession(
+                read_stream,
+                write_stream,
+                read_timeout_seconds=timedelta(seconds=self.config.timeout_seconds),
+            ) as session:
+                await session.initialize()
+                yield session
 
         return session_context()

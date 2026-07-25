@@ -18,6 +18,7 @@ def _kernel(state_dir: str = "") -> CapabilityKernel:
             dynamic_skills=config.dynamic_skills,
             task_graphs=config.task_graphs,
             skill_learning=config.skill_learning,
+            governance_profile=config.governance_profile,
             state_dir=config.state_dir,
             skill_paths=config.skill_paths,
         )

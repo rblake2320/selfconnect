@@ -33,10 +33,11 @@ from sc_local_agent_harness import HarnessProfile, ToolContract, resolve_harness
 from sc_qwen_core import CORE_KNOWLEDGE, CORE_VERSION
 from sc_tasks import FileLock
 from selfconnect_capabilities import Authority, CapabilityKernel, HostCollectors, KernelConfig
+from selfconnect_capabilities.governance import GovernanceInputs, evaluate_governance
 from selfconnect_capabilities.mcp_bridge import (
     MCPBridge,
-    MCPServerConfig,
     MCPSchemaTrustStore,
+    MCPServerConfig,
     StdioMCPClient,
 )
 
@@ -557,6 +558,7 @@ def tool_schemas(
     *,
     capability_kernel: bool = False,
     dynamic_skills: bool = False,
+    task_graphs: bool = False,
 ) -> list[dict[str, Any]]:
     def schema(name: str, description: str, properties: dict[str, Any], required: list[str] | None = None):
         return {
@@ -627,6 +629,44 @@ def tool_schemas(
             "expected_manifest_digest": {"type": "string"},
         }, ["capability", "arguments", "expected_manifest_digest"]),
     ]
+    if task_graphs:
+        capability_schemas.extend([
+            schema(
+                "capability_task_create",
+                "Create a durable digest-bound capability plan with at most 20 ordered steps.",
+                {
+                    "goal": {"type": "string"},
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "step_id": {"type": "string"},
+                                "capability": {"type": "string"},
+                                "arguments": {"type": "object"},
+                                "depends_on": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                                "expected_manifest_digest": {"type": "string"},
+                            },
+                            "required": ["step_id", "capability", "arguments"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                ["goal", "steps"],
+            ),
+            schema(
+                "capability_task_continue",
+                "Recover a durable capability plan and execute its currently ready steps.",
+                {
+                    "task_id": {"type": "string"},
+                    "max_steps": {"type": "integer"},
+                },
+                ["task_id"],
+            ),
+        ])
     if capability_kernel and dynamic_skills and allowed_tools is None:
         return capability_schemas
     if capability_kernel:
@@ -698,12 +738,56 @@ class LocalAgentRuntime:
         self.kernel.register_state_refresher(
             lambda prefix: self.refresh_world_state(scope=self._world_scope_for_prefix(prefix))
         )
+        self.visual_specialist = None
+        if self.kernel_config.enabled and _env_enabled("SC_VISUAL_SPECIALIST"):
+            from selfconnect_capabilities.visual_specialist import (
+                VISUAL_OBSERVE_SKILL,
+                VisualSpecialist,
+            )
+
+            self.kernel.registry.register(VISUAL_OBSERVE_SKILL)
+            self.visual_specialist = VisualSpecialist(
+                repo_root=config.repo_root,
+                primary_model=os.environ.get(
+                    "SC_VISUAL_PRIMARY_MODEL",
+                    config.model,
+                ),
+                visual_model=os.environ.get(
+                    "SC_VISUAL_MODEL",
+                    "qwen3-vl:8b",
+                ),
+            )
+            self.kernel.bind_adapter(
+                "visual-observe-role",
+                self.visual_specialist.observe_role,
+            )
         self.mcp_bridges: list[MCPBridge] = []
         self.mcp_ingest_results = self._load_mcp_bridges()
+        self.governance = evaluate_governance(
+            self.kernel_config.governance_profile,
+            GovernanceInputs(
+                kernel_enabled=self.kernel_config.enabled,
+                dynamic_skills=self.kernel_config.dynamic_skills,
+                task_graphs=self.kernel_config.task_graphs,
+                skill_learning=self.kernel_config.skill_learning,
+                visual_specialist=self.visual_specialist is not None,
+                mcp_servers=len(self.mcp_bridges),
+                allow_input=config.allow_input,
+                allow_writes=config.allow_writes,
+                allow_commands=config.allow_commands,
+            ),
+        )
+        if not self.governance["ok"]:
+            raise RuntimeError(
+                "Capability OS governance admission failed: "
+                + ", ".join(self.governance["violations"])
+            )
         self.dispatch.update({
             "capability_discover": self.kernel.discover,
             "capability_inspect": self.kernel.inspect,
             "capability_execute": self.kernel.execute,
+            "capability_task_create": self.kernel.create_task_plan,
+            "capability_task_continue": self.kernel.continue_task_plan,
         })
         self.messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt()}
@@ -715,6 +799,9 @@ class LocalAgentRuntime:
             harness_profile=self.harness.name,
             capability_kernel=self.kernel_config.enabled,
             dynamic_skills=self.kernel_config.dynamic_skills,
+            task_graphs=self.kernel_config.task_graphs,
+            visual_specialist=self.visual_specialist is not None,
+            capability_governance=self.governance,
             mcp_servers=len(self.mcp_bridges),
         )
 
@@ -874,6 +961,7 @@ independent runtime gates.{capability_guidance}{self.harness.system_suffix}"""
             allowed,
             capability_kernel=self.kernel_config.enabled,
             dynamic_skills=self.kernel_config.dynamic_skills,
+            task_graphs=self.kernel_config.task_graphs,
         )
         if schemas:
             payload["tools"] = schemas

@@ -10,7 +10,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from sc_tasks import FileLock
 
@@ -18,10 +18,10 @@ from .integrity import IntegrityKey, canonical_bytes
 
 
 class EvidenceStore:
-    SENSITIVE_KEYS = {
+    SENSITIVE_KEYS: ClassVar[set[str]] = {
         "password", "token", "secret", "api_key", "authorization", "content",
     }
-    SENSITIVE_FLAGS = {
+    SENSITIVE_FLAGS: ClassVar[set[str]] = {
         "--password", "--token", "--secret", "--api-key", "--authorization",
         "-p",
     }

@@ -71,6 +71,22 @@ pip install selfconnect[claudego]
 pip install selfconnect[full]
 ```
 
+## Capability OS release candidate
+
+<!-- SC-CLAIM:capability_os.release_candidate START -->
+The feature-flagged Capability OS release candidate composes progressive
+capability discovery, authenticated broker evidence, source-attributed world
+state, durable task recovery, a quarantined read-only MCP bridge, target-bound
+visual perception, and shadow-only skill learning for local models. Its
+governed profile has repeated owned-resource and Qwen 3.6 27B evidence on the
+recorded RTX 5090 host. It remains disabled by default; mutation permissions,
+external MCP configuration, visual-model availability, independent skill
+approval, and deployment-specific assurance are not implied.
+Install the optional dependencies with
+`pip install "selfconnect[capability-os]"` and follow
+[`docs/CAPABILITY_OS_INSTALL_AND_MIGRATE.md`](docs/CAPABILITY_OS_INSTALL_AND_MIGRATE.md).
+<!-- SC-CLAIM:capability_os.release_candidate END -->
+
 ## Package Probes And Guarded Input
 
 ```bash

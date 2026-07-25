@@ -7,6 +7,8 @@
     "approval_telegram.py",
     "self_connect.py",
     "sc_cli.py",
+    "sc_capabilities.py",
+    "sc_capability_migrate.py",
     "sc_done.py",
     "sc_echo_filter.py",
     "sc_envelope.py",

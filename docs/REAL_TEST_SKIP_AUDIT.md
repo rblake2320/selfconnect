@@ -1,6 +1,6 @@
 # Real-test skip audit
 
-Last audited: 2026-07-25 on Windows, full suite result `921 passed, 16
+Last audited: 2026-07-25 on Windows, full suite result `944 passed, 16
 skipped`.
 
 SelfConnect does not replace missing integration prerequisites with mocks,
@@ -15,10 +15,10 @@ reported.
 | 1 | `test_tpm_attestation.py` | Elevated permission to finalize a real TPM machine key | The installed TPM returned `0x80090010`. This non-elevated session cannot manufacture that authority; software-key substitution would invalidate the hardware claim. |
 | 1 | `test_uia_echo_filter.py` | A non-Windows host | This test exercises the non-Windows not-applicable branch. Running on Windows is the opposite platform condition, so the skip is the asserted platform matrix behavior. |
 
-The M5 visual-specialist gate has no skips. It is backed by three independent
-real runs using a native owned Win32 window, UIA, OCR, Qwen3-VL through Ollama,
-measured RTX 5090 admission, Qwen 3.6 27B unload/restore, and semantic Win32
-button activation.
+The M5 visual-specialist, M6 shadow compiler, and M7 integrated governed-Qwen
+gates have no skips. M5 is backed by three independent native Win32/UIA/OCR/VLM
+runs; M6 by three independent candidates and nine real replays; M7 by three
+fresh governed Qwen runs that completed two-step durable tasks.
 
 When prerequisites become available, run the real surfaces rather than
 altering these guards:

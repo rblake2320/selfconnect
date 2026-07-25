@@ -6,6 +6,7 @@ permissions, and verification outside the model process.
 
 from .broker import CapabilityBroker, CapabilityResult
 from .collectors import CollectedObservation, HostCollectors
+from .governance import GovernanceInputs, evaluate_governance
 from .kernel import CapabilityKernel, KernelConfig
 from .mcp_bridge import (
     MCPBridge,
@@ -27,6 +28,7 @@ __all__ = [
     "CapabilityKernel",
     "CapabilityResult",
     "CollectedObservation",
+    "GovernanceInputs",
     "HostCollectors",
     "KernelConfig",
     "MCPBridge",
@@ -42,4 +44,5 @@ __all__ = [
     "TaskGraph",
     "TaskStep",
     "WorldStateStore",
+    "evaluate_governance",
 ]
