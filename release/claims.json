@@ -28,7 +28,7 @@
       "evidence": [
         {
           "path": "tools/release_gate.py",
-          "sha256_text": "bb481b6fc25bbcc0448ddbced7d0e53467c950aee9e7310892de3ca2b7485e5f"
+          "sha256_text": "9d2ab64512f73d46cd9cf02bd16934a545ff8b051d612bfd5263e026307ebd1b"
         },
         {
           "path": "tests/test_release_gate.py",
@@ -36,7 +36,7 @@
         },
         {
           "path": ".github/workflows/ci.yml",
-          "sha256_text": "4dc415a924ff2619b0f7f858dea8feacd9e6919b44495d22e5d21b132f08c1b1"
+          "sha256_text": "0d768498189d10c31ab0b892c28daad29814305604c78c3e72fbd788c0d147b7"
         }
       ]
     },
@@ -750,7 +750,7 @@
     },
     {
       "id": "identity.tpm_platform_attestation",
-      "statement": "SelfConnect provisions a machine-scoped non-exportable PCP identity key and locally issues and verifies nonce-bound TPM platform quotes covering PCR 0 through PCR 23 with durable replay rejection.",
+      "statement": "SelfConnect provisions a user-scoped non-exportable PCP identity key and locally issues and verifies nonce-bound TPM platform quotes covering PCR 0 through PCR 23 with durable replay rejection.",
       "status": "proven",
       "release": true,
       "scope": "The packaged Windows TPM 2.0 mechanism and the tested release workstation's SelfConnectPlatformAIK-v1 key.",
@@ -781,11 +781,23 @@
         },
         {
           "path": "sc_tpm_attestation.py",
-          "sha256_text": "9ca6abbb1b4b704f82413a600d221051a7900f5e10e428a063a35f20446cff7e"
+          "sha256_text": "081e046540cfa05539ab6d211d4029cb6fae1d690c150e3a229ea4c9397839f7"
         },
         {
           "path": "tests/test_tpm_attestation.py",
           "sha256_text": "3563f6f21e2c95f159c5974c4c6ff12918545ae70fe7817b30b70353fb5a1284"
+        },
+        {
+          "path": "proofs/capability_os/tpm_user_scope_live_20260725.json",
+          "sha256_text": "e05050f822aac8fad11eaa61ef9e230e49a0c08afb9f73963bc487145b7b05e8",
+          "assertions": [
+            {"path": "ok", "equals": true},
+            {"path": "hardware_backed", "equals": true},
+            {"path": "private_key_exportable", "equals": false},
+            {"path": "quote_verified", "equals": true},
+            {"path": "nonce_mismatch_rejected", "equals": true},
+            {"path": "tampered_pcr_rejected", "equals": true}
+          ]
         }
       ]
     },
@@ -996,6 +1008,25 @@
           "path": "proofs/capability_os/m5_live_visual_specialist_repeat3_20260725.json",
           "sha256_text": "c0d7ab7fb0d16e6fc434b257bf84de1285cf060221f226c8a7d1a1012586d395",
           "assertions": [{"path": "ok", "equals": true}]
+        },
+        {
+          "path": "proofs/capability_os/m5_vram_cold_start_20260725.json",
+          "sha256_text": "15ad83f9e74a15032e8877da2152ae6dcd7b5a31ea797eea49857cde6fea6a5e",
+          "assertions": [
+            {"path": "ok", "equals": true},
+            {"path": "method.cold_start_each_trial", "equals": true},
+            {"path": "method.baseline_subtracted", "equals": true},
+            {"path": "summaries.32768.trials", "equals": 3}
+          ]
+        },
+        {
+          "path": "proofs/capability_os/m5_visual_vram_cold_start_20260725.json",
+          "sha256_text": "f222feab29bb410fbc0156dba26db21cfff662882e45b38a8520c5360845fe8b",
+          "assertions": [
+            {"path": "ok", "equals": true},
+            {"path": "summaries.4096.trials", "equals": 3},
+            {"path": "summaries.4096.delta_used_mb_max", "equals": 7443}
+          ]
         }
       ]
     },
@@ -1052,6 +1083,28 @@
             {"path": "models.0.model", "equals": "qwen3.6:27b"},
             {"path": "models.0.runs", "equals": 10},
             {"path": "models.0.eligible", "equals": true}
+          ]
+        },
+        {
+          "path": "proofs/capability_os/model_matrix_known_rcga_final_n10_20260725.json",
+          "sha256_text": "db064dba6bd53ce88049f9b7378aeff01ee6af3b95ab95302435828f9b17242b",
+          "assertions": [
+            {"path": "models.0.model", "equals": "qwen3.6:27b"},
+            {"path": "models.0.runs", "equals": 10},
+            {"path": "models.0.eligible", "equals": true},
+            {"path": "models.0.outcome_mean", "equals": 9.0},
+            {"path": "models.1.eligible", "equals": false}
+          ]
+        },
+        {
+          "path": "proofs/capability_os/model_matrix_holdout_rcga_final_n10_20260725.json",
+          "sha256_text": "bb11f36dc76fe46a5508999994f74dcd74a2020e3a465028aae5758579e06d70",
+          "assertions": [
+            {"path": "models.0.model", "equals": "qwen3.6:27b"},
+            {"path": "models.0.runs", "equals": 10},
+            {"path": "models.0.eligible", "equals": true},
+            {"path": "models.0.outcome_mean", "equals": 5.0},
+            {"path": "models.1.outcome_mean", "equals": 4.3}
           ]
         }
       ]

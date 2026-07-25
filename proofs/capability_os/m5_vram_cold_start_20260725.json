@@ -1,0 +1,250 @@
+{
+  "schema": "selfconnect.vram-cold-start.v1",
+  "run_id": "53719b0baf6f439b84f0a08e04350eda",
+  "captured_at": "2026-07-25T22:00:55.397813+00:00",
+  "method": {
+    "cold_start_each_trial": true,
+    "baseline_subtracted": true,
+    "real_hardware_only": true,
+    "temperature": 0,
+    "seed": 42
+  },
+  "gpu_name": "NVIDIA GeForce RTX 5090",
+  "model": "qwen3.6:27b",
+  "summaries": {
+    "8192": {
+      "trials": 3,
+      "delta_used_mb_min": 17749,
+      "delta_used_mb_max": 17749,
+      "delta_used_mb_mean": 17749.0,
+      "delta_used_mb_stddev": 0.0,
+      "minimum_free_mb_after_load": 1885
+    },
+    "16384": {
+      "trials": 3,
+      "delta_used_mb_min": 18277,
+      "delta_used_mb_max": 18559,
+      "delta_used_mb_mean": 18371.0,
+      "delta_used_mb_stddev": 132.94,
+      "minimum_free_mb_after_load": 1075
+    },
+    "32768": {
+      "trials": 3,
+      "delta_used_mb_min": 19223,
+      "delta_used_mb_max": 19270,
+      "delta_used_mb_mean": 19254.0,
+      "delta_used_mb_stddev": 21.92,
+      "minimum_free_mb_after_load": 363
+    }
+  },
+  "trials": [
+    {
+      "trial": 1,
+      "context": 8192,
+      "baseline": {
+        "total_mb": 32607,
+        "used_mb": 12554,
+        "free_mb": 19634
+      },
+      "loaded": {
+        "total_mb": 32607,
+        "used_mb": 30303,
+        "free_mb": 1885
+      },
+      "delta_used_mb": 17749,
+      "delta_free_mb": 17749,
+      "resident_models": [
+        "qwen3.6:27b"
+      ],
+      "response": "",
+      "load_duration_ns": 7296230100,
+      "prompt_eval_count": 15,
+      "wall_seconds": 7.593
+    },
+    {
+      "trial": 2,
+      "context": 8192,
+      "baseline": {
+        "total_mb": 32607,
+        "used_mb": 12554,
+        "free_mb": 19634
+      },
+      "loaded": {
+        "total_mb": 32607,
+        "used_mb": 30303,
+        "free_mb": 1885
+      },
+      "delta_used_mb": 17749,
+      "delta_free_mb": 17749,
+      "resident_models": [
+        "qwen3.6:27b"
+      ],
+      "response": "",
+      "load_duration_ns": 7309667900,
+      "prompt_eval_count": 15,
+      "wall_seconds": 7.609
+    },
+    {
+      "trial": 3,
+      "context": 8192,
+      "baseline": {
+        "total_mb": 32607,
+        "used_mb": 12554,
+        "free_mb": 19634
+      },
+      "loaded": {
+        "total_mb": 32607,
+        "used_mb": 30303,
+        "free_mb": 1885
+      },
+      "delta_used_mb": 17749,
+      "delta_free_mb": 17749,
+      "resident_models": [
+        "qwen3.6:27b"
+      ],
+      "response": "",
+      "load_duration_ns": 6993115500,
+      "prompt_eval_count": 15,
+      "wall_seconds": 7.25
+    },
+    {
+      "trial": 1,
+      "context": 16384,
+      "baseline": {
+        "total_mb": 32607,
+        "used_mb": 12554,
+        "free_mb": 19634
+      },
+      "loaded": {
+        "total_mb": 32607,
+        "used_mb": 31113,
+        "free_mb": 1075
+      },
+      "delta_used_mb": 18559,
+      "delta_free_mb": 18559,
+      "resident_models": [
+        "qwen3.6:27b"
+      ],
+      "response": "",
+      "load_duration_ns": 7273760500,
+      "prompt_eval_count": 15,
+      "wall_seconds": 7.516
+    },
+    {
+      "trial": 2,
+      "context": 16384,
+      "baseline": {
+        "total_mb": 32607,
+        "used_mb": 12601,
+        "free_mb": 19587
+      },
+      "loaded": {
+        "total_mb": 32607,
+        "used_mb": 30878,
+        "free_mb": 1310
+      },
+      "delta_used_mb": 18277,
+      "delta_free_mb": 18277,
+      "resident_models": [
+        "qwen3.6:27b"
+      ],
+      "response": "",
+      "load_duration_ns": 7361214400,
+      "prompt_eval_count": 15,
+      "wall_seconds": 7.594
+    },
+    {
+      "trial": 3,
+      "context": 16384,
+      "baseline": {
+        "total_mb": 32607,
+        "used_mb": 12601,
+        "free_mb": 19587
+      },
+      "loaded": {
+        "total_mb": 32607,
+        "used_mb": 30878,
+        "free_mb": 1310
+      },
+      "delta_used_mb": 18277,
+      "delta_free_mb": 18277,
+      "resident_models": [
+        "qwen3.6:27b"
+      ],
+      "response": "",
+      "load_duration_ns": 7776309100,
+      "prompt_eval_count": 15,
+      "wall_seconds": 7.985
+    },
+    {
+      "trial": 1,
+      "context": 32768,
+      "baseline": {
+        "total_mb": 32607,
+        "used_mb": 12601,
+        "free_mb": 19587
+      },
+      "loaded": {
+        "total_mb": 32607,
+        "used_mb": 31824,
+        "free_mb": 363
+      },
+      "delta_used_mb": 19223,
+      "delta_free_mb": 19224,
+      "resident_models": [
+        "qwen3.6:27b"
+      ],
+      "response": "",
+      "load_duration_ns": 7209180000,
+      "prompt_eval_count": 15,
+      "wall_seconds": 7.437
+    },
+    {
+      "trial": 2,
+      "context": 32768,
+      "baseline": {
+        "total_mb": 32607,
+        "used_mb": 12555,
+        "free_mb": 19633
+      },
+      "loaded": {
+        "total_mb": 32607,
+        "used_mb": 31824,
+        "free_mb": 363
+      },
+      "delta_used_mb": 19269,
+      "delta_free_mb": 19270,
+      "resident_models": [
+        "qwen3.6:27b"
+      ],
+      "response": "",
+      "load_duration_ns": 7409448600,
+      "prompt_eval_count": 15,
+      "wall_seconds": 7.625
+    },
+    {
+      "trial": 3,
+      "context": 32768,
+      "baseline": {
+        "total_mb": 32607,
+        "used_mb": 12555,
+        "free_mb": 19633
+      },
+      "loaded": {
+        "total_mb": 32607,
+        "used_mb": 31825,
+        "free_mb": 363
+      },
+      "delta_used_mb": 19270,
+      "delta_free_mb": 19270,
+      "resident_models": [
+        "qwen3.6:27b"
+      ],
+      "response": "",
+      "load_duration_ns": 6356806800,
+      "prompt_eval_count": 15,
+      "wall_seconds": 6.563
+    }
+  ],
+  "ok": true
+}

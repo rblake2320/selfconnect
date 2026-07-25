@@ -1,0 +1,13 @@
+{
+  "hardware_backed": true,
+  "manufacturer_chain_verified": false,
+  "nonce_mismatch_rejected": true,
+  "ok": true,
+  "private_key_exportable": false,
+  "provider": "Microsoft Platform Crypto Provider",
+  "public_key_sha256": "af52f40774ffe362c8204c3a8469fe0c907c427448a694e5deba31d501704d1a",
+  "quote_verified": true,
+  "raw_claim_included": false,
+  "schema_version": 1,
+  "tampered_pcr_rejected": true
+}

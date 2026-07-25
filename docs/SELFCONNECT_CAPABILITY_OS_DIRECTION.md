@@ -451,7 +451,7 @@ Gate: defaults remain fail-closed, proven SelfConnect tests pass, repeated local
 agent evaluations meet published thresholds, and every claim is reflected in
 the claim/evidence matrix.
 
-Status: release candidate complete.
+Status: release candidate implemented; RC-to-GA gates remain open.
 
 - the local-model harness exposes exactly five progressive meta-tools when
   durable tasks are enabled: discover, inspect, execute, task-create, and
@@ -479,6 +479,43 @@ Status: release candidate complete.
   `docs/REAL_TEST_SKIP_AUDIT.md`; no unavailable prerequisite is replaced by a
   mock or synthetic pass.
 
+RC-to-GA gates:
+
+- cold-start, baseline-subtracted VRAM admission evidence;
+- user-scoped unelevated TPM platform-attestation proof;
+- executable invariant-to-test coverage manifest;
+- Windows/Linux hermetic CI plus the Windows platform tier;
+- explicit test-fixture and no-platform-substitution doctrine;
+- a fresh gated Qwen versus GPT-OSS selection run after these harness changes.
+
+### RC-to-GA verification update
+
+- Nine serialized cold Qwen trials on the RTX 5090 measured model-only deltas
+  of 17,749 MB at 8K, a mean 18,371 MB at 16K, and a mean 19,254 MB at 32K.
+  The historical 31.8 GB number was total board usage, not Qwen-only residency.
+  At 32K the minimum observed free memory was 363 MB, so Qwen and Qwen3-VL
+  cannot coexist on this active desktop.
+- Three cold Qwen3-VL 8B trials at 4K measured exactly 7,443 MB. The existing
+  7,800 MB requirement plus a 2,048 MB reserve is conservative, and M5's
+  swap-primary admission path remains correct.
+- The TPM key is now user-scoped. A real unelevated Platform Crypto Provider
+  self-test passed; no software-key substitute was used.
+- `coverage_manifest.yaml` maps all twelve architectural invariants to
+  collected pytest node IDs, and `tools/coverage_manifest.py --unresolved`
+  fails the release gate on missing or renamed coverage.
+- CI now separates cross-platform hermetic Capability OS checks from the
+  Windows platform suite. Hardware evidence remains an explicit local tier.
+- `docs/TEST_DOCTRINE.md` distinguishes permitted deterministic adversarial
+  fixtures from prohibited platform substitution.
+- A fresh hard-gate-first model matrix at 32K, temperature 0, and seed 42
+  retained Qwen 3.6 27B as the governed default. Qwen passed 10/10 known runs
+  at 9/9 outcomes and 10/10 holdout runs at 5/5 outcomes. GPT-OSS 20B was
+  roughly 3.5 times faster and used about 2.9 GB less VRAM, but failed the
+  known hard gate in seven runs and averaged 4.3/5 holdout outcomes.
+- The RC-to-GA implementation gates above are locally complete. GA remains
+  contingent on the newly added Windows and Linux GitHub CI jobs passing on
+  the pushed commit and a final clean release audit against that commit.
+
 ## Current implementation map
 
 - Capability kernel: `selfconnect_capabilities/`
@@ -505,6 +542,13 @@ Status: release candidate complete.
 - Do not split a new repository until a stable, independently versionable API
   emerges.
 - Keep generated skills in shadow mode.
+- Keep generated skills permanently shadow-only. A configured independent
+  signing identity must attest `human_reviewed=true`; even an approved
+  candidate cannot publish or register a runtime adapter.
+- Shadow source records are redacted by the evidence broker before the first
+  disk append. Replay is real broker execution under current authority, not a
+  claimed sandbox. It must target an owned disposable environment; approval
+  does not turn replay output into an executable capability.
 - Prefer one-level progressive disclosure; additional disclosure levels require
   evidence that they improve this workload.
 - Treat the capability kernel as strong product engineering. Center novelty
@@ -521,10 +565,11 @@ Status: release candidate complete.
 - Select models with hard gates first (zero false completion, zero policy
   violations, working dialect adapter), then rank survivors by outcome,
   latency, and VRAM.
-- The repeated constraint-first selection gate is complete. At temperature 0,
-  seed 42, and 32K context, Qwen 3.6 27B passed 10/10 known and 10/10 holdout
-  runs with full outcomes and evidence. GPT-OSS 20B passed only 4/10 known
-  hard-gate runs despite its latency and VRAM advantage. Qwen therefore remains
+- The repeated constraint-first selection gate is complete. In the fresh
+  RC-to-GA matrix at temperature 0, seed 42, and 32K context, Qwen 3.6 27B
+  passed 10/10 known and 10/10 holdout runs with full outcomes and evidence.
+  GPT-OSS 20B failed the known hard gate in seven runs despite its latency and
+  VRAM advantage, and averaged 4.3/5 holdout outcomes. Qwen therefore remains
   the governed local default; GPT-OSS remains an optional lower-risk fast path.
 - Benchmark runs use unique partial files, atomic promotion, orphan-worker
   detection, fixed-configuration resume checks, and per-report SHA-256

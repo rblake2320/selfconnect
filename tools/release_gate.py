@@ -24,6 +24,11 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+try:
+    from tools.coverage_manifest import audit as audit_coverage_manifest
+except ModuleNotFoundError:  # direct ``python tools/release_gate.py`` execution
+    from coverage_manifest import audit as audit_coverage_manifest
+
 
 @dataclass
 class Check:
@@ -633,6 +638,14 @@ def audit(
 
     claims = _audit_claims(root, claims_doc, checks, readme_text=readme)
     command_results: dict[str, Any] = {}
+    coverage_report = audit_coverage_manifest(root, root / "coverage_manifest.yaml")
+    checks.append(
+        Check(
+            "truth.invariant_test_coverage",
+            "pass" if coverage_report["ok"] else "fail",
+            json.dumps(coverage_report, sort_keys=True),
+        )
+    )
     if run_tests:
         with tempfile.TemporaryDirectory(
             prefix=".release-pytest-",

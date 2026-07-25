@@ -344,7 +344,7 @@ class ShadowSkillCompiler:
         allowed = {
             "candidate_id", "candidate_digest", "approver_did",
             "review_statement", "created_at", "publishes_runtime_adapter",
-            "signature_b64",
+            "human_reviewed", "signature_b64",
         }
         if set(signed_review) != allowed:
             raise ValueError("signed review shape is invalid")
@@ -359,6 +359,8 @@ class ShadowSkillCompiler:
             raise ValueError("approval candidate digest mismatch")
         if payload["publishes_runtime_adapter"] is not False:
             raise PermissionError("shadow approval cannot publish a runtime adapter")
+        if payload["human_reviewed"] is not True:
+            raise PermissionError("a human review assertion is required")
         if len(str(payload["review_statement"]).strip()) < 20:
             raise ValueError("approval requires a substantive review statement")
         pubkey = self.trusted_approvers.get(approver)

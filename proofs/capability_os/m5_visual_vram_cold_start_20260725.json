@@ -1,0 +1,96 @@
+{
+  "schema": "selfconnect.vram-cold-start.v1",
+  "run_id": "233dd5844d944444b653f8f24ef050ad",
+  "captured_at": "2026-07-25T22:02:24.257682+00:00",
+  "method": {
+    "cold_start_each_trial": true,
+    "baseline_subtracted": true,
+    "real_hardware_only": true,
+    "temperature": 0,
+    "seed": 42
+  },
+  "gpu_name": "NVIDIA GeForce RTX 5090",
+  "model": "qwen3-vl:8b",
+  "summaries": {
+    "4096": {
+      "trials": 3,
+      "delta_used_mb_min": 7443,
+      "delta_used_mb_max": 7443,
+      "delta_used_mb_mean": 7443.0,
+      "delta_used_mb_stddev": 0.0,
+      "minimum_free_mb_after_load": 12193
+    }
+  },
+  "trials": [
+    {
+      "trial": 1,
+      "context": 4096,
+      "baseline": {
+        "total_mb": 32607,
+        "used_mb": 12552,
+        "free_mb": 19636
+      },
+      "loaded": {
+        "total_mb": 32607,
+        "used_mb": 19995,
+        "free_mb": 12193
+      },
+      "delta_used_mb": 7443,
+      "delta_free_mb": 7443,
+      "resident_models": [
+        "qwen3-vl:8b"
+      ],
+      "response": "",
+      "load_duration_ns": 3634158800,
+      "prompt_eval_count": 15,
+      "wall_seconds": 3.75
+    },
+    {
+      "trial": 2,
+      "context": 4096,
+      "baseline": {
+        "total_mb": 32607,
+        "used_mb": 12552,
+        "free_mb": 19636
+      },
+      "loaded": {
+        "total_mb": 32607,
+        "used_mb": 19995,
+        "free_mb": 12193
+      },
+      "delta_used_mb": 7443,
+      "delta_free_mb": 7443,
+      "resident_models": [
+        "qwen3-vl:8b"
+      ],
+      "response": "",
+      "load_duration_ns": 3261677800,
+      "prompt_eval_count": 15,
+      "wall_seconds": 3.359
+    },
+    {
+      "trial": 3,
+      "context": 4096,
+      "baseline": {
+        "total_mb": 32607,
+        "used_mb": 12552,
+        "free_mb": 19636
+      },
+      "loaded": {
+        "total_mb": 32607,
+        "used_mb": 19995,
+        "free_mb": 12193
+      },
+      "delta_used_mb": 7443,
+      "delta_free_mb": 7443,
+      "resident_models": [
+        "qwen3-vl:8b"
+      ],
+      "response": "",
+      "load_duration_ns": 3008644000,
+      "prompt_eval_count": 15,
+      "wall_seconds": 3.094
+    }
+  ],
+  "ok": true
+}

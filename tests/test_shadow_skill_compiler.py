@@ -213,6 +213,7 @@ def test_review_requires_a_trusted_separate_ed25519_identity(tmp_path: Path) -> 
         "review_statement": "I independently reviewed the trace, replay, and adversarial evidence.",
         "created_at": time.time(),
         "publishes_runtime_adapter": False,
+        "human_reviewed": True,
     }
     signed_review = {
         **payload,
@@ -223,6 +224,18 @@ def test_review_requires_a_trusted_separate_ed25519_identity(tmp_path: Path) -> 
     approval = compiler.approve(candidate["candidate_id"], signed_review=signed_review)
     assert approval["approver_did"] == reviewer.did
     assert approval["publishes_runtime_adapter"] is False
+    assert approval["human_reviewed"] is True
+
+    not_human_reviewed = dict(signed_review)
+    not_human_reviewed["human_reviewed"] = False
+    unsigned_payload = {
+        key: value for key, value in not_human_reviewed.items() if key != "signature_b64"
+    }
+    not_human_reviewed["signature_b64"] = base64.b64encode(
+        reviewer.sign(canonical_bytes(unsigned_payload))
+    ).decode("ascii")
+    with pytest.raises(PermissionError, match="human review"):
+        compiler.approve(candidate["candidate_id"], signed_review=not_human_reviewed)
 
     tampered = dict(signed_review)
     tampered["review_statement"] += " tampered"
