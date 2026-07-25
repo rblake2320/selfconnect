@@ -218,6 +218,14 @@ terminals and burning tokens fleet-wide.
     disabled unless their independent gates are also explicitly enabled.
   - every new runtime loads the packaged, versioned SelfConnect Qwen core. The
     startup banner prints its unique process `instance_id` and `core_version`.
+  - the runtime resolves `qwen3.6:*` to the packaged
+    `qwen3.6-selfconnect-v1` harness profile automatically. Override with
+    `SC_LOCAL_AGENT_HARNESS=off` only for raw comparison runs; use `generic`
+    for an unprofiled local model.
+  - governed controllers can pass a `ToolContract` to the runtime. The contract
+    narrows the visible tool catalog, requires ordered audit evidence, allows
+    one concise retry, and blocks false completion. Interactive free-form chat
+    does not guess contracts from prose.
   - stable mesh role/birth/generation identity is separate from the process
     instance. Each process writes prompt, tool, outcome, and response records to
     the locked, hash-linked `%LOCALAPPDATA%\SelfConnect\qwen_activity.jsonl`

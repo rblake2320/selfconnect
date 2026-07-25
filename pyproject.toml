@@ -125,6 +125,7 @@ include = [
     "sc_hooks.py",
     "sc_local_model_role.py",
     "sc_local_agent_runtime.py",
+    "sc_local_agent_harness.py",
     "sc_qwen_core.py",
     "sc_echo_filter.py",
     "sc_identity.py",

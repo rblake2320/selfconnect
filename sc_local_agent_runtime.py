@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import sc_cli
+from sc_local_agent_harness import HarnessProfile, ToolContract, resolve_harness_profile
 import sc_local_model_role
 import sc_mesh_registry
 from sc_qwen_core import CORE_KNOWLEDGE, CORE_VERSION
@@ -139,6 +140,7 @@ class RuntimeConfig:
     allow_commands: bool = False
     allow_writes: bool = False
     trace_tools: bool = False
+    harness_profile: str = "auto"
     instance_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     repo_root: Path = Path(__file__).resolve().parent
 
@@ -157,6 +159,7 @@ class RuntimeConfig:
             "allow_commands": _env_enabled("SC_LOCAL_AGENT_ALLOW_COMMANDS"),
             "allow_writes": _env_enabled("SC_LOCAL_AGENT_ALLOW_WRITES"),
             "trace_tools": _env_enabled("SC_LOCAL_AGENT_TRACE_TOOLS"),
+            "harness_profile": os.environ.get("SC_LOCAL_AGENT_HARNESS", "auto"),
             "instance_id": os.environ.get("SC_LOCAL_AGENT_INSTANCE_ID") or uuid.uuid4().hex,
             "repo_root": Path(os.environ.get("SC_LOCAL_AGENT_ROOT", Path(__file__).resolve().parent)).resolve(),
         }
@@ -512,13 +515,19 @@ class SelfConnectTools:
             return {"ok": False, "error": str(exc)}
 
 
-def tool_schemas() -> list[dict[str, Any]]:
+def tool_schemas(
+    profile: HarnessProfile | None = None,
+    allowed_tools: tuple[str, ...] | None = None,
+) -> list[dict[str, Any]]:
     def schema(name: str, description: str, properties: dict[str, Any], required: list[str] | None = None):
         return {
             "type": "function",
             "function": {
                 "name": name,
-                "description": description,
+                "description": (
+                    (profile.tool_description_overrides or {}).get(name, description)
+                    if profile else description
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": properties,
@@ -527,7 +536,7 @@ def tool_schemas() -> list[dict[str, Any]]:
             },
         }
 
-    return [
+    schemas = [
         schema("doctor", "Inspect SelfConnect capabilities.", {}),
         schema("mesh_roster", "List registered mesh peers and identities.", {}),
         schema("mesh_events", "Read recent tamper-evident mesh events.", {
@@ -566,11 +575,16 @@ def tool_schemas() -> list[dict[str, Any]]:
             "argv": {"type": "array", "items": {"type": "string"}},
         }, ["argv"]),
     ]
+    if allowed_tools is None:
+        return schemas
+    allowed = set(allowed_tools)
+    return [item for item in schemas if item["function"]["name"] in allowed]
 
 
 class LocalAgentRuntime:
     def __init__(self, config: RuntimeConfig):
         self.config = config
+        self.harness = resolve_harness_profile(config.model, config.harness_profile)
         self.ledger = ActivityLedger(config)
         self.tools = SelfConnectTools(config)
         self.dispatch: dict[str, Callable[..., dict[str, Any]]] = {
@@ -584,7 +598,7 @@ class LocalAgentRuntime:
         self.messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt()}
         ]
-        self.ledger.append("session_started")
+        self.ledger.append("session_started", harness_profile=self.harness.name)
 
     def system_prompt(self) -> str:
         state = sc_local_model_role.ensure_role(
@@ -619,20 +633,28 @@ reasoning. Act immediately: do not narrate plans, preview upcoming steps, restat
 the request, or describe routine tool usage. Let the runtime's compact tool-status
 lines show activity. After acting, return only the concise result or a concrete
 blocker. Mutation tools fail closed unless the operator explicitly enables their
-independent runtime gates."""
+independent runtime gates.{self.harness.system_suffix}"""
 
-    def _chat(self) -> dict[str, Any]:
-        body = json.dumps({
+    def _chat(self, contract: ToolContract | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "model": self.config.model,
             "messages": [strip_reasoning(item) for item in self.messages],
-            "tools": tool_schemas(),
             "stream": False,
             "think": False,
             "options": {
                 "num_ctx": self.config.context_window,
                 "num_predict": self.config.max_output_tokens,
             },
-        }).encode("utf-8")
+        }
+        if self.harness.temperature is not None:
+            payload["options"]["temperature"] = self.harness.temperature
+        if self.harness.seed is not None:
+            payload["options"]["seed"] = self.harness.seed
+        allowed = contract.allowed_tools if contract else None
+        schemas = tool_schemas(self.harness, allowed)
+        if schemas:
+            payload["tools"] = schemas
+        body = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             "http://127.0.0.1:11434/api/chat",
             data=body,
@@ -648,17 +670,54 @@ independent runtime gates."""
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"Ollama request failed: {exc}") from exc
 
-    def respond(self, text: str) -> str:
+    def respond(self, text: str, contract: ToolContract | None = None) -> str:
         self.ledger.append("prompt_received", text=text)
-        self.messages.append({"role": "user", "content": text})
+        if contract:
+            self.ledger.append(
+                "contract_applied",
+                required=list(contract.required_tools),
+                allowed=None if contract.allowed_tools is None else list(contract.allowed_tools),
+                ordered=contract.ordered,
+                max_retries=contract.max_retries,
+            )
+        self.messages.append({
+            "role": "user",
+            "content": text + (contract.instruction() if contract else ""),
+        })
         seen: set[str] = set()
+        called_tools: list[str] = []
+        rejected_tools: list[str] = []
+        contract_retries = 0
         for _ in range(MAX_ITERATIONS):
-            data = self._chat()
+            data = self._chat(contract)
             message = strip_reasoning(data.get("message", {}))
             self.messages.append(message)
             calls = message.get("tool_calls") or []
             if not calls:
                 answer = str(message.get("content", "")).strip()
+                if contract:
+                    validation = contract.validate(called_tools, rejected_tools)
+                    if not validation["ok"]:
+                        if validation["missing"] and contract_retries < contract.max_retries:
+                            contract_retries += 1
+                            self.ledger.append(
+                                "contract_retry",
+                                attempt=contract_retries,
+                                validation=validation,
+                            )
+                            self.messages.append({
+                                "role": "user",
+                                "content": contract.correction(validation),
+                            })
+                            continue
+                        blocked = (
+                            "[tool contract blocked completion: "
+                            f"missing={validation['missing']}; "
+                            f"unexpected={validation['unexpected']}; "
+                            f"order_ok={validation['order_ok']}]"
+                        )
+                        self.ledger.append("response_blocked", reason=blocked)
+                        return blocked
                 self.ledger.append("response_completed", text=answer)
                 return answer
             for call in calls:
@@ -670,11 +729,22 @@ independent runtime gates."""
                         args = json.loads(args)
                     except json.JSONDecodeError:
                         args = {}
+                if contract and contract.allowed_tools is not None and name not in contract.allowed_tools:
+                    rejected_tools.append(name)
+                    result = {"ok": False, "error": "tool rejected by active contract"}
+                    self.ledger.append("tool_rejected", tool=name, arguments=args)
+                    tool_message = {"role": "tool", "content": _compact(result), "tool_name": name}
+                    call_id = str(call.get("id", ""))
+                    if call_id:
+                        tool_message["tool_call_id"] = call_id
+                    self.messages.append(tool_message)
+                    continue
                 signature = name + ":" + json.dumps(args, sort_keys=True)
                 if signature in seen:
                     result = {"ok": False, "error": "duplicate tool call blocked"}
                 else:
                     seen.add(signature)
+                    called_tools.append(name)
                     self.ledger.append("tool_called", tool=name, arguments=args)
                     handler = self.dispatch.get(name)
                     try:
@@ -695,7 +765,11 @@ independent runtime gates."""
                 )
                 if self.config.trace_tools:
                     print(f"SelfConnect: {_trace_summary(name, result)}", flush=True)
-                self.messages.append({"role": "tool", "content": _compact(result)})
+                tool_message = {"role": "tool", "content": _compact(result), "tool_name": name}
+                call_id = str(call.get("id", ""))
+                if call_id:
+                    tool_message["tool_call_id"] = call_id
+                self.messages.append(tool_message)
         answer = "[maximum tool iterations reached]"
         self.ledger.append("response_blocked", reason=answer)
         return answer

@@ -9,6 +9,8 @@ Run one model at a time:
 ollama stop <previous-model>
 python benchmarks/local_agent_model_benchmark.py `
   --model <ollama-model> `
+  --harness-mode raw `
+  --suite known `
   --output proofs/local-agent-benchmark/<report>.json
 ```
 
@@ -16,6 +18,21 @@ Use `--context`, `--max-output`, and `--request-timeout` when a model cannot
 safely run the defaults. The report records the actual context. Runtime requests
 also have bounded output and time limits so an incompatible model cannot
 generate indefinitely.
+
+The benchmark has three deliberately separate modes:
+
+- `raw`: the shared core prompt and complete tool catalog, with model-specific
+  harness behavior disabled. This preserves historical model comparisons.
+- `profile`: adds the resolved model profile. For Qwen 3.6 this means
+  deterministic sampling, clearer audit-call descriptions, and concise
+  no-narration instructions.
+- `contract`: adds controller-supplied required/allowed tool contracts. The
+  runtime narrows the visible catalog, retries one missing-call turn, rejects
+  disallowed calls, and blocks completion if evidence remains missing.
+
+Use `--suite holdout` for the separate five-case generalization check. Contracts
+are supplied by a trusted workflow/controller; the runtime does not guess
+required tools from arbitrary user prose.
 
 Each of the nine cases awards one point for the exact permitted tool sequence
 and one point for the required answer content. Extra, skipped, or disallowed
@@ -53,6 +70,39 @@ compliance as deterministic. The runtime should enforce mandatory audit calls
 for governed workflows instead of relying on model instruction-following
 alone. Keep `gpt-oss:20b` as the faster, lower-VRAM alternative for
 conversational or lower-risk work.
+
+### Harness-profile results
+
+The NVIDIA-style harness pass was evaluated separately from the historical raw
+model scores:
+
+| Mode / suite | Runs | Result |
+|---|---:|---:|
+| Qwen profile, known | 1 | 18/18 |
+| Qwen contract, known | 2 | 18/18, 18/18 |
+| Qwen contract, sealed holdout | 2 | 10/10, 10/10 |
+| Raw control, sealed holdout | 1 | 10/10 |
+
+The four contract runs produced 56/56 points and exact ordered tool sequences.
+This demonstrates repeatable harness enforcement, not a claim that the model's
+weights improved. The raw holdout also passed, showing that the new holdout was
+not constructed only around Qwen's known write/command failure mode.
+
+The implementation follows NVIDIA's harness-profile loop: benchmark, inspect
+failure traces, adjust model-specific system/tool guidance and middleware, then
+rerun the full suite. SelfConnect adds a stricter security boundary: the model
+still selects arguments, but a trusted controller owns tool exposure and the
+completion contract. Ollama tool-result history now preserves `tool_name` and
+`tool_call_id` when present.
+
+Sources:
+
+- [NVIDIA: Create a Deep Agents harness profile for Nemotron 3 Ultra](https://developer.nvidia.com/blog/create-a-langchain-deep-agents-harness-profile-for-nvidia-nemotron-3-ultra-to-improve-performance/)
+- [NVIDIA: Nemotron and LangChain open agent stack](https://blogs.nvidia.com/blog/nemotron-langchain-agents-open-stack/)
+- [LangChain Deep Agents harness profiles](https://docs.langchain.com/oss/python/deepagents/profiles)
+- [Qwen-Agent](https://github.com/QwenLM/Qwen-Agent)
+- [Ollama multi-turn tool calling](https://docs.ollama.com/capabilities/tool-calling)
+- [NVIDIA NeMo Agent Toolkit](https://github.com/NVIDIA/NeMo-Agent-Toolkit)
 
 ### NVIDIA compatibility findings
 

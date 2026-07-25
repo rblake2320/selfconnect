@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import sc_local_agent_runtime as runtime_mod
+from sc_local_agent_harness import ToolContract, resolve_harness_profile
 
 
 def _config(tmp_path: Path, **overrides):
@@ -51,6 +52,84 @@ def test_generation_limits_can_be_configured_from_environment(monkeypatch, tmp_p
 
     assert config.max_output_tokens == 512
     assert config.request_timeout_seconds == 45
+
+
+def test_qwen_gets_model_specific_harness_profile() -> None:
+    qwen = resolve_harness_profile("qwen3.6:27b")
+    generic = resolve_harness_profile("gpt-oss:20b")
+
+    assert qwen.name == "qwen3.6-selfconnect-v1"
+    assert qwen.temperature == 0
+    assert generic.name == "generic-selfconnect-v1"
+
+
+def test_contract_filters_visible_tools_and_retries_missing_call(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SC_LOCAL_AGENT_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        runtime_mod.sc_local_model_role,
+        "ensure_role",
+        lambda *args, **kwargs: {"ok": True, "state": {"birth_id": "b", "generation": 1}},
+    )
+    runtime = runtime_mod.LocalAgentRuntime(_config(tmp_path))
+    replies = iter([
+        {"message": {"role": "assistant", "content": "It is disabled."}},
+        {
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "call-1", "function": {"name": "command", "arguments": {
+                    "argv": ["python", "--version"],
+                }}}],
+            },
+        },
+        {"message": {"role": "assistant", "content": "Command execution is disabled."}},
+    ])
+    visible = []
+
+    def fake_chat(contract=None):
+        visible.append([
+            item["function"]["name"]
+            for item in runtime_mod.tool_schemas(runtime.harness, contract.allowed_tools)
+        ])
+        return next(replies)
+
+    monkeypatch.setattr(runtime, "_chat", fake_chat)
+    contract = ToolContract(required_tools=("command",), allowed_tools=("command",))
+
+    answer = runtime.respond("Attempt the disabled command.", contract=contract)
+
+    assert answer == "Command execution is disabled."
+    assert visible == [["command"], ["command"], ["command"]]
+    assert runtime.messages[-2]["tool_name"] == "command"
+    assert runtime.messages[-2]["tool_call_id"] == "call-1"
+    events = runtime.ledger.history(instance_id=runtime.config.instance_id)["events"]
+    assert any(item["event"] == "contract_retry" for item in events)
+
+
+def test_contract_blocks_false_completion(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SC_LOCAL_AGENT_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        runtime_mod.sc_local_model_role,
+        "ensure_role",
+        lambda *args, **kwargs: {"ok": True, "state": {}},
+    )
+    runtime = runtime_mod.LocalAgentRuntime(_config(tmp_path))
+    monkeypatch.setattr(
+        runtime,
+        "_chat",
+        lambda contract=None: {"message": {"role": "assistant", "content": "Done."}},
+    )
+
+    answer = runtime.respond(
+        "Run the command.",
+        contract=ToolContract(
+            required_tools=("command",),
+            allowed_tools=("command",),
+            max_retries=0,
+        ),
+    )
+
+    assert answer.startswith("[tool contract blocked completion:")
 
 
 def test_each_runtime_config_gets_a_unique_instance_id(tmp_path: Path) -> None:
