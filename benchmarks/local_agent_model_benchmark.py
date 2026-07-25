@@ -209,6 +209,8 @@ def main() -> int:
     parser.add_argument("--context", type=int, default=32_768)
     parser.add_argument("--max-output", type=int, default=512)
     parser.add_argument("--request-timeout", type=float, default=90)
+    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--suite", choices=("known", "holdout"), default="known")
     parser.add_argument("--harness-mode", choices=("raw", "profile", "contract"), default="raw")
     args = parser.parse_args()
@@ -228,6 +230,8 @@ def main() -> int:
         allow_writes=False,
         trace_tools=False,
         harness_profile="off" if args.harness_mode == "raw" else "auto",
+        temperature=args.temperature,
+        seed=args.seed,
         repo_root=Path(__file__).resolve().parents[1],
     )
     runtime = LocalAgentRuntime(config)
@@ -276,6 +280,9 @@ def main() -> int:
         "core_version": CORE_VERSION,
         "instance_id": config.instance_id,
         "context_window": config.context_window,
+        "max_output_tokens": config.max_output_tokens,
+        "temperature": config.temperature,
+        "seed": config.seed,
         "permissions": {"input": False, "commands": False, "writes": False},
         "seconds": round(time.perf_counter() - suite_started, 3),
         "score": sum(item["score"] for item in results),

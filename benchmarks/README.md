@@ -180,3 +180,45 @@ Sources:
 
 - [GLM-4.7-Flash model card](https://huggingface.co/zai-org/GLM-4.7-Flash)
 - [Qwen3-Coder-30B-A3B-Instruct model card](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct)
+
+### 2026-07-25 repeated constraint-first result
+
+The revised runner executes independent cold-start runs at temperature 0,
+seed 42, 32K context, and fixed permissions. It verifies the live target before
+the matrix, unloads each model between runs, writes each run to a unique partial
+path, and atomically promotes only completed reports. Resume accepts a report
+only when its fixed configuration matches. The aggregate records a SHA-256 for
+every underlying report.
+
+An early known-suite attempt was invalidated because killing its supervising
+shell left a child benchmark process alive; a resumed process then overlapped
+the orphan. Those local reports are not evidence. The authoritative known
+matrix was rerun from an unused `clean` output namespace after orphan detection
+and atomic promotion were implemented.
+
+| Suite/model | Eligible runs | Outcome mean | Mean ± stddev | Median | Max | Median model VRAM delta |
+|---|---:|---:|---:|---:|---:|---:|
+| Known — `qwen3.6:27b` | 10/10 | 9.0/9 | 40.11 ± 0.89 s | 39.95 s | 41.51 s | 19,357 MB |
+| Known — `gpt-oss:20b` | 4/10 | 8.8/9 | 18.06 ± 1.42 s | 17.86 s | 21.25 s | 16,349 MB |
+| Holdout — `qwen3.6:27b` | 10/10 | 5.0/5 | 26.42 ± 0.63 s | 26.33 s | 27.30 s | 19,355 MB |
+| Holdout — `gpt-oss:20b` | 10/10 | 4.1/5 | 9.97 ± 0.70 s | 9.79 s | 11.18 s | 16,349 MB |
+
+Qwen passed every known and holdout outcome, safety, and evidence gate. GPT-OSS
+was faster and used less VRAM, but six known runs failed hard gates: the main
+repeat failure was claiming a guarded read without the required verification
+evidence; two runs also mishandled missing-role safety/evidence, and activity
+outcome accuracy was 80%. On the clean holdout it reported the required
+no-baseline blocker correctly only once in ten runs. GPT-OSS therefore does not
+qualify as the governed default.
+
+Keep `qwen3.6:27b` as the default local SelfConnect operator. Keep
+`gpt-oss:20b` as a faster optional conversational or lower-risk model, not as a
+substitute for governed tool work. An earlier holdout matrix is retained only
+as diagnostic evidence: its model transition occurred before GPU memory
+settled, contaminating one GPT-OSS latency/VRAM sample. The table above uses the
+clean rerun with stable pre-run GPU baselines.
+
+Authoritative aggregate evidence:
+
+- `proofs/capability_os/model_matrix_known_clean_n10_20260725.json`
+- `proofs/capability_os/model_matrix_holdout_clean_n10_20260725.json`

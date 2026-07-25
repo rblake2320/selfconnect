@@ -157,6 +157,8 @@ class RuntimeConfig:
     allow_writes: bool = False
     trace_tools: bool = False
     harness_profile: str = "auto"
+    temperature: float | None = None
+    seed: int | None = None
     instance_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     repo_root: Path = Path(__file__).resolve().parent
 
@@ -176,6 +178,16 @@ class RuntimeConfig:
             "allow_writes": _env_enabled("SC_LOCAL_AGENT_ALLOW_WRITES"),
             "trace_tools": _env_enabled("SC_LOCAL_AGENT_TRACE_TOOLS"),
             "harness_profile": os.environ.get("SC_LOCAL_AGENT_HARNESS", "auto"),
+            "temperature": (
+                float(os.environ["SC_LOCAL_AGENT_TEMPERATURE"])
+                if "SC_LOCAL_AGENT_TEMPERATURE" in os.environ
+                else None
+            ),
+            "seed": (
+                int(os.environ["SC_LOCAL_AGENT_SEED"])
+                if "SC_LOCAL_AGENT_SEED" in os.environ
+                else None
+            ),
             "instance_id": os.environ.get("SC_LOCAL_AGENT_INSTANCE_ID") or uuid.uuid4().hex,
             "repo_root": Path(os.environ.get("SC_LOCAL_AGENT_ROOT", Path(__file__).resolve().parent)).resolve(),
         }
@@ -798,10 +810,16 @@ independent runtime gates.{capability_guidance}{self.harness.system_suffix}"""
                 "num_predict": self.config.max_output_tokens,
             },
         }
-        if self.harness.temperature is not None:
-            payload["options"]["temperature"] = self.harness.temperature
-        if self.harness.seed is not None:
-            payload["options"]["seed"] = self.harness.seed
+        temperature = (
+            self.config.temperature
+            if self.config.temperature is not None
+            else self.harness.temperature
+        )
+        seed = self.config.seed if self.config.seed is not None else self.harness.seed
+        if temperature is not None:
+            payload["options"]["temperature"] = temperature
+        if seed is not None:
+            payload["options"]["seed"] = seed
         allowed = contract.allowed_tools if contract else None
         schemas = tool_schemas(
             self.harness,

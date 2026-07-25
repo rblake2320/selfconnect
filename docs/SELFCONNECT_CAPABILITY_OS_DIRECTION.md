@@ -425,6 +425,14 @@ the claim/evidence matrix.
 - Select models with hard gates first (zero false completion, zero policy
   violations, working dialect adapter), then rank survivors by outcome,
   latency, and VRAM.
+- The repeated constraint-first selection gate is complete. At temperature 0,
+  seed 42, and 32K context, Qwen 3.6 27B passed 10/10 known and 10/10 holdout
+  runs with full outcomes and evidence. GPT-OSS 20B passed only 4/10 known
+  hard-gate runs despite its latency and VRAM advantage. Qwen therefore remains
+  the governed local default; GPT-OSS remains an optional lower-risk fast path.
+- Benchmark runs use unique partial files, atomic promotion, orphan-worker
+  detection, fixed-configuration resume checks, and per-report SHA-256
+  fingerprints. A pre-fix overlapping run was invalidated and is not evidence.
 - Re-sequence full task recovery and injection hardening before the MCP bridge
   because external schemas, descriptions, and results expand the attack and
   partial-state surface.
