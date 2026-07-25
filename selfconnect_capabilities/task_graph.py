@@ -105,11 +105,34 @@ class TaskStep:
 
 
 class TaskGraph:
-    def __init__(self, path: Path, *, task_id: str = "", goal: str = ""):
+    def __init__(
+        self,
+        path: Path,
+        *,
+        task_id: str = "",
+        goal: str = "",
+        owner: str = "",
+        deadline_at: float = 0.0,
+        max_total_attempts: int = 20,
+        max_attempts_per_step: int = 2,
+    ):
+        if deadline_at < 0:
+            raise ValueError("deadline_at cannot be negative")
+        if not 1 <= max_total_attempts <= 10_000:
+            raise ValueError("max_total_attempts must be between 1 and 10000")
+        if not 1 <= max_attempts_per_step <= 100:
+            raise ValueError("max_attempts_per_step must be between 1 and 100")
         self.path = path
         self.task_id = task_id or uuid.uuid4().hex
         self.goal = goal
+        self.owner = owner
         self.created_at = time.time()
+        self.deadline_at = float(deadline_at)
+        self.max_total_attempts = int(max_total_attempts)
+        self.max_attempts_per_step = int(max_attempts_per_step)
+        self.cancellation_requested = False
+        self.cancelled_by = ""
+        self.cancelled_at = 0.0
         self.steps: dict[str, TaskStep] = {}
         self.checkpoint_sequence = 0
         self.checkpoint_hash = ""
@@ -128,11 +151,24 @@ class TaskGraph:
         self.save()
 
     def ready(self) -> list[TaskStep]:
+        if self.cancellation_requested or not self.admission()["ok"]:
+            return []
         return [
             step for step in self.steps.values()
             if step.status == "pending"
             and all(self.steps[parent].status == "completed" for parent in step.depends_on)
         ]
+
+    def admission(self, *, now: float | None = None) -> dict[str, Any]:
+        moment = time.time() if now is None else float(now)
+        attempts = sum(step.attempts for step in self.steps.values())
+        if self.cancellation_requested:
+            return {"ok": False, "reason": "task_cancelled", "attempts": attempts}
+        if self.deadline_at and moment >= self.deadline_at:
+            return {"ok": False, "reason": "task_deadline_exceeded", "attempts": attempts}
+        if attempts >= self.max_total_attempts:
+            return {"ok": False, "reason": "task_attempt_budget_exhausted", "attempts": attempts}
+        return {"ok": True, "reason": "", "attempts": attempts}
 
     def start(self, step_id: str, execution_id: str) -> None:
         if not execution_id:
@@ -153,6 +189,58 @@ class TaskGraph:
             step.result = result
         self.save()
 
+    def retry(self, step_id: str, *, requester: str, reason: str) -> None:
+        self._require_owner(requester)
+        step = self.steps[step_id]
+        if step.status not in {"failed", "blocked"}:
+            raise ValueError("only failed or blocked steps may be retried")
+        if step.attempts >= self.max_attempts_per_step:
+            raise ValueError("step retry budget exhausted")
+        admission = self.admission()
+        if not admission["ok"]:
+            raise ValueError(str(admission["reason"]))
+        self.transition(
+            step_id,
+            "pending",
+            {
+                "ok": False,
+                "retry_requested_by": requester,
+                "retry_reason": reason[:500],
+            },
+        )
+
+    def cancel(self, *, requester: str) -> None:
+        self._require_owner(requester)
+        if self.cancellation_requested:
+            return
+        self.cancellation_requested = True
+        self.cancelled_by = requester
+        self.cancelled_at = time.time()
+        for step in self.steps.values():
+            if step.status in {"pending", "blocked", "failed"}:
+                step.status = "cancelled"
+                step.updated_at = self.cancelled_at
+                step.result = {"ok": False, "reason": "task_cancelled"}
+        self.save()
+
+    def block_unstarted(self, reason: str) -> list[str]:
+        blocked = []
+        for step in self.steps.values():
+            if step.status == "pending":
+                step.status = "blocked"
+                step.updated_at = time.time()
+                step.result = {"ok": False, "reason": reason}
+                blocked.append(step.step_id)
+        if blocked:
+            self.save()
+        return blocked
+
+    def _require_owner(self, requester: str) -> None:
+        if not self.owner:
+            raise PermissionError("task has no cancellation/retry owner")
+        if requester != self.owner:
+            raise PermissionError("task owner mismatch")
+
     def summary(self) -> dict[str, Any]:
         statuses: dict[str, int] = {}
         for step in self.steps.values():
@@ -160,8 +248,16 @@ class TaskGraph:
         return {
             "task_id": self.task_id,
             "goal": self.goal,
+            "owner": self.owner,
             "steps": len(self.steps),
             "statuses": statuses,
+            "deadline_at": self.deadline_at,
+            "max_total_attempts": self.max_total_attempts,
+            "max_attempts_per_step": self.max_attempts_per_step,
+            "attempts": sum(step.attempts for step in self.steps.values()),
+            "cancellation_requested": self.cancellation_requested,
+            "cancelled_by": self.cancelled_by,
+            "cancelled_at": self.cancelled_at,
             "checkpoint_sequence": self.checkpoint_sequence,
             "checkpoint_hash": self.checkpoint_hash,
             "complete": bool(self.steps) and all(step.status == "completed" for step in self.steps.values()),
@@ -172,7 +268,14 @@ class TaskGraph:
             "version": 2,
             "task_id": self.task_id,
             "goal": self.goal,
+            "owner": self.owner,
             "created_at": self.created_at,
+            "deadline_at": self.deadline_at,
+            "max_total_attempts": self.max_total_attempts,
+            "max_attempts_per_step": self.max_attempts_per_step,
+            "cancellation_requested": self.cancellation_requested,
+            "cancelled_by": self.cancelled_by,
+            "cancelled_at": self.cancelled_at,
             "checkpoint_sequence": sequence,
             "previous_checkpoint_hash": previous_hash,
             "steps": [asdict(step) for step in self.steps.values()],
@@ -236,8 +339,19 @@ class TaskGraph:
         value = json.loads(path.read_text(encoding="utf-8"))
         if value.get("version") == 2:
             cls._verify_snapshot(value)
-        graph = cls(path, task_id=value["task_id"], goal=value.get("goal", ""))
+        graph = cls(
+            path,
+            task_id=value["task_id"],
+            goal=value.get("goal", ""),
+            owner=value.get("owner", ""),
+            deadline_at=float(value.get("deadline_at", 0.0)),
+            max_total_attempts=int(value.get("max_total_attempts", 20)),
+            max_attempts_per_step=int(value.get("max_attempts_per_step", 2)),
+        )
         graph.created_at = float(value.get("created_at", time.time()))
+        graph.cancellation_requested = bool(value.get("cancellation_requested", False))
+        graph.cancelled_by = str(value.get("cancelled_by", ""))
+        graph.cancelled_at = float(value.get("cancelled_at", 0.0))
         graph.checkpoint_sequence = int(value.get("checkpoint_sequence", 0))
         graph.checkpoint_hash = str(value.get("checkpoint_hash", ""))
         for item in value.get("steps", []):

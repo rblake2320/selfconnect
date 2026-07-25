@@ -587,7 +587,7 @@
         },
         {
           "path": "tests/test_antigravity_controller.py",
-          "sha256_text": "1621475439b83dbe6b6be8345dcfd2ad6ddf7b7548005dab767c37b737762bf9"
+          "sha256_text": "d8e5daac0aff06351051387123698c61e35b98e4e27de26f50fa470e165507d6"
         }
       ]
     },

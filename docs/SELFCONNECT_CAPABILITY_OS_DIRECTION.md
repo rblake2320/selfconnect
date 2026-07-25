@@ -317,8 +317,13 @@ Progress:
   ambiguous and is blocked rather than automatically repeated;
 - the latest valid journal entry can restore a corrupt or missing current
   snapshot;
-- budgets, deadlines, cancellation ownership, bounded retry policy, and a live
-  kill-and-replace Qwen proof remain before the M3 gate is complete.
+- persisted task deadlines and total-attempt budgets are checked before
+  admission and block unstarted work without invoking its capability;
+- cancellation and retry are bound to the task's immutable owner principal and
+  emit broker evidence;
+- per-step retry counts and total task attempts are bounded, with exhaustion
+  failing closed;
+- a live kill-and-replace Qwen proof remains before the M3 gate is complete.
 
 ### M4 — MCP capability bridge
 

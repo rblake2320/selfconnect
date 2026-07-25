@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -351,6 +352,113 @@ def test_resume_blocks_ambiguous_running_step_without_reexecution(tmp_path: Path
         task_id="reconcile-ambiguous",
         execution_id="execution-ambiguous",
     ) is None
+
+
+def test_expired_task_blocks_without_executing_real_capability(tmp_path: Path) -> None:
+    kernel = CapabilityKernel(
+        KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path),
+        Authority("deadline-owner", frozenset({"observe.system"})),
+    )
+    graph = kernel.new_task(
+        "already expired",
+        task_id="deadline-expired",
+        deadline_at=time.time() - 1,
+    )
+    graph.add(TaskStep.create("selfconnect.doctor", {}, step_id="doctor"))
+
+    result = kernel.run_ready(graph)
+
+    assert result["ok"] is False
+    assert result["reason"] == "task_deadline_exceeded"
+    assert graph.steps["doctor"].status == "blocked"
+    assert kernel.evidence.find(
+        "capability_completed",
+        task_id=graph.task_id,
+        step_id="doctor",
+    ) is None
+
+
+def test_total_attempt_budget_blocks_later_real_capability(tmp_path: Path) -> None:
+    kernel = CapabilityKernel(
+        KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path),
+        Authority("budget-owner", frozenset({"observe.system"})),
+    )
+    real_doctor = SelfConnectTools(RuntimeConfig(repo_root=Path(__file__).parents[1])).doctor
+    kernel.bind_adapter("doctor", real_doctor)
+    graph = kernel.new_task(
+        "one attempt only",
+        task_id="budget-one",
+        max_total_attempts=1,
+    )
+    graph.add(TaskStep.create("selfconnect.doctor", {}, step_id="first"))
+    graph.add(
+        TaskStep.create(
+            "selfconnect.doctor",
+            {},
+            depends_on=("first",),
+            step_id="second",
+        )
+    )
+
+    first = kernel.run_ready(graph)
+    second = kernel.run_ready(graph)
+
+    assert first["executed"][0]["status"] == "completed"
+    assert second["ok"] is False
+    assert second["reason"] == "task_attempt_budget_exhausted"
+    assert graph.steps["second"].status == "blocked"
+    completed = [
+        record
+        for record in kernel.evidence.records()
+        if record["event"] == "capability_completed"
+    ]
+    assert len(completed) == 1
+
+
+def test_task_cancellation_requires_bound_owner(tmp_path: Path) -> None:
+    config = KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path)
+    owner = CapabilityKernel(config, Authority("task-owner"))
+    graph = owner.new_task("cancel safely", task_id="owned-cancel")
+    graph.add(TaskStep.create("selfconnect.doctor", {}, step_id="doctor"))
+    intruder = CapabilityKernel(config, Authority("not-owner"))
+
+    with pytest.raises(PermissionError, match="owner mismatch"):
+        intruder.cancel_task(graph)
+
+    result = owner.cancel_task(graph)
+    assert result["ok"] is True
+    assert graph.cancellation_requested is True
+    assert graph.steps["doctor"].status == "cancelled"
+
+
+def test_retry_policy_is_bounded_and_uses_real_permission_denial(tmp_path: Path) -> None:
+    kernel = CapabilityKernel(
+        KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path),
+        Authority("retry-owner"),
+    )
+    graph = kernel.new_task(
+        "bounded denial retry",
+        task_id="retry-bounded",
+        max_total_attempts=3,
+        max_attempts_per_step=2,
+    )
+    graph.add(
+        TaskStep.create(
+            "selfconnect.command",
+            {"argv": ["python", "--version"]},
+            step_id="command",
+        )
+    )
+
+    first = kernel.run_ready(graph)
+    assert first["executed"][0]["status"] == "blocked"
+    kernel.retry_task_step(graph, "command", reason="owner requested one retry")
+    second = kernel.run_ready(graph)
+    assert second["executed"][0]["status"] == "blocked"
+
+    with pytest.raises(ValueError, match="retry budget exhausted"):
+        kernel.retry_task_step(graph, "command", reason="must not exceed bound")
+    assert graph.steps["command"].attempts == 2
 
 
 def test_kernel_loads_only_digest_pinned_external_skills(monkeypatch, tmp_path: Path) -> None:

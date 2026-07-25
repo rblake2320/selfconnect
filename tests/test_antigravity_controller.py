@@ -196,18 +196,19 @@ class TestAntigravityMonitor:
 
 
 def _antigravity_available() -> bool:
-    """Return True if at least one Antigravity window is discoverable."""
+    """Require a real usable Antigravity render surface, not only a stale title HWND."""
     try:
-        from antigravity_controller import _find_chrome_windows, _is_antigravity_title
-        windows = _find_chrome_windows()
-        return any(_is_antigravity_title(t) for _, t, _ in windows)
+        from antigravity_controller import connect
+
+        session = connect()
+        return session.is_valid() and session.chrome_hwnd != 0
     except Exception:
         return False
 
 
 requires_antigravity = pytest.mark.skipif(
     not _antigravity_available(),
-    reason="Antigravity is not running"
+    reason="real Antigravity render surface is not running or ready"
 )
 
 
@@ -229,7 +230,7 @@ def _authenticated_antigravity_available() -> bool:
 
 requires_authenticated_antigravity = pytest.mark.skipif(
     not _authenticated_antigravity_available(),
-    reason="real Antigravity is running but its chat UI is not authenticated",
+    reason="real Antigravity chat UI is not running, ready, and authenticated",
 )
 
 

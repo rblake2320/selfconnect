@@ -173,7 +173,15 @@ class CapabilityKernel:
         result["evidence_id"] = record["event_id"]
         return {"ok": True, "observation": result}
 
-    def new_task(self, goal: str, task_id: str = "") -> TaskGraph:
+    def new_task(
+        self,
+        goal: str,
+        task_id: str = "",
+        *,
+        deadline_at: float = 0.0,
+        max_total_attempts: int = 20,
+        max_attempts_per_step: int = 2,
+    ) -> TaskGraph:
         self._require_enabled()
         if not self.config.task_graphs:
             raise RuntimeError("durable task graphs are disabled")
@@ -181,6 +189,10 @@ class CapabilityKernel:
             self.config.state_dir / "tasks" / f"{task_id or 'new'}.json",
             task_id=task_id,
             goal=goal,
+            owner=self.authority.principal,
+            deadline_at=deadline_at,
+            max_total_attempts=max_total_attempts,
+            max_attempts_per_step=max_attempts_per_step,
         )
         if not task_id:
             graph.path = graph.path.with_name(f"{graph.task_id}.json")
@@ -207,6 +219,18 @@ class CapabilityKernel:
         self._require_enabled()
         if not self.config.task_graphs:
             raise RuntimeError("durable task graphs are disabled")
+        admission = graph.admission()
+        if not admission["ok"]:
+            blocked = graph.block_unstarted(str(admission["reason"]))
+            self.evidence.append(
+                "task_admission_denied",
+                task_id=graph.task_id,
+                principal=self.authority.principal,
+                reason=admission["reason"],
+                attempts=admission["attempts"],
+                blocked_steps=blocked,
+            )
+            return {"ok": False, "task": graph.summary(), "executed": [], "reason": admission["reason"]}
         executed = []
         for step in graph.ready()[:max(1, min(max_steps, 20))]:
             execution_id = uuid.uuid4().hex
@@ -255,6 +279,29 @@ class CapabilityKernel:
                 evidence_id=result.get("evidence_id", ""),
             )
         return {"ok": True, "task": graph.summary(), "executed": executed}
+
+    def retry_task_step(self, graph: TaskGraph, step_id: str, *, reason: str) -> dict[str, Any]:
+        self._require_enabled()
+        graph.retry(step_id, requester=self.authority.principal, reason=reason)
+        record = self.evidence.append(
+            "task_step_retry_authorized",
+            task_id=graph.task_id,
+            step_id=step_id,
+            principal=self.authority.principal,
+            reason=reason,
+            attempt=graph.steps[step_id].attempts,
+        )
+        return {"ok": True, "task": graph.summary(), "evidence_id": record["event_id"]}
+
+    def cancel_task(self, graph: TaskGraph) -> dict[str, Any]:
+        self._require_enabled()
+        graph.cancel(requester=self.authority.principal)
+        record = self.evidence.append(
+            "task_cancelled",
+            task_id=graph.task_id,
+            principal=self.authority.principal,
+        )
+        return {"ok": True, "task": graph.summary(), "evidence_id": record["event_id"]}
 
     def _reconcile_running(self, graph: TaskGraph) -> None:
         for step in graph.steps.values():
