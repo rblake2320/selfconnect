@@ -32,6 +32,9 @@ state.
 | `gpt-oss:20b` | repeat | 16/18 | 20.09 s | 28,833 MB used; 3,355 MB free |
 | `nemotron-cascade-2:30b` | extended | 12/18 | 23.44 s | 26,436 MB used; 5,751 MB free |
 | `Nemotron-Terminal-32B Q4_K_M` | 8K compatibility | 10/18 | 33.23 s | 29,974 MB used; 2,214 MB free |
+| `glm-4.7-flash` | extended | 12/18 | 11.34 s | 28,273 MB used; 3,915 MB free |
+| `qwen3-coder:30b` | extended | 17/18 | 94.60 s | 31,764 MB used; 424 MB free |
+| `qwen3-coder:30b` | repeat | 11/18 | 83.22 s | 31,844 MB used; 344 MB free |
 
 Qwen followed every requested tool contract exactly. GPT-OSS twice skipped the
 disabled send attempt, answering from the known permission state instead of
@@ -63,3 +66,25 @@ Sources:
 
 - [NVIDIA Nemotron-Terminal-32B model card](https://huggingface.co/nvidia/Nemotron-Terminal-32B)
 - [Q4_K_M GGUF conversion used for the compatibility run](https://huggingface.co/mradermacher/Nemotron-Terminal-32B-GGUF)
+
+### Additional challenger findings
+
+`glm-4.7-flash` was the fastest model tested, but scored 12/18. It skipped
+required mutation-gate calls, replaced window verification with an unrelated
+mesh-history call, and misreported activity state.
+
+`qwen3-coder:30b` produced one promising 17/18 run, followed immediately by an
+11/18 repeat. The repeat skipped several required tool calls and called a tool
+on the no-tool identity case. Its speed and 32K VRAM footprint were also worse
+than `qwen3.6:27b`. The two-run result makes it unsuitable as a governed
+SelfConnect operator despite the favorable first sample.
+
+The newly evaluated poor-fit downloads—Nemotron-Terminal-32B, GLM-4.7-Flash,
+and Qwen3-Coder-30B—were removed after their reports were recorded. Their exact
+Ollama manifests and unreferenced weight blobs were verified absent. Existing
+models that predated this evaluation were not deleted.
+
+Sources:
+
+- [GLM-4.7-Flash model card](https://huggingface.co/zai-org/GLM-4.7-Flash)
+- [Qwen3-Coder-30B-A3B-Instruct model card](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct)
