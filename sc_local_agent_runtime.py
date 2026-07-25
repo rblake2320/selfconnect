@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -18,15 +19,18 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 import warnings
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import sc_cli
 import sc_local_model_role
 import sc_mesh_registry
+from sc_qwen_core import CORE_KNOWLEDGE, CORE_VERSION
+from sc_tasks import FileLock
 
 warnings.filterwarnings(
     "ignore",
@@ -82,6 +86,8 @@ def _trace_summary(name: str, value: dict[str, Any]) -> str:
         )
     if name == "mesh_events":
         return f"mesh events read: {len(value.get('events', []))}"
+    if name == "activity_history":
+        return f"activity records read: {len(value.get('events', []))}"
     if not ok:
         return f"{name} failed: {value.get('error', 'unknown error')}"
     return f"{name} completed"
@@ -106,6 +112,8 @@ def _trace_call_summary(name: str, args: dict[str, Any]) -> str:
         return f"Reading {role} with screen capture/OCR"
     if name == "mesh_events":
         return f"Reading mesh history for {role or 'all roles'}"
+    if name == "activity_history":
+        return "Reading Qwen activity history"
     return name.replace("_", " ").capitalize()
 
 
@@ -129,6 +137,7 @@ class RuntimeConfig:
     allow_commands: bool = False
     allow_writes: bool = False
     trace_tools: bool = False
+    instance_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     repo_root: Path = Path(__file__).resolve().parent
 
     @classmethod
@@ -144,10 +153,84 @@ class RuntimeConfig:
             "allow_commands": _env_enabled("SC_LOCAL_AGENT_ALLOW_COMMANDS"),
             "allow_writes": _env_enabled("SC_LOCAL_AGENT_ALLOW_WRITES"),
             "trace_tools": _env_enabled("SC_LOCAL_AGENT_TRACE_TOOLS"),
+            "instance_id": os.environ.get("SC_LOCAL_AGENT_INSTANCE_ID") or uuid.uuid4().hex,
             "repo_root": Path(os.environ.get("SC_LOCAL_AGENT_ROOT", Path(__file__).resolve().parent)).resolve(),
         }
         values.update({key: value for key, value in overrides.items() if value is not None})
         return cls(**values)
+
+
+class ActivityLedger:
+    def __init__(self, config: RuntimeConfig):
+        base = Path(os.environ.get(
+            "SC_LOCAL_AGENT_STATE_DIR",
+            Path(os.environ.get("LOCALAPPDATA", config.repo_root)) / "SelfConnect",
+        ))
+        base.mkdir(parents=True, exist_ok=True)
+        self.path = base / "qwen_activity.jsonl"
+        self.config = config
+
+    @staticmethod
+    def _safe(value: Any, limit: int = 1_000) -> Any:
+        if isinstance(value, dict):
+            return {
+                str(key): ActivityLedger._safe(item, limit)
+                for key, item in value.items()
+                if str(key).casefold() not in {"password", "token", "secret", "api_key", "authorization"}
+            }
+        if isinstance(value, list):
+            return [ActivityLedger._safe(item, limit) for item in value[:50]]
+        if isinstance(value, str):
+            return value[:limit]
+        return value
+
+    def append(self, event: str, **details: Any) -> dict[str, Any]:
+        lock_path = self.path.with_name(f"{self.path.name}.lock")
+        with FileLock(lock_path):
+            prev_hash = ""
+            if self.path.exists():
+                lines = self.path.read_text(encoding="utf-8").splitlines()
+                if lines:
+                    try:
+                        prev_hash = str(json.loads(lines[-1]).get("event_hash", ""))
+                    except json.JSONDecodeError:
+                        prev_hash = ""
+            record = {
+                "version": 1,
+                "created_at": time.time(),
+                "event": event,
+                "mesh": self.config.mesh,
+                "role": self.config.role,
+                "instance_id": self.config.instance_id,
+                "model": self.config.model,
+                "core_version": CORE_VERSION,
+                "prev_event_hash": prev_hash,
+                "details": self._safe(details),
+            }
+            canonical = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+            record["event_hash"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, sort_keys=True, ensure_ascii=True) + "\n")
+        return record
+
+    def history(self, limit: int = 50, instance_id: str = "") -> dict[str, Any]:
+        rows: list[dict[str, Any]] = []
+        if self.path.exists():
+            for line in self.path.read_text(encoding="utf-8").splitlines():
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if row.get("role") != self.config.role:
+                    continue
+                if instance_id and row.get("instance_id") != instance_id:
+                    continue
+                rows.append(row)
+        return {
+            "ok": True,
+            "path": str(self.path),
+            "events": rows[-max(1, min(int(limit), 200)):],
+        }
 
 
 class SelfConnectTools:
@@ -207,6 +290,9 @@ class SelfConnectTools:
                 if isinstance(item, dict) and (not role or item.get("role") == role):
                     rows.append(item)
         return {"ok": True, "events": rows[-max(1, min(int(limit), 100)) :]}
+
+    def activity_history(self, limit: int = 50, instance_id: str = "") -> dict[str, Any]:
+        return ActivityLedger(self.config).history(limit=limit, instance_id=instance_id)
 
     def list_windows(self, query: str = "", limit: int = 50) -> dict[str, Any]:
         return {
@@ -443,6 +529,9 @@ def tool_schemas() -> list[dict[str, Any]]:
         schema("mesh_events", "Read recent tamper-evident mesh events.", {
             "role": {"type": "string"}, "limit": {"type": "integer"},
         }),
+        schema("activity_history", "Read durable Qwen activity for this role or one process instance.", {
+            "limit": {"type": "integer"}, "instance_id": {"type": "string"},
+        }),
         schema("list_windows", "List visible Win32 windows.", {
             "query": {"type": "string"}, "limit": {"type": "integer"},
         }),
@@ -478,11 +567,12 @@ def tool_schemas() -> list[dict[str, Any]]:
 class LocalAgentRuntime:
     def __init__(self, config: RuntimeConfig):
         self.config = config
+        self.ledger = ActivityLedger(config)
         self.tools = SelfConnectTools(config)
         self.dispatch: dict[str, Callable[..., dict[str, Any]]] = {
             name: getattr(self.tools, name)
             for name in (
-                "doctor", "mesh_roster", "mesh_events", "list_windows",
+                "doctor", "mesh_roster", "mesh_events", "activity_history", "list_windows",
                 "verify_role_window", "read_role_window", "capture_role_window",
                 "send_role_message", "wait_role_reply", "file_read", "file_write", "command",
             )
@@ -490,6 +580,7 @@ class LocalAgentRuntime:
         self.messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt()}
         ]
+        self.ledger.append("session_started")
 
     def system_prompt(self) -> str:
         state = sc_local_model_role.ensure_role(
@@ -505,7 +596,10 @@ class LocalAgentRuntime:
         return f"""You are {self.config.role}, a local Qwen agent inside SelfConnect.
 Identity: mesh={self.config.mesh}; role={self.config.role};
 birth_id={identity.get('birth_id', '')}; generation={identity.get('generation', 0)}.
+instance_id={self.config.instance_id}; core_version={CORE_VERSION}.
 Model: {self.config.model}. Repository: {self.config.repo_root}.
+
+{CORE_KNOWLEDGE}
 
 SelfConnect is an OS-native Windows AI-to-AI system. Its layers are:
 1. Mesh identity and durable JSONL inbox/outbox.
@@ -545,6 +639,7 @@ independent runtime gates."""
             raise RuntimeError(f"Ollama request failed: {exc}") from exc
 
     def respond(self, text: str) -> str:
+        self.ledger.append("prompt_received", text=text)
         self.messages.append({"role": "user", "content": text})
         seen: set[str] = set()
         for _ in range(MAX_ITERATIONS):
@@ -553,7 +648,9 @@ independent runtime gates."""
             self.messages.append(message)
             calls = message.get("tool_calls") or []
             if not calls:
-                return str(message.get("content", "")).strip()
+                answer = str(message.get("content", "")).strip()
+                self.ledger.append("response_completed", text=answer)
+                return answer
             for call in calls:
                 fn = call.get("function", {})
                 name = str(fn.get("name", ""))
@@ -568,6 +665,7 @@ independent runtime gates."""
                     result = {"ok": False, "error": "duplicate tool call blocked"}
                 else:
                     seen.add(signature)
+                    self.ledger.append("tool_called", tool=name, arguments=args)
                     handler = self.dispatch.get(name)
                     try:
                         if self.config.trace_tools:
@@ -579,10 +677,18 @@ independent runtime gates."""
                             result = handler(**args) if handler else {"ok": False, "error": "unknown tool"}
                     except Exception as exc:
                         result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                self.ledger.append(
+                    "tool_completed",
+                    tool=name,
+                    ok=bool(result.get("ok")),
+                    summary=_trace_summary(name, result),
+                )
                 if self.config.trace_tools:
                     print(f"SelfConnect: {_trace_summary(name, result)}", flush=True)
                 self.messages.append({"role": "tool", "content": _compact(result)})
-        return "[maximum tool iterations reached]"
+        answer = "[maximum tool iterations reached]"
+        self.ledger.append("response_blocked", reason=answer)
+        return answer
 
     def process_inbox_once(self, seen_ids: set[str]) -> int:
         inbox = sc_local_model_role.read_box(self.config.role, box="inbox", limit=1000)
@@ -644,6 +750,7 @@ def main(argv: list[str] | None = None) -> int:
     runtime = LocalAgentRuntime(config)
     print(
         f"SelfConnect local agent: role={config.role} model={config.model} "
+        f"instance={config.instance_id[:12]} core={CORE_VERSION} "
         f"input={config.allow_input} commands={config.allow_commands} writes={config.allow_writes}"
     )
     if args.once:

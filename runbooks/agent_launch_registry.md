@@ -216,6 +216,12 @@ terminals and burning tokens fleet-wide.
   - enable supervised terminal input only for the session with
     `$env:SC_LOCAL_AGENT_ALLOW_INPUT='1'`. Commands and file writes remain
     disabled unless their independent gates are also explicitly enabled.
+  - every new runtime loads the packaged, versioned SelfConnect Qwen core. The
+    startup banner prints its unique process `instance_id` and `core_version`.
+  - stable mesh role/birth/generation identity is separate from the process
+    instance. Each process writes prompt, tool, outcome, and response records to
+    the locked, hash-linked `%LOCALAPPDATA%\SelfConnect\qwen_activity.jsonl`
+    ledger. Qwen can inspect relevant records with `activity_history`.
 
 ---
 
