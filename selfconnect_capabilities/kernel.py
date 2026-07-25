@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -190,7 +191,17 @@ class CapabilityKernel:
         self._require_enabled()
         if not self.config.task_graphs:
             raise RuntimeError("durable task graphs are disabled")
-        return TaskGraph.load(self.config.state_dir / "tasks" / f"{task_id}.json")
+        graph = TaskGraph.load(self.config.state_dir / "tasks" / f"{task_id}.json")
+        self._reconcile_running(graph)
+        return graph
+
+    def recover_task(self, task_id: str) -> TaskGraph:
+        self._require_enabled()
+        if not self.config.task_graphs:
+            raise RuntimeError("durable task graphs are disabled")
+        graph = TaskGraph.recover(self.config.state_dir / "tasks" / f"{task_id}.json")
+        self._reconcile_running(graph)
+        return graph
 
     def run_ready(self, graph: TaskGraph, *, max_steps: int = 1) -> dict[str, Any]:
         self._require_enabled()
@@ -198,10 +209,37 @@ class CapabilityKernel:
             raise RuntimeError("durable task graphs are disabled")
         executed = []
         for step in graph.ready()[:max(1, min(max_steps, 20))]:
-            graph.transition(step.step_id, "running")
-            result = self.execute(step.capability, step.arguments)
+            execution_id = uuid.uuid4().hex
+            graph.start(step.step_id, execution_id)
+            result = self.broker.execute(
+                step.capability,
+                step.arguments,
+                self.authority,
+                evidence_context={
+                    "task_id": graph.task_id,
+                    "step_id": step.step_id,
+                    "execution_id": execution_id,
+                },
+            ).as_dict()
             if result["ok"]:
-                status = "completed"
+                evidence = self.evidence.get(result.get("evidence_id", ""))
+                completion = step.completion.evaluate(
+                    capability=step.capability,
+                    execution_id=execution_id,
+                    evidence=evidence,
+                )
+                if completion["ok"]:
+                    status = "completed"
+                else:
+                    status = "failed"
+                    result["completion"] = completion
+                    self.evidence.append(
+                        "task_completion_rejected",
+                        task_id=graph.task_id,
+                        step_id=step.step_id,
+                        execution_id=execution_id,
+                        reasons=completion["reasons"],
+                    )
             elif result.get("verification", {}).get("reason") == "permission_denied":
                 status = "blocked"
             else:
@@ -217,6 +255,57 @@ class CapabilityKernel:
                 evidence_id=result.get("evidence_id", ""),
             )
         return {"ok": True, "task": graph.summary(), "executed": executed}
+
+    def _reconcile_running(self, graph: TaskGraph) -> None:
+        for step in graph.steps.values():
+            if step.status != "running":
+                continue
+            evidence = self.evidence.find(
+                "capability_completed",
+                task_id=graph.task_id,
+                step_id=step.step_id,
+                execution_id=step.execution_id,
+            )
+            completion = step.completion.evaluate(
+                capability=step.capability,
+                execution_id=step.execution_id,
+                evidence=evidence,
+            )
+            if completion["ok"]:
+                graph.transition(
+                    step.step_id,
+                    "completed",
+                    {
+                        "ok": True,
+                        "recovered": True,
+                        "evidence_id": evidence["event_id"],
+                        "completion": completion,
+                    },
+                )
+                self.evidence.append(
+                    "task_step_reconciled",
+                    task_id=graph.task_id,
+                    step_id=step.step_id,
+                    execution_id=step.execution_id,
+                    evidence_id=evidence["event_id"],
+                )
+            else:
+                graph.transition(
+                    step.step_id,
+                    "blocked",
+                    {
+                        "ok": False,
+                        "error": "ambiguous interrupted execution",
+                        "completion": completion,
+                    },
+                )
+                self.evidence.append(
+                    "task_step_recovery_blocked",
+                    task_id=graph.task_id,
+                    step_id=step.step_id,
+                    execution_id=step.execution_id,
+                    reasons=completion["reasons"],
+                )
 
     def _require_enabled(self) -> None:
         if not self.config.enabled:

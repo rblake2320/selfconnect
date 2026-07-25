@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from sc_local_agent_runtime import RuntimeConfig, SelfConnectTools
 from selfconnect_capabilities import (
     Authority,
     CapabilityBroker,
@@ -15,6 +16,7 @@ from selfconnect_capabilities import (
     TaskStep,
 )
 from selfconnect_capabilities.evidence import EvidenceStore
+from selfconnect_capabilities.task_graph import CompletionPredicate
 
 
 def _schema() -> dict:
@@ -190,6 +192,53 @@ def test_task_graph_rejects_invalid_transition(tmp_path: Path) -> None:
         graph.transition("one", "completed")
 
 
+def test_completion_predicate_rejects_unsupported_model_claim() -> None:
+    result = CompletionPredicate().evaluate(
+        capability="test.echo",
+        execution_id="execution-one",
+        evidence=None,
+    )
+
+    assert result == {"ok": False, "reasons": ["completion_evidence_missing"]}
+
+
+def test_task_checkpoint_detects_snapshot_rollback(tmp_path: Path) -> None:
+    path = tmp_path / "task.json"
+    graph = TaskGraph(path, goal="rollback proof")
+    graph.add(TaskStep.create("selfconnect.doctor", {}, step_id="doctor"))
+    old_snapshot = path.read_text(encoding="utf-8")
+    graph.start("doctor", "execution-one")
+
+    path.write_text(old_snapshot, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="latest witnessed checkpoint"):
+        TaskGraph.load(path)
+
+
+def test_task_checkpoint_detects_stale_writer_fork(tmp_path: Path) -> None:
+    path = tmp_path / "task.json"
+    graph = TaskGraph(path, goal="fork proof")
+    graph.add(TaskStep.create("selfconnect.doctor", {}, step_id="doctor"))
+    stale = TaskGraph.load(path)
+    graph.start("doctor", "execution-one")
+
+    with pytest.raises(ValueError, match="fork or rollback"):
+        stale.save()
+
+
+def test_task_recovery_restores_latest_witnessed_snapshot(tmp_path: Path) -> None:
+    path = tmp_path / "task.json"
+    graph = TaskGraph(path, goal="restore proof")
+    graph.add(TaskStep.create("selfconnect.doctor", {}, step_id="doctor"))
+    expected_hash = graph.checkpoint_hash
+    path.write_text('{"corrupt": true}', encoding="utf-8")
+
+    recovered = TaskGraph.recover(path)
+
+    assert recovered.checkpoint_hash == expected_hash
+    assert recovered.steps["doctor"].status == "pending"
+
+
 def test_kernel_feature_flag_and_builtin_execution(tmp_path: Path) -> None:
     disabled = CapabilityKernel(KernelConfig(state_dir=tmp_path), Authority("qwen"))
     with pytest.raises(RuntimeError, match="disabled"):
@@ -240,6 +289,68 @@ def test_resumed_task_rederives_current_authority(tmp_path: Path) -> None:
 
     assert result["executed"][0]["status"] == "blocked"
     assert result["executed"][0]["result"]["verification"]["reason"] == "permission_denied"
+
+
+def test_resume_reconciles_completed_evidence_without_repeating_adapter(tmp_path: Path) -> None:
+    config = KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path)
+    authority = Authority("qwen", frozenset({"observe.system"}))
+    real_doctor = SelfConnectTools(RuntimeConfig(repo_root=Path(__file__).parents[1])).doctor
+    first = CapabilityKernel(config, authority)
+    first.bind_adapter("doctor", real_doctor)
+    graph = first.new_task("resume safely", task_id="reconcile-complete")
+    graph.add(TaskStep.create("selfconnect.doctor", {}, step_id="doctor"))
+    graph.start("doctor", "execution-complete")
+    result = first.broker.execute(
+        "selfconnect.doctor",
+        {},
+        authority,
+        evidence_context={
+            "task_id": graph.task_id,
+            "step_id": "doctor",
+            "execution_id": "execution-complete",
+        },
+    )
+    assert result.ok is True
+    completed_before = [
+        record
+        for record in first.evidence.records()
+        if record["event"] == "capability_completed"
+        and record["details"].get("execution_id") == "execution-complete"
+    ]
+
+    successor = CapabilityKernel(config, authority)
+    successor.bind_adapter("doctor", real_doctor)
+    resumed = successor.load_task("reconcile-complete")
+    completed_after = [
+        record
+        for record in successor.evidence.records()
+        if record["event"] == "capability_completed"
+        and record["details"].get("execution_id") == "execution-complete"
+    ]
+
+    assert resumed.steps["doctor"].status == "completed"
+    assert resumed.steps["doctor"].result["recovered"] is True
+    assert len(completed_before) == len(completed_after) == 1
+
+
+def test_resume_blocks_ambiguous_running_step_without_reexecution(tmp_path: Path) -> None:
+    config = KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path)
+    authority = Authority("qwen", frozenset({"observe.system"}))
+    first = CapabilityKernel(config, authority)
+    graph = first.new_task("do not duplicate", task_id="reconcile-ambiguous")
+    graph.add(TaskStep.create("selfconnect.doctor", {}, step_id="doctor"))
+    graph.start("doctor", "execution-ambiguous")
+
+    successor = CapabilityKernel(config, authority)
+    resumed = successor.load_task("reconcile-ambiguous")
+
+    assert resumed.steps["doctor"].status == "blocked"
+    assert resumed.steps["doctor"].result["error"] == "ambiguous interrupted execution"
+    assert successor.evidence.find(
+        "capability_completed",
+        task_id="reconcile-ambiguous",
+        execution_id="execution-ambiguous",
+    ) is None
 
 
 def test_kernel_loads_only_digest_pinned_external_skills(monkeypatch, tmp_path: Path) -> None:

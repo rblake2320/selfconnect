@@ -73,3 +73,30 @@ class EvidenceStore:
             previous = event_hash
             count += 1
         return {"ok": True, "records": count, "head_hash": previous}
+
+    def records(self) -> list[dict[str, Any]]:
+        verification = self.verify()
+        if not verification["ok"]:
+            raise ValueError("execution evidence chain verification failed")
+        if not self.path.exists():
+            return []
+        return [
+            json.loads(line)
+            for line in self.path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    def get(self, event_id: str) -> dict[str, Any] | None:
+        return next(
+            (record for record in reversed(self.records()) if record.get("event_id") == event_id),
+            None,
+        )
+
+    def find(self, event: str, **details: Any) -> dict[str, Any] | None:
+        for record in reversed(self.records()):
+            if record.get("event") != event:
+                continue
+            values = record.get("details", {})
+            if all(values.get(key) == value for key, value in details.items()):
+                return record
+        return None

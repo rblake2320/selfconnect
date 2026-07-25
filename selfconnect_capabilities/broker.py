@@ -51,7 +51,13 @@ class CapabilityBroker:
     def register_verifier(self, name: str, verifier: Verifier) -> None:
         self._verifiers[name] = verifier
 
-    def authorize(self, capability: str, authority: Authority) -> dict[str, Any]:
+    def authorize(
+        self,
+        capability: str,
+        authority: Authority,
+        *,
+        evidence_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Record and return the broker's policy decision before any adapter runs."""
         manifest = self.registry.get(capability)
         missing = authority.missing(manifest.permissions)
@@ -63,6 +69,7 @@ class CapabilityBroker:
             allowed=allowed,
             missing_permissions=missing,
             manifest_digest=manifest.manifest_digest or manifest.digest(),
+            **(evidence_context or {}),
         )
         return {
             "ok": allowed,
@@ -78,10 +85,17 @@ class CapabilityBroker:
         capability: str,
         arguments: dict[str, Any],
         authority: Authority,
+        *,
+        evidence_context: dict[str, Any] | None = None,
     ) -> CapabilityResult:
         started = time.perf_counter()
         manifest = self.registry.get(capability)
-        decision = self.authorize(capability, authority)
+        context = evidence_context or {}
+        decision = self.authorize(
+            capability,
+            authority,
+            evidence_context=context,
+        )
         if not decision["allowed"]:
             try:
                 authority.require(manifest.permissions)
@@ -96,6 +110,7 @@ class CapabilityBroker:
                 reason=reason,
                 policy_evidence_id=decision["evidence_id"],
                 manifest_digest=manifest.manifest_digest or manifest.digest(),
+                **context,
             )
             return CapabilityResult(
                 False, capability, {"ok": False, "error": reason},
@@ -123,6 +138,7 @@ class CapabilityBroker:
             verification=verification,
             ok=ok,
             manifest_digest=manifest.manifest_digest or manifest.digest(),
+            **context,
         )
         return CapabilityResult(
             ok, capability, output, verification, record["event_id"],

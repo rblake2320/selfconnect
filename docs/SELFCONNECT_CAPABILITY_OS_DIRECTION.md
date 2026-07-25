@@ -303,6 +303,23 @@ Gate: kill and replace a Qwen process mid-task; the successor re-derives current
 authority, resumes from the checkpoint, does not repeat completed mutations,
 and cannot mark completion without verifier evidence.
 
+Progress:
+
+- runtime-owned completion predicates now require the matching broker
+  `capability_completed` event, execution identity, successful adapter output,
+  and successful independent verification; model assertions are not accepted;
+- task snapshots are sequence-numbered and hash-linked into an append-only
+  checkpoint journal, with stale-writer fork and restored-snapshot rollback
+  detection;
+- a successor reconciles a witnessed completed execution without invoking its
+  adapter again;
+- an interrupted running step without completion evidence fails closed as
+  ambiguous and is blocked rather than automatically repeated;
+- the latest valid journal entry can restore a corrupt or missing current
+  snapshot;
+- budgets, deadlines, cancellation ownership, bounded retry policy, and a live
+  kill-and-replace Qwen proof remain before the M3 gate is complete.
+
 ### M4 — MCP capability bridge
 
 Deliverables:
