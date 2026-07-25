@@ -10,6 +10,10 @@ from typing import Any
 
 SKILL_NAME = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 SCHEMA_TYPES = {"string", "integer", "number", "boolean", "array", "object"}
+INSTRUCTION_LIKE = re.compile(
+    r"(?i)\b(ignore|disregard|override)\b.{0,40}\b(previous|prior|system|permission|policy)\b"
+    r"|\b(system prompt|developer message|call execute|invoke command)\b"
+)
 
 
 def _canonical(value: Any) -> str:
@@ -35,6 +39,10 @@ class SkillManifest:
             raise ValueError(f"invalid skill name: {self.name!r}")
         if not self.version.strip() or not self.description.strip():
             raise ValueError("skill version and description are required")
+        if len(self.description) > 1_000 or any(ord(char) < 32 for char in self.description):
+            raise ValueError("skill description contains invalid or excessive text")
+        if self.provenance != "builtin" and INSTRUCTION_LIKE.search(self.description):
+            raise ValueError("external skill description contains instruction-like text")
         if not SKILL_NAME.fullmatch(self.adapter):
             raise ValueError(f"invalid adapter name: {self.adapter!r}")
         if self.input_schema.get("type", "object") != "object":
@@ -74,6 +82,9 @@ class SkillManifest:
     def public_dict(self) -> dict[str, Any]:
         result = self.unsigned_dict()
         result["manifest_digest"] = self.manifest_digest or self.digest()
+        result["description_trust"] = (
+            "trusted_builtin" if self.provenance == "builtin" else "untrusted_external"
+        )
         return result
 
     @classmethod
@@ -82,6 +93,7 @@ class SkillManifest:
             "name", "version", "description", "adapter", "permissions",
             "input_schema", "output_schema", "verification", "tags",
             "provenance", "manifest_digest",
+            "description_trust",
         }
         unexpected = set(value) - allowed
         if unexpected:

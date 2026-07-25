@@ -14,7 +14,7 @@ from .builtin import BUILTIN_SKILLS
 from .evidence import EvidenceStore
 from .permissions import Authority
 from .registry import SkillRegistry
-from .task_graph import TaskGraph
+from .task_graph import CompletionPredicate, TaskGraph, TaskStep
 from .world_state import WorldStateStore
 
 
@@ -112,9 +112,19 @@ class CapabilityKernel:
         self._require_enabled()
         return self.broker.authorize(capability, self.authority)
 
-    def execute(self, capability: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def execute(
+        self,
+        capability: str,
+        arguments: dict[str, Any],
+        expected_manifest_digest: str,
+    ) -> dict[str, Any]:
         self._require_enabled()
-        return self.broker.execute(capability, arguments, self.authority).as_dict()
+        return self.broker.execute(
+            capability,
+            arguments,
+            self.authority,
+            expected_manifest_digest=expected_manifest_digest,
+        ).as_dict()
 
     def query_world_state(
         self,
@@ -215,6 +225,30 @@ class CapabilityKernel:
         self._reconcile_running(graph)
         return graph
 
+    def add_task_step(
+        self,
+        graph: TaskGraph,
+        capability: str,
+        arguments: dict[str, Any],
+        *,
+        depends_on: tuple[str, ...] = (),
+        step_id: str = "",
+        completion: CompletionPredicate | None = None,
+    ) -> TaskStep:
+        self._require_enabled()
+        self._require_task_owner(graph)
+        manifest = self.registry.get(capability)
+        step = TaskStep.create(
+            capability,
+            arguments,
+            depends_on=depends_on,
+            step_id=step_id,
+            completion=completion,
+            manifest_digest=manifest.manifest_digest or manifest.digest(),
+        )
+        graph.add(step)
+        return step
+
     def recover_task(self, task_id: str) -> TaskGraph:
         self._require_enabled()
         if not self.config.task_graphs:
@@ -249,6 +283,7 @@ class CapabilityKernel:
                 step.capability,
                 step.arguments,
                 self.authority,
+                expected_manifest_digest=step.manifest_digest,
                 evidence_context={
                     "task_id": graph.task_id,
                     "step_id": step.step_id,

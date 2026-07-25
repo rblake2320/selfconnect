@@ -86,10 +86,29 @@ class CapabilityBroker:
         arguments: dict[str, Any],
         authority: Authority,
         *,
+        expected_manifest_digest: str,
         evidence_context: dict[str, Any] | None = None,
     ) -> CapabilityResult:
         started = time.perf_counter()
         manifest = self.registry.get(capability)
+        actual_digest = manifest.manifest_digest or manifest.digest()
+        if expected_manifest_digest != actual_digest:
+            record = self.evidence.append(
+                "capability_manifest_mismatch",
+                capability=capability,
+                principal=authority.principal,
+                expected_manifest_digest=expected_manifest_digest,
+                actual_manifest_digest=actual_digest,
+                **(evidence_context or {}),
+            )
+            return CapabilityResult(
+                False,
+                capability,
+                {"ok": False, "error": "capability manifest digest mismatch"},
+                {"ok": False, "reason": "manifest_digest_mismatch"},
+                record["event_id"],
+                round((time.perf_counter() - started) * 1000, 3),
+            )
         context = evidence_context or {}
         decision = self.authorize(
             capability,

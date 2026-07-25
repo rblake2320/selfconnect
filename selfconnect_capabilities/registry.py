@@ -71,6 +71,9 @@ class SkillRegistry:
                 "name": skill.name,
                 "version": skill.version,
                 "description": skill.description,
+                "description_trust": (
+                    "trusted_builtin" if skill.provenance == "builtin" else "untrusted_external"
+                ),
                 "permissions": list(skill.permissions),
                 "available": not missing,
                 "missing_permissions": missing,

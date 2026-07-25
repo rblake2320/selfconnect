@@ -100,20 +100,18 @@ def predecessor(state_dir: Path, signal_path: Path, run_id: str) -> int:
         max_total_attempts=3,
         max_attempts_per_step=1,
     )
-    graph.add(
-        TaskStep.create(
-            "selfconnect.file-write",
-            {"path": marker_relative, "content": marker_content},
-            step_id="write-marker",
-        )
+    kernel.add_task_step(
+        graph,
+        "selfconnect.file-write",
+        {"path": marker_relative, "content": marker_content},
+        step_id="write-marker",
     )
-    graph.add(
-        TaskStep.create(
-            "selfconnect.doctor",
-            {},
-            depends_on=("write-marker",),
-            step_id="successor-doctor",
-        )
+    kernel.add_task_step(
+        graph,
+        "selfconnect.doctor",
+        {},
+        depends_on=("write-marker",),
+        step_id="successor-doctor",
     )
     first = kernel.run_ready(graph)
     if first["executed"][0]["status"] != "completed":
@@ -123,15 +121,14 @@ def predecessor(state_dir: Path, signal_path: Path, run_id: str) -> int:
         "prove ambiguous interrupted mutation blocks",
         task_id="m3-live-ambiguous",
     )
-    ambiguous.add(
-        TaskStep.create(
-            "selfconnect.file-write",
-            {
-                "path": "proofs/capability_os/m3_ambiguous_must_not_exist.txt",
-                "content": "must never be written\n",
-            },
-            step_id="ambiguous-write",
-        )
+    kernel.add_task_step(
+        ambiguous,
+        "selfconnect.file-write",
+        {
+            "path": "proofs/capability_os/m3_ambiguous_must_not_exist.txt",
+            "content": "must never be written\n",
+        },
+        step_id="ambiguous-write",
     )
     ambiguous.start("ambiguous-write", f"ambiguous-{run_id}")
     marker = REPO_ROOT / marker_relative

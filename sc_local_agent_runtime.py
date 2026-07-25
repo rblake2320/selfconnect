@@ -606,7 +606,8 @@ def tool_schemas(
         schema("capability_execute", "Execute one discovered skill through the guarded capability broker.", {
             "capability": {"type": "string"},
             "arguments": {"type": "object"},
-        }, ["capability", "arguments"]),
+            "expected_manifest_digest": {"type": "string"},
+        }, ["capability", "arguments", "expected_manifest_digest"]),
     ]
     if capability_kernel and dynamic_skills and allowed_tools is None:
         return capability_schemas

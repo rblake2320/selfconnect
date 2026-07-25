@@ -66,10 +66,19 @@ def test_world_state_capability_is_permission_gated(tmp_path: Path) -> None:
     denied = CapabilityKernel(config, Authority("denied"))
     denied.observe("runtime.test", {"model": "qwen"}, source="runtime")
 
-    denied_result = denied.execute("selfconnect.world-state", {"prefix": "runtime."})
+    digest = denied.inspect("selfconnect.world-state")["skill"]["manifest_digest"]
+    denied_result = denied.execute(
+        "selfconnect.world-state",
+        {"prefix": "runtime."},
+        expected_manifest_digest=digest,
+    )
 
     allowed = CapabilityKernel(config, Authority("allowed", frozenset({"read.state"})))
-    allowed_result = allowed.execute("selfconnect.world-state", {"prefix": "runtime."})
+    allowed_result = allowed.execute(
+        "selfconnect.world-state",
+        {"prefix": "runtime."},
+        expected_manifest_digest=digest,
+    )
 
     assert denied_result["ok"] is False
     assert allowed_result["ok"] is True

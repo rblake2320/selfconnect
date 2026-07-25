@@ -23,6 +23,7 @@ class Observation:
     expires_at: float
     sensitive: bool = False
     value_digest: str = ""
+    untrusted_data: bool = True
 
     def __post_init__(self) -> None:
         if not self.key or not self.source:
@@ -76,6 +77,7 @@ class WorldStateStore:
             expires_at=observed_at + max(0.1, float(ttl_seconds)),
             sensitive=bool(sensitive),
             value_digest=digest,
+            untrusted_data=True,
         )
         lock = self.path.with_suffix(".lock")
         with FileLock(lock):

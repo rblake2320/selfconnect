@@ -83,6 +83,7 @@ class TaskStep:
     result: dict[str, Any] = field(default_factory=dict)
     attempts: int = 0
     execution_id: str = ""
+    manifest_digest: str = ""
     updated_at: float = field(default_factory=time.time)
 
     @classmethod
@@ -94,14 +95,17 @@ class TaskStep:
         depends_on: tuple[str, ...] = (),
         step_id: str = "",
         completion: CompletionPredicate | None = None,
+        manifest_digest: str = "",
     ) -> TaskStep:
-        return cls(
+        step = cls(
             step_id or uuid.uuid4().hex,
             capability,
             arguments,
             depends_on,
             completion or CompletionPredicate(),
         )
+        step.manifest_digest = manifest_digest
+        return step
 
 
 class TaskGraph:
