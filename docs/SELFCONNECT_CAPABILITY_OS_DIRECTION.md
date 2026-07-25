@@ -347,6 +347,26 @@ Deliverables:
 Gate: after a written threat model, Qwen discovers and uses one read-only MCP tool without receiving the
 entire server catalog or credentials; a changed schema fails closed.
 
+Status: complete for the read-only M4 scope.
+
+- threat model: `docs/MCP_BRIDGE_THREAT_MODEL.md`;
+- stdio-only, digest-pinned server configs load only when the Capability Kernel
+  and dynamic skills are explicitly enabled;
+- every admitted tool requires an explicit permission mapping;
+- first-seen, changed, unauthenticated, hostile-description, and
+  permission-unmapped tools remain quarantined and undiscoverable;
+- schema approvals bind the exact server-config digest and tool fingerprint and
+  are HMAC-authenticated under the DPAPI-protected integrity key;
+- real stdio tests replace fake-client tests and cover execution, denial,
+  hostile description, approval tampering, and runtime integration;
+- a fresh Qwen used exactly `capability_discover`, `capability_inspect`, and
+  `capability_execute` to call the approved read-only repository-identity tool;
+- live proof:
+  `proofs/capability_os/m4_live_qwen_mcp_20260725.json`.
+
+Gate: complete. Mutation-capable MCP remains outside M4 and requires Windows
+Job Object process-tree containment plus a live forced-timeout proof.
+
 ### M5 — Visual specialist
 
 Deliverables:

@@ -1,0 +1,24 @@
+{
+  "schema": "selfconnect.live-qwen-mcp-proof.v1",
+  "ok": true,
+  "model": "qwen3.6:27b",
+  "role": "qwen-mcp-proof-d8bb2f59",
+  "instance_id": "513c665fe6014d4199341a14b2df291e",
+  "seconds": 16.6,
+  "server_config_digest": "53a2b07eecaf51ac1604cc89693e1c2f17ef24d8d3a6f7780db5c959b55506b1",
+  "tool_fingerprint": "16015bd6326f02b6b3c708d78a4eec8926b82b1c4ef2258a3456dee81a18eb54",
+  "called_tools": [
+    "capability_discover",
+    "capability_inspect",
+    "capability_execute"
+  ],
+  "answer": "MCP-QWEN-READ-OK version=0.12.0 git_head=dbc5d49a7940a108c9fb67a9563391751d0c5ac2",
+  "evidence_verification": {
+    "ok": true,
+    "records": 5,
+    "head_hash": "9bca017146503d493feb8bc5b80eaf92d217530d3ba01235c7df916ce03c5b2c"
+  },
+  "approved_evidence_id": "2a163eb1619b4e68b1073061d38fb016",
+  "completed_evidence_id": "8947441042fd490f9606435ce50c9341",
+  "expected_repository_version": "0.12.0"
+}

@@ -7,6 +7,13 @@ permissions, and verification outside the model process.
 from .broker import CapabilityBroker, CapabilityResult
 from .collectors import CollectedObservation, HostCollectors
 from .kernel import CapabilityKernel, KernelConfig
+from .mcp_bridge import (
+    MCPBridge,
+    MCPServerConfig,
+    MCPSchemaTrustStore,
+    MCPToolDescriptor,
+    StdioMCPClient,
+)
 from .models import SkillManifest
 from .permissions import Authority, PermissionDenied
 from .registry import SkillRegistry
@@ -21,10 +28,15 @@ __all__ = [
     "CollectedObservation",
     "HostCollectors",
     "KernelConfig",
+    "MCPBridge",
+    "MCPServerConfig",
+    "MCPSchemaTrustStore",
+    "MCPToolDescriptor",
     "Observation",
     "PermissionDenied",
     "SkillManifest",
     "SkillRegistry",
+    "StdioMCPClient",
     "TaskGraph",
     "TaskStep",
     "WorldStateStore",

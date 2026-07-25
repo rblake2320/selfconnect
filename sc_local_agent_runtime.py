@@ -33,6 +33,12 @@ from sc_local_agent_harness import HarnessProfile, ToolContract, resolve_harness
 from sc_qwen_core import CORE_KNOWLEDGE, CORE_VERSION
 from sc_tasks import FileLock
 from selfconnect_capabilities import Authority, CapabilityKernel, HostCollectors, KernelConfig
+from selfconnect_capabilities.mcp_bridge import (
+    MCPBridge,
+    MCPServerConfig,
+    MCPSchemaTrustStore,
+    StdioMCPClient,
+)
 
 warnings.filterwarnings(
     "ignore",
@@ -655,6 +661,11 @@ class LocalAgentRuntime:
             permissions.add("write.file")
         if config.allow_commands:
             permissions.add("execute.command")
+        permissions.update(
+            item.strip()
+            for item in os.environ.get("SC_CAPABILITY_EXTRA_PERMISSIONS", "").split(",")
+            if item.strip()
+        )
         self.kernel_config = KernelConfig.from_env()
         self.kernel = CapabilityKernel(
             self.kernel_config,
@@ -687,6 +698,8 @@ class LocalAgentRuntime:
         self.kernel.register_state_refresher(
             lambda prefix: self.refresh_world_state(scope=self._world_scope_for_prefix(prefix))
         )
+        self.mcp_bridges: list[MCPBridge] = []
+        self.mcp_ingest_results = self._load_mcp_bridges()
         self.dispatch.update({
             "capability_discover": self.kernel.discover,
             "capability_inspect": self.kernel.inspect,
@@ -702,7 +715,42 @@ class LocalAgentRuntime:
             harness_profile=self.harness.name,
             capability_kernel=self.kernel_config.enabled,
             dynamic_skills=self.kernel_config.dynamic_skills,
+            mcp_servers=len(self.mcp_bridges),
         )
+
+    def _load_mcp_bridges(self) -> list[dict[str, Any]]:
+        configured = [
+            Path(item).resolve()
+            for item in os.environ.get("SC_MCP_SERVER_CONFIGS", "").split(os.pathsep)
+            if item.strip()
+        ]
+        if not configured:
+            return []
+        if not self.kernel_config.enabled or not self.kernel_config.dynamic_skills:
+            raise RuntimeError(
+                "MCP server configs require SC_CAPABILITY_KERNEL=1 and SC_DYNAMIC_SKILLS=1"
+            )
+        trust = MCPSchemaTrustStore(
+            self.kernel_config.state_dir / "mcp_schema_trust.json"
+        )
+        results = []
+        for path in configured:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError(f"MCP server config must be an object: {path}")
+            config = MCPServerConfig.from_dict(value, require_digest=True)
+            bridge = MCPBridge(
+                config=config,
+                client=StdioMCPClient(config),
+                registry=self.kernel.registry,
+                broker=self.kernel.broker,
+                evidence=self.kernel.evidence,
+                trust=trust,
+            )
+            result = bridge.ingest()
+            self.mcp_bridges.append(bridge)
+            results.append(result)
+        return results
 
     def refresh_world_state(self, scope: str = "all") -> dict[str, Any]:
         if not self.kernel_config.enabled:
