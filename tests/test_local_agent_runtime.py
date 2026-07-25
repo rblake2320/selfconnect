@@ -96,7 +96,7 @@ def test_wait_role_reply_returns_only_new_verified_text(monkeypatch, tmp_path: P
     tools._reply_baselines["peer"] = "before"
     reads = iter([
         {"ok": True, "text": "before"},
-        {"ok": True, "text": "before\nPEER-ACK hello"},
+        {"ok": True, "text": "before\nReply with PEER-ACK.\nPEER-ACK hello"},
     ])
     monkeypatch.setattr(tools, "read_role_window", lambda role: next(reads))
 
@@ -105,6 +105,21 @@ def test_wait_role_reply_returns_only_new_verified_text(monkeypatch, tmp_path: P
     assert result["ok"] is True
     assert result["marker_observed"] is True
     assert result["new_text"] == "PEER-ACK hello"
+
+
+def test_wait_role_reply_does_not_accept_outbound_marker_echo(monkeypatch, tmp_path: Path) -> None:
+    tools = runtime_mod.SelfConnectTools(_config(tmp_path, poll_seconds=0.01))
+    tools._reply_baselines["peer"] = "before"
+    reads = iter([
+        {"ok": True, "text": "before\nReply with PEER-ACK."},
+        {"ok": True, "text": "before\nReply with PEER-ACK.\nPEER-ACK actual reply"},
+    ])
+    monkeypatch.setattr(tools, "read_role_window", lambda role: next(reads))
+
+    result = tools.wait_role_reply("peer", marker="PEER-ACK", timeout_seconds=1)
+
+    assert result["ok"] is True
+    assert result["new_text"] == "PEER-ACK actual reply"
 
 
 def test_wait_role_reply_requires_send_baseline(tmp_path: Path) -> None:

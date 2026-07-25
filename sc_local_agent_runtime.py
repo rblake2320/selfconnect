@@ -16,6 +16,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,13 @@ from typing import Any
 import sc_cli
 import sc_local_model_role
 import sc_mesh_registry
+
+warnings.filterwarnings(
+    "ignore",
+    message="Revert to STA COM threading mode",
+    category=UserWarning,
+    module="pywinauto",
+)
 
 DEFAULT_MODEL = "qwen3.6:27b"
 DEFAULT_ROLE = "local-ollama-1"
@@ -38,6 +46,27 @@ def _env_enabled(name: str) -> bool:
 def _compact(value: Any, limit: int = MAX_RESULT_CHARS) -> str:
     text = value if isinstance(value, str) else json.dumps(value, sort_keys=True, ensure_ascii=True)
     return text if len(text) <= limit else text[:limit] + "\n...[truncated]"
+
+
+def _trace_summary(name: str, value: dict[str, Any]) -> str:
+    ok = value.get("ok")
+    if name == "mesh_roster":
+        return f"ok={ok} peers={len(value.get('agents', []))}"
+    if name == "verify_role_window":
+        actual = value.get("actual", {})
+        return (
+            f"ok={ok} hwnd={actual.get('hwnd')} pid={actual.get('pid')} "
+            f"title={actual.get('title', '')!r}"
+        )
+    if name == "send_role_message":
+        return (
+            f"ok={ok} accepted={value.get('chars_accepted', 0)}/"
+            f"{value.get('chars_requested', 0)} transport={value.get('transport', '')}"
+        )
+    if name == "wait_role_reply":
+        reply = str(value.get("new_text", value.get("error", ""))).replace("\r", " ").replace("\n", " ")
+        return f"ok={ok} marker={value.get('marker', '')!r} reply={reply.strip()!r}"
+    return _compact(value, 1_000).replace("\r", "\\r").replace("\n", "\\n")
 
 
 def strip_reasoning(message: dict[str, Any]) -> dict[str, Any]:
@@ -272,6 +301,7 @@ class SelfConnectTools:
         timeout = max(1, min(int(timeout_seconds), 60))
         deadline = time.monotonic() + timeout
         last = ""
+        baseline_marker_count = baseline.casefold().count(marker.casefold()) if marker else 0
         while time.monotonic() < deadline:
             result = self.read_role_window(role)
             if not result.get("ok"):
@@ -280,11 +310,22 @@ class SelfConnectTools:
             if current != baseline:
                 new_text = current[len(baseline):] if current.startswith(baseline) else current
                 last = _compact(new_text).strip()
-                if not marker or marker.casefold() in new_text.casefold():
+                marker_count = current.casefold().count(marker.casefold()) if marker else 0
+                marker_observed = not marker or marker_count >= baseline_marker_count + 2
+                if marker_observed:
+                    if marker:
+                        matching_lines = [
+                            line.strip()
+                            for line in current.replace("\r", "").splitlines()
+                            if marker.casefold() in line.casefold()
+                        ]
+                        if matching_lines:
+                            last = matching_lines[-1]
                     self._reply_baselines[role] = current
                     return {
                         "ok": True,
                         "role": role,
+                        "marker": marker,
                         "marker_observed": bool(marker),
                         "new_text": last,
                     }
@@ -487,12 +528,12 @@ operator explicitly enables their independent runtime gates."""
                     handler = self.dispatch.get(name)
                     try:
                         if self.config.trace_tools:
-                            print(f"\n[Qwen tool call] {name} {_compact(args, 2_000)}", flush=True)
+                            print(f"\n[Qwen → tool] {name} {_compact(args, 500)}", flush=True)
                         result = handler(**args) if handler else {"ok": False, "error": "unknown tool"}
                     except Exception as exc:
                         result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
                 if self.config.trace_tools:
-                    print(f"[Qwen tool result] {name} {_compact(result, 4_000)}", flush=True)
+                    print(f"[tool → Qwen] {_trace_summary(name, result)}", flush=True)
                 self.messages.append({"role": "tool", "content": _compact(result)})
         return "[maximum tool iterations reached]"
 
