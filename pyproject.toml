@@ -126,6 +126,8 @@ include = [
     "sc_local_model_role.py",
     "sc_local_agent_runtime.py",
     "sc_local_agent_harness.py",
+    "sc_capabilities.py",
+    "selfconnect_capabilities/**",
     "sc_qwen_core.py",
     "sc_echo_filter.py",
     "sc_identity.py",
@@ -197,6 +199,7 @@ include = [
     "docs/PROVEN_VS_UNTESTED.md",
     "docs/SELFCONNECT_PRODUCT_BOUNDARIES.md",
     "docs/TPM_PLATFORM_ATTESTATION.md",
+    "docs/CAPABILITY_KERNEL_V1.md",
     "skills/selfconnect-win32/**",
 ]
 
@@ -230,6 +233,7 @@ selfconnect-fabric-router = "sc_fabric_router:main"
 selfconnect-fabric-service = "sc_fabric_service:main"
 selfconnect-local-model = "sc_local_model_role:main"
 selfconnect-local-agent = "sc_local_agent_runtime:main"
+selfconnect-capabilities = "sc_capabilities:main"
 selfconnect-tpm-attestation = "sc_tpm_attestation:main"
 
 [tool.pytest.ini_options]

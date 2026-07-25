@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Added the disabled-by-default SelfConnect Capability Kernel v1 with
+  digest-pinned skill manifests, progressive discovery, immutable authority,
+  trusted adapter dispatch, strict input validation, verification-gated
+  completion, hash-linked evidence, and durable task graphs.
+- Added optional local-agent dynamic skill tools and a read-only
+  `selfconnect-capabilities` inspection CLI.
+
 All notable changes to SelfConnect are documented here.
 
 ## [Unreleased]

@@ -36,6 +36,14 @@ def test_mutation_tools_fail_closed_by_default(tmp_path: Path) -> None:
     assert tools.command(["python", "--version"])["error"] == "command execution is disabled"
 
 
+def test_doctor_normalizes_success_for_capability_verification(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(runtime_mod.sc_cli, "doctor_report", lambda **kwargs: {"win32": True})
+
+    result = runtime_mod.SelfConnectTools(_config(tmp_path)).doctor()
+
+    assert result["ok"] is True
+
+
 def test_trace_tools_can_be_enabled_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("SC_LOCAL_AGENT_TRACE_TOOLS", "1")
 
@@ -61,6 +69,43 @@ def test_qwen_gets_model_specific_harness_profile() -> None:
     assert qwen.name == "qwen3.6-selfconnect-v1"
     assert qwen.temperature == 0
     assert generic.name == "generic-selfconnect-v1"
+
+
+def test_dynamic_capability_kernel_exposes_only_meta_tools(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SC_CAPABILITY_KERNEL", "1")
+    monkeypatch.setenv("SC_DYNAMIC_SKILLS", "1")
+    monkeypatch.setenv("SC_CAPABILITY_STATE_DIR", str(tmp_path / "capabilities"))
+    monkeypatch.setattr(
+        runtime_mod.sc_local_model_role,
+        "ensure_role",
+        lambda *args, **kwargs: {"ok": True, "state": {}},
+    )
+    runtime = runtime_mod.LocalAgentRuntime(_config(tmp_path))
+
+    schemas = runtime_mod.tool_schemas(
+        runtime.harness,
+        capability_kernel=runtime.kernel_config.enabled,
+        dynamic_skills=runtime.kernel_config.dynamic_skills,
+    )
+
+    assert [item["function"]["name"] for item in schemas] == [
+        "capability_discover",
+        "capability_inspect",
+        "capability_execute",
+    ]
+    discovered = runtime.kernel.discover("read a repository file")
+    file_skill = next(item for item in discovered["skills"] if item["name"] == "selfconnect.file-read")
+    assert file_skill["available"] is True
+    write = runtime.kernel.inspect("selfconnect.file-write")
+    assert write["skill"]["available"] is False
+
+
+def test_capability_kernel_does_not_change_default_tool_catalog() -> None:
+    names = [item["function"]["name"] for item in runtime_mod.tool_schemas()]
+
+    assert "capability_discover" not in names
+    assert "capability_execute" not in names
+    assert len(names) == 13
 
 
 def test_contract_filters_visible_tools_and_retries_missing_call(monkeypatch, tmp_path: Path) -> None:

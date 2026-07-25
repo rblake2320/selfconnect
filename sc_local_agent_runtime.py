@@ -27,11 +27,12 @@ from pathlib import Path
 from typing import Any
 
 import sc_cli
-from sc_local_agent_harness import HarnessProfile, ToolContract, resolve_harness_profile
 import sc_local_model_role
 import sc_mesh_registry
+from sc_local_agent_harness import HarnessProfile, ToolContract, resolve_harness_profile
 from sc_qwen_core import CORE_KNOWLEDGE, CORE_VERSION
 from sc_tasks import FileLock
+from selfconnect_capabilities import Authority, CapabilityKernel, KernelConfig
 
 warnings.filterwarnings(
     "ignore",
@@ -89,6 +90,15 @@ def _trace_summary(name: str, value: dict[str, Any]) -> str:
         return f"mesh events read: {len(value.get('events', []))}"
     if name == "activity_history":
         return f"activity records read: {len(value.get('events', []))}"
+    if name == "capability_discover":
+        return f"skills discovered: {len(value.get('skills', []))}"
+    if name == "capability_inspect":
+        return f"skill inspected: {value.get('skill', {}).get('name', 'unknown')}"
+    if name == "capability_execute":
+        return (
+            f"capability executed: {value.get('capability', 'unknown')}"
+            if ok else f"capability failed: {value.get('capability', 'unknown')}"
+        )
     if not ok:
         return f"{name} failed: {value.get('error', 'unknown error')}"
     return f"{name} completed"
@@ -115,6 +125,12 @@ def _trace_call_summary(name: str, args: dict[str, Any]) -> str:
         return f"Reading mesh history for {role or 'all roles'}"
     if name == "activity_history":
         return "Reading local-agent activity history"
+    if name == "capability_discover":
+        return f"Discovering skills for: {args.get('query', '')}"
+    if name == "capability_inspect":
+        return f"Inspecting skill: {args.get('capability', '')}"
+    if name == "capability_execute":
+        return f"Executing capability: {args.get('capability', '')}"
     return name.replace("_", " ").capitalize()
 
 
@@ -267,7 +283,9 @@ class SelfConnectTools:
         return path
 
     def doctor(self) -> dict[str, Any]:
-        return sc_cli.doctor_report(include_windows=False)
+        result = sc_cli.doctor_report(include_windows=False)
+        result.setdefault("ok", True)
+        return result
 
     def mesh_roster(self) -> dict[str, Any]:
         registry = sc_mesh_registry.load_registry()
@@ -518,6 +536,9 @@ class SelfConnectTools:
 def tool_schemas(
     profile: HarnessProfile | None = None,
     allowed_tools: tuple[str, ...] | None = None,
+    *,
+    capability_kernel: bool = False,
+    dynamic_skills: bool = False,
 ) -> list[dict[str, Any]]:
     def schema(name: str, description: str, properties: dict[str, Any], required: list[str] | None = None):
         return {
@@ -575,6 +596,22 @@ def tool_schemas(
             "argv": {"type": "array", "items": {"type": "string"}},
         }, ["argv"]),
     ]
+    capability_schemas = [
+        schema("capability_discover", "Find relevant SelfConnect skills without loading every tool.", {
+            "query": {"type": "string"}, "limit": {"type": "integer"},
+        }, ["query"]),
+        schema("capability_inspect", "Inspect one skill's inputs, permissions, and verification rules.", {
+            "capability": {"type": "string"},
+        }, ["capability"]),
+        schema("capability_execute", "Execute one discovered skill through the guarded capability broker.", {
+            "capability": {"type": "string"},
+            "arguments": {"type": "object"},
+        }, ["capability", "arguments"]),
+    ]
+    if capability_kernel and dynamic_skills and allowed_tools is None:
+        return capability_schemas
+    if capability_kernel:
+        schemas.extend(capability_schemas)
     if allowed_tools is None:
         return schemas
     allowed = set(allowed_tools)
@@ -595,10 +632,50 @@ class LocalAgentRuntime:
                 "send_role_message", "wait_role_reply", "file_read", "file_write", "command",
             )
         }
+        permissions = {
+            "observe.system", "read.mesh", "read.window", "capture.window", "read.file",
+        }
+        if config.allow_input:
+            permissions.add("input.window")
+        if config.allow_writes:
+            permissions.add("write.file")
+        if config.allow_commands:
+            permissions.add("execute.command")
+        self.kernel_config = KernelConfig.from_env()
+        self.kernel = CapabilityKernel(
+            self.kernel_config,
+            Authority(
+                principal=f"{config.role}:{config.instance_id}",
+                permissions=frozenset(permissions),
+            ),
+        )
+        adapter_methods = {
+            "doctor": "doctor",
+            "mesh-roster": "mesh_roster",
+            "verify-role-window": "verify_role_window",
+            "read-role-window": "read_role_window",
+            "capture-role-window": "capture_role_window",
+            "send-role-message": "send_role_message",
+            "file-read": "file_read",
+            "file-write": "file_write",
+            "command": "command",
+        }
+        for adapter, method in adapter_methods.items():
+            self.kernel.bind_adapter(adapter, self.dispatch[method])
+        self.dispatch.update({
+            "capability_discover": self.kernel.discover,
+            "capability_inspect": self.kernel.inspect,
+            "capability_execute": self.kernel.execute,
+        })
         self.messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt()}
         ]
-        self.ledger.append("session_started", harness_profile=self.harness.name)
+        self.ledger.append(
+            "session_started",
+            harness_profile=self.harness.name,
+            capability_kernel=self.kernel_config.enabled,
+            dynamic_skills=self.kernel_config.dynamic_skills,
+        )
 
     def system_prompt(self) -> str:
         state = sc_local_model_role.ensure_role(
@@ -611,6 +688,15 @@ class LocalAgentRuntime:
             replace=True,
         )
         identity = state.get("state", {})
+        capability_guidance = ""
+        if self.kernel_config.enabled:
+            capability_guidance = f"""
+
+Capability Kernel enabled=True;
+dynamic_skills={self.kernel_config.dynamic_skills}. When dynamic skills are
+enabled, discover a capability, inspect it when its contract is unclear, and
+execute it through the broker. A skill marked unavailable lacks authority; do
+not try to bypass the broker."""
         return f"""You are {self.config.role}, a local model agent inside SelfConnect.
 Identity: mesh={self.config.mesh}; role={self.config.role};
 birth_id={identity.get('birth_id', '')}; generation={identity.get('generation', 0)}.
@@ -633,7 +719,7 @@ reasoning. Act immediately: do not narrate plans, preview upcoming steps, restat
 the request, or describe routine tool usage. Let the runtime's compact tool-status
 lines show activity. After acting, return only the concise result or a concrete
 blocker. Mutation tools fail closed unless the operator explicitly enables their
-independent runtime gates.{self.harness.system_suffix}"""
+independent runtime gates.{capability_guidance}{self.harness.system_suffix}"""
 
     def _chat(self, contract: ToolContract | None = None) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -651,7 +737,12 @@ independent runtime gates.{self.harness.system_suffix}"""
         if self.harness.seed is not None:
             payload["options"]["seed"] = self.harness.seed
         allowed = contract.allowed_tools if contract else None
-        schemas = tool_schemas(self.harness, allowed)
+        schemas = tool_schemas(
+            self.harness,
+            allowed,
+            capability_kernel=self.kernel_config.enabled,
+            dynamic_skills=self.kernel_config.dynamic_skills,
+        )
         if schemas:
             payload["tools"] = schemas
         body = json.dumps(payload).encode("utf-8")
