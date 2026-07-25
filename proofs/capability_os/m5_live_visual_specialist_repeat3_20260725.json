@@ -1,0 +1,252 @@
+{
+  "schema": "selfconnect.live-visual-specialist-proof.v1",
+  "run_id": "be723e66433244ad967d1bbbcc1c219c",
+  "ok": true,
+  "seconds": 29.521,
+  "role": "visual-proof-be723e66",
+  "hwnd": 1706429068,
+  "target": {
+    "pid": 53584,
+    "exe_name": "python.exe",
+    "class_name": "SelfConnectVisualProof53584",
+    "title": "SelfConnect Visual Proof be723e6643"
+  },
+  "models": {
+    "primary": "qwen3.6:27b",
+    "visual": "qwen3-vl:8b",
+    "restored_loaded_models": [
+      "qwen3.6:27b"
+    ]
+  },
+  "gpu": {
+    "baseline": {
+      "total_mb": 32607,
+      "used_mb": 12287,
+      "free_mb": 19901
+    },
+    "primary_loaded": {
+      "total_mb": 32607,
+      "used_mb": 31617,
+      "free_mb": 571
+    },
+    "primary_delta_mb": 19330
+  },
+  "before": {
+    "ok": true,
+    "role": "visual-proof-be723e66",
+    "guard": {
+      "hwnd": 1706429068,
+      "valid": true,
+      "visible": true,
+      "pid": 53584,
+      "exe": "python.exe",
+      "class": "SelfConnectVisualProof53584",
+      "title": "SelfConnect Visual Proof be723e6643",
+      "session_id": 1,
+      "own_pid": 44376,
+      "is_self": false,
+      "is_terminal": false,
+      "ok": true,
+      "reasons": [],
+      "actual": {
+        "hwnd": 1706429068,
+        "pid": 53584,
+        "exe_name": "python.exe",
+        "class_name": "SelfConnectVisualProof53584",
+        "title": "SelfConnect Visual Proof be723e6643"
+      },
+      "expected": {
+        "pid": 53584,
+        "exe_name": "python.exe",
+        "class_name": "SelfConnectVisualProof53584",
+        "title_contains": "SelfConnect Visual Proof be723e6643",
+        "allow_classes": [
+          "CASCADIA_HOSTING_WINDOW_CLASS",
+          "ConsoleWindowClass",
+          "PseudoConsoleWindow",
+          "mintty"
+        ]
+      },
+      "checks": [
+        {
+          "field": "pid",
+          "expected": 53584,
+          "actual": 53584,
+          "ok": true
+        },
+        {
+          "field": "exe_name",
+          "expected": "python.exe",
+          "actual": "python.exe",
+          "ok": true
+        },
+        {
+          "field": "class_name",
+          "expected": "SelfConnectVisualProof53584",
+          "actual": "SelfConnectVisualProof53584",
+          "ok": true
+        },
+        {
+          "field": "title",
+          "expected_contains": "SelfConnect Visual Proof be723e6643",
+          "actual": "SelfConnect Visual Proof be723e6643",
+          "ok": true
+        }
+      ],
+      "errors": []
+    },
+    "admission": {
+      "mode": "swap_primary_for_visual",
+      "total_mb": 32607,
+      "used_mb": 12287,
+      "free_mb": 19901,
+      "required_mb": 7800,
+      "reserve_mb": 2048,
+      "primary_was_loaded": true,
+      "visual_was_loaded": false
+    },
+    "state": "STATE: READY",
+    "state_source": "uia",
+    "uia": {
+      "ok": true,
+      "method": "uia_text",
+      "text": "SelfConnect Visual Proof be723e6643\nSelfConnect Visual Specialist Proof\nSTATE: READY\nAdvance\nSystem\nSystem\nMinimize\nMaximize\nClose"
+    },
+    "ocr": {
+      "ok": true,
+      "text": "SelfConnect Visual Specialist Proof\n\nSTATE: READY\n\nAdvance\n"
+    },
+    "visual": {
+      "screen_type": "visual_proof",
+      "state_text": "READY",
+      "visual_summary": "The screen displays a title 'SelfConnect Visual Specialist Proof' at the top, followed by a status line 'STATE: READY', and a central button labeled 'Advance'. The background is plain white with light gray bars for the title and state text.",
+      "controls": [
+        {
+          "role": "advance",
+          "label": "Advance"
+        }
+      ],
+      "confidence": 0.95,
+      "untrusted_data": true
+    },
+    "capture_path": "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\local-agent\\visual-proof-be723e66-1785013975.png",
+    "untrusted_data": true,
+    "restore": {
+      "ok": true,
+      "primary_loaded": true,
+      "visual_loaded": false
+    }
+  },
+  "action": {
+    "method": "semantic Win32 button text via BM_CLICK",
+    "label": "Advance",
+    "raw_coordinates_used": false,
+    "accepted": true
+  },
+  "after": {
+    "ok": true,
+    "role": "visual-proof-be723e66",
+    "guard": {
+      "hwnd": 1706429068,
+      "valid": true,
+      "visible": true,
+      "pid": 53584,
+      "exe": "python.exe",
+      "class": "SelfConnectVisualProof53584",
+      "title": "SelfConnect Visual Proof be723e6643",
+      "session_id": 1,
+      "own_pid": 44376,
+      "is_self": false,
+      "is_terminal": false,
+      "ok": true,
+      "reasons": [],
+      "actual": {
+        "hwnd": 1706429068,
+        "pid": 53584,
+        "exe_name": "python.exe",
+        "class_name": "SelfConnectVisualProof53584",
+        "title": "SelfConnect Visual Proof be723e6643"
+      },
+      "expected": {
+        "pid": 53584,
+        "exe_name": "python.exe",
+        "class_name": "SelfConnectVisualProof53584",
+        "title_contains": "SelfConnect Visual Proof be723e6643",
+        "allow_classes": [
+          "CASCADIA_HOSTING_WINDOW_CLASS",
+          "ConsoleWindowClass",
+          "PseudoConsoleWindow",
+          "mintty"
+        ]
+      },
+      "checks": [
+        {
+          "field": "pid",
+          "expected": 53584,
+          "actual": 53584,
+          "ok": true
+        },
+        {
+          "field": "exe_name",
+          "expected": "python.exe",
+          "actual": "python.exe",
+          "ok": true
+        },
+        {
+          "field": "class_name",
+          "expected": "SelfConnectVisualProof53584",
+          "actual": "SelfConnectVisualProof53584",
+          "ok": true
+        },
+        {
+          "field": "title",
+          "expected_contains": "SelfConnect Visual Proof be723e6643",
+          "actual": "SelfConnect Visual Proof be723e6643",
+          "ok": true
+        }
+      ],
+      "errors": []
+    },
+    "admission": {
+      "mode": "swap_primary_for_visual",
+      "total_mb": 32607,
+      "used_mb": 12287,
+      "free_mb": 19901,
+      "required_mb": 7800,
+      "reserve_mb": 2048,
+      "primary_was_loaded": true,
+      "visual_was_loaded": false
+    },
+    "state": "STATE: COMPLETE",
+    "state_source": "uia",
+    "uia": {
+      "ok": true,
+      "method": "uia_text",
+      "text": "SelfConnect Visual Proof be723e6643\nSelfConnect Visual Specialist Proof\nSTATE: COMPLETE\nAdvance\nSystem\nSystem\nMinimize\nMaximize\nClose"
+    },
+    "ocr": {
+      "ok": true,
+      "text": "SelfConnect Visual Specialist Proof\n\nSTATE: COMPLETE\n\nAdvance\n"
+    },
+    "visual": {
+      "screen_type": "visual_proof",
+      "state_text": "COMPLETE",
+      "visual_summary": "The screen displays a title 'SelfConnect Visual Specialist Proof', a status line showing 'STATE: COMPLETE', and an 'Advance' button at the bottom center.",
+      "controls": [
+        {
+          "role": "advance_button",
+          "label": "Advance"
+        }
+      ],
+      "confidence": 0.95,
+      "untrusted_data": true
+    },
+    "capture_path": "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\local-agent\\visual-proof-be723e66-1785013987.png",
+    "untrusted_data": true,
+    "restore": {
+      "ok": true,
+      "primary_loaded": true,
+      "visual_loaded": false
+    }
+  }
+}

@@ -381,6 +381,24 @@ Gate: primary Qwen and visual specialist coexist safely on the RTX 5090 or
 swap predictably, identify an owned test UI, and complete a verified state
 transition without raw coordinate guessing.
 
+Status: complete.
+
+- real UIA, OCR, and Qwen3-VL observations are target-bound to a freshly
+  verified owned Win32 window;
+- the VLM prompt and returned observation remain explicitly untrusted data;
+- measured admission control swaps out Qwen 3.6 27B when the current desktop
+  cannot preserve the 2 GB reserve, unloads Qwen3-VL after observation, and
+  restores the primary model;
+- a semantic button-label action performs the owned `READY` to `COMPLETE`
+  transition without coordinates;
+- three independent cold live runs used different processes, HWNDs, mesh
+  roles, captures, and model reload cycles, preventing a stale one-run
+  coordination artifact from satisfying the gate;
+- live proofs:
+  `proofs/capability_os/m5_live_visual_specialist_20260725.json`,
+  `proofs/capability_os/m5_live_visual_specialist_repeat2_20260725.json`, and
+  `proofs/capability_os/m5_live_visual_specialist_repeat3_20260725.json`.
+
 ### M6 — Shadow skill compiler
 
 Deliverables:
