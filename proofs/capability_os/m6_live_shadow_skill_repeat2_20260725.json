@@ -1,0 +1,255 @@
+{
+  "schema": "selfconnect.live-shadow-skill-proof.v1",
+  "run_id": "67ae7ff6103d4039a8c85622f60e89d8",
+  "ok": true,
+  "seconds": 0.032,
+  "real_io": {
+    "source_paths": [
+      "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\capability_os\\m6_live_shadow_skill_repeat2_20260725-state-67ae7ff6103d\\owned-repository\\source-0.txt",
+      "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\capability_os\\m6_live_shadow_skill_repeat2_20260725-state-67ae7ff6103d\\owned-repository\\source-1.txt",
+      "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\capability_os\\m6_live_shadow_skill_repeat2_20260725-state-67ae7ff6103d\\owned-repository\\source-2.txt"
+    ],
+    "replay_paths": [
+      "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\capability_os\\m6_live_shadow_skill_repeat2_20260725-state-67ae7ff6103d\\owned-repository\\replay-0.txt",
+      "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\capability_os\\m6_live_shadow_skill_repeat2_20260725-state-67ae7ff6103d\\owned-repository\\replay-1.txt",
+      "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\capability_os\\m6_live_shadow_skill_repeat2_20260725-state-67ae7ff6103d\\owned-repository\\replay-2.txt"
+    ],
+    "source_contents": [
+      "source run 0 / 67ae7ff6103d4039a8c85622f60e89d8",
+      "source run 1 / 67ae7ff6103d4039a8c85622f60e89d8",
+      "source run 2 / 67ae7ff6103d4039a8c85622f60e89d8"
+    ],
+    "replay_contents": [
+      "replay run 0 / 67ae7ff6103d4039a8c85622f60e89d8",
+      "replay run 1 / 67ae7ff6103d4039a8c85622f60e89d8",
+      "replay run 2 / 67ae7ff6103d4039a8c85622f60e89d8"
+    ]
+  },
+  "evidence_verification": {
+    "ok": true,
+    "records": 12,
+    "head_hash": "aae3b2191a7c73df6868270bfe09f80349d791f13aaf9ac2ee44cc65f0fca7de"
+  },
+  "candidate": {
+    "schema": "selfconnect.shadow-skill-candidate.v1",
+    "candidate_id": "4290e64fb6654aec9845101b327abc46",
+    "status": "shadow",
+    "name": "shadow.read-owned-text",
+    "version": "0.1.0",
+    "description": "Read one owned UTF-8 text file through the guarded repository adapter.",
+    "created_at": 1785014616.1188307,
+    "compiler_principal": "trusted-host-compiler",
+    "source_run_count": 3,
+    "source_event_ids_by_step": [
+      [
+        "d5fdeaf9c53948ecbf70eb3864f2f362",
+        "e5dbb146ffe34311839eaf7159cacf81",
+        "891937149c1043258cdacd97752f8d4a"
+      ]
+    ],
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "step_1_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_1_path"
+      ],
+      "additionalProperties": false
+    },
+    "permissions": [
+      "read.file"
+    ],
+    "steps": [
+      {
+        "index": 1,
+        "capability": "selfconnect.file-read",
+        "manifest_digest": "0f5538031377175b14dd06bcfd406e372716337e755074b7111bf344e745cf1f",
+        "arguments": {
+          "path": {
+            "$input": "step_1_path"
+          }
+        },
+        "permissions": [
+          "read.file"
+        ],
+        "verifiers": [
+          "output-ok"
+        ],
+        "output_shape": {
+          "content": "string",
+          "ok": "boolean",
+          "path": "string"
+        }
+      }
+    ],
+    "constraints": {
+      "generated_code": false,
+      "runtime_registered": false,
+      "model_self_promotion": false,
+      "minimum_replays": 3,
+      "separate_approval_required": true
+    },
+    "candidate_digest": "219fc54611c7406fd0df0af022fb95994baad441c28b207fda2846faa35c2eb9",
+    "candidate_hmac": "8d705621ff2c1c1aa409070689a8db0e77d4b9005739095f53d7fd614dacd717"
+  },
+  "replays": [
+    {
+      "schema": "selfconnect.shadow-replay.v1",
+      "replay_id": "3340f084ef43456eb62fac0877f11102",
+      "candidate_id": "4290e64fb6654aec9845101b327abc46",
+      "candidate_digest": "219fc54611c7406fd0df0af022fb95994baad441c28b207fda2846faa35c2eb9",
+      "created_at": 1785014616.124272,
+      "ok": true,
+      "results": [
+        {
+          "step": 1,
+          "arguments": {
+            "path": "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\capability_os\\m6_live_shadow_skill_repeat2_20260725-state-67ae7ff6103d\\owned-repository\\replay-0.txt"
+          },
+          "result": {
+            "ok": true,
+            "capability": "selfconnect.file-read",
+            "output": {
+              "ok": true,
+              "path": "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\capability_os\\m6_live_shadow_skill_repeat2_20260725-state-67ae7ff6103d\\owned-repository\\replay-0.txt",
+              "content": "replay run 0 / 67ae7ff6103d4039a8c85622f60e89d8"
+            },
+            "verification": {
+              "ok": true,
+              "checks": [
+                {
+                  "name": "output-ok",
+                  "ok": true
+                }
+              ]
+            },
+            "evidence_id": "bee79bb816c64d4fa0cfbc11322cf73f",
+            "elapsed_ms": 3.648
+          },
+          "shape_verification": {
+            "ok": true,
+            "missing": [],
+            "wrong_types": []
+          }
+        }
+      ],
+      "report_hmac": "53cb47da3a27a91ea225c4509fae81ad052a6a902919c267377d9b70db355c66"
+    },
+    {
+      "schema": "selfconnect.shadow-replay.v1",
+      "replay_id": "3a240208fbf24ef798454f9501cf8ea4",
+      "candidate_id": "4290e64fb6654aec9845101b327abc46",
+      "candidate_digest": "219fc54611c7406fd0df0af022fb95994baad441c28b207fda2846faa35c2eb9",
+      "created_at": 1785014616.1291666,
+      "ok": true,
+      "results": [
+        {
+          "step": 1,
+          "arguments": {
+            "path": "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\capability_os\\m6_live_shadow_skill_repeat2_20260725-state-67ae7ff6103d\\owned-repository\\replay-1.txt"
+          },
+          "result": {
+            "ok": true,
+            "capability": "selfconnect.file-read",
+            "output": {
+              "ok": true,
+              "path": "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\capability_os\\m6_live_shadow_skill_repeat2_20260725-state-67ae7ff6103d\\owned-repository\\replay-1.txt",
+              "content": "replay run 1 / 67ae7ff6103d4039a8c85622f60e89d8"
+            },
+            "verification": {
+              "ok": true,
+              "checks": [
+                {
+                  "name": "output-ok",
+                  "ok": true
+                }
+              ]
+            },
+            "evidence_id": "432e28c23c4645baa0414cb9142eca9d",
+            "elapsed_ms": 3.866
+          },
+          "shape_verification": {
+            "ok": true,
+            "missing": [],
+            "wrong_types": []
+          }
+        }
+      ],
+      "report_hmac": "aa60b0b75b1539f470110ed7b167d3963f40b25075cb80048a6260a95e8e09ee"
+    },
+    {
+      "schema": "selfconnect.shadow-replay.v1",
+      "replay_id": "9269bc6b44274515bcf29cc9df0bebcf",
+      "candidate_id": "4290e64fb6654aec9845101b327abc46",
+      "candidate_digest": "219fc54611c7406fd0df0af022fb95994baad441c28b207fda2846faa35c2eb9",
+      "created_at": 1785014616.1340518,
+      "ok": true,
+      "results": [
+        {
+          "step": 1,
+          "arguments": {
+            "path": "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\capability_os\\m6_live_shadow_skill_repeat2_20260725-state-67ae7ff6103d\\owned-repository\\replay-2.txt"
+          },
+          "result": {
+            "ok": true,
+            "capability": "selfconnect.file-read",
+            "output": {
+              "ok": true,
+              "path": "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\capability_os\\m6_live_shadow_skill_repeat2_20260725-state-67ae7ff6103d\\owned-repository\\replay-2.txt",
+              "content": "replay run 2 / 67ae7ff6103d4039a8c85622f60e89d8"
+            },
+            "verification": {
+              "ok": true,
+              "checks": [
+                {
+                  "name": "output-ok",
+                  "ok": true
+                }
+              ]
+            },
+            "evidence_id": "48eb8ddbf9184d558889316c8ca40c5b",
+            "elapsed_ms": 3.934
+          },
+          "shape_verification": {
+            "ok": true,
+            "missing": [],
+            "wrong_types": []
+          }
+        }
+      ],
+      "report_hmac": "0ba86e537c90998ea03113117f09bc191edf356d2bfc8b020f3c1e92f3ee0c14"
+    }
+  ],
+  "adversarial": {
+    "schema": "selfconnect.shadow-adversarial.v1",
+    "candidate_id": "4290e64fb6654aec9845101b327abc46",
+    "candidate_digest": "219fc54611c7406fd0df0af022fb95994baad441c28b207fda2846faa35c2eb9",
+    "created_at": 1785014616.1350257,
+    "ok": true,
+    "cases": {
+      "description_injection_rejected": true,
+      "argument_smuggling_rejected": true,
+      "privilege_escalation_rejected": true,
+      "manifest_rebinding_enforced": true,
+      "arbitrary_verifier_code_absent": true,
+      "deterministic_output_shapes_present": true,
+      "runtime_registration_absent": true
+    },
+    "report_hmac": "7c8076957476c821165cc3eb8f6b32fec9d9ed9ebeea2107f8283216f9518507"
+  },
+  "eligibility": {
+    "ok": true,
+    "candidate_id": "4290e64fb6654aec9845101b327abc46",
+    "candidate_digest": "219fc54611c7406fd0df0af022fb95994baad441c28b207fda2846faa35c2eb9",
+    "successful_authenticated_replays": 3,
+    "minimum_replays": 3,
+    "adversarial_ok": true,
+    "still_shadow": true,
+    "separate_approval_required": true
+  },
+  "runtime_registry_contains_candidate": false,
+  "approval_created": false
+}

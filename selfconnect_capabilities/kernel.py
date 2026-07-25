@@ -14,6 +14,7 @@ from .builtin import BUILTIN_SKILLS
 from .evidence import EvidenceStore
 from .permissions import Authority
 from .registry import SkillRegistry
+from .shadow_compiler import ShadowSkillCompiler
 from .task_graph import CompletionPredicate, TaskGraph, TaskStep
 from .world_state import WorldStateStore
 
@@ -77,6 +78,15 @@ class CapabilityKernel:
                 self.registry.load_directory(path, require_digest=True)
         self.evidence = EvidenceStore(config.state_dir / "evidence.jsonl")
         self.world = WorldStateStore(config.state_dir)
+        self.shadow_compiler = (
+            ShadowSkillCompiler(
+                config.state_dir / "skill-learning",
+                self.registry,
+                deterministic_verifiers=frozenset({"output-ok"}),
+            )
+            if config.enabled and config.skill_learning == "shadow"
+            else None
+        )
         self._state_refresher: Callable[[str], dict[str, Any]] | None = None
         self.broker = CapabilityBroker(self.registry, self.evidence)
         self.broker.register_verifier(

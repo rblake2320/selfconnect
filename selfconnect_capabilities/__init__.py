@@ -9,14 +9,15 @@ from .collectors import CollectedObservation, HostCollectors
 from .kernel import CapabilityKernel, KernelConfig
 from .mcp_bridge import (
     MCPBridge,
-    MCPServerConfig,
     MCPSchemaTrustStore,
+    MCPServerConfig,
     MCPToolDescriptor,
     StdioMCPClient,
 )
 from .models import SkillManifest
 from .permissions import Authority, PermissionDenied
 from .registry import SkillRegistry
+from .shadow_compiler import ShadowSkillCompiler
 from .task_graph import TaskGraph, TaskStep
 from .world_state import Observation, WorldStateStore
 
@@ -29,11 +30,12 @@ __all__ = [
     "HostCollectors",
     "KernelConfig",
     "MCPBridge",
-    "MCPServerConfig",
     "MCPSchemaTrustStore",
+    "MCPServerConfig",
     "MCPToolDescriptor",
     "Observation",
     "PermissionDenied",
+    "ShadowSkillCompiler",
     "SkillManifest",
     "SkillRegistry",
     "StdioMCPClient",

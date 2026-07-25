@@ -412,6 +412,32 @@ Deliverables:
 Gate: a repeated owned test procedure becomes a candidate, passes replay and
 adversarial tests, but remains unusable until separately approved.
 
+Status: complete.
+
+- only authenticated successful `capability_completed` evidence can be
+  distilled, with at least three equal-shaped source runs;
+- machine-specific paths and changing arguments become strict typed inputs,
+  while permissions and manifest digests are re-derived from the current
+  registry;
+- candidates contain no generated code, reference only an allowlist of
+  registered deterministic verifiers, and live outside runtime skill paths;
+- replay uses the real broker, current immutable authority, current manifest
+  digests, and real owned resources;
+- injection text, unknown arguments, permission escalation, digest drift,
+  arbitrary verifier code, evidence/candidate tampering, and model
+  self-promotion fail closed;
+- review eligibility requires at least three authenticated successful replays
+  plus the authenticated adversarial report;
+- approval requires a signature from a configured independent Ed25519
+  approver over the exact candidate digest and cannot publish a runtime
+  adapter;
+- three independent proofs produced three candidates from nine real source
+  reads and nine real replay reads, while all candidates remained absent from
+  the runtime registry:
+  `proofs/capability_os/m6_live_shadow_skill_20260725.json`,
+  `proofs/capability_os/m6_live_shadow_skill_repeat2_20260725.json`, and
+  `proofs/capability_os/m6_live_shadow_skill_repeat3_20260725.json`.
+
 ### M7 — Capability OS release candidate
 
 Deliverables:
