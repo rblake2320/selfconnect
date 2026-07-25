@@ -33,6 +33,7 @@ failures.
 | Gemini CLI | — | — | — | — | NOT YET VERIFIED — do help-check first |
 | Antigravity (Gemini WebView2) | already-running app | n/a | n/a | UIA + AccessibleObjectFromWindow first, then WM_CHAR — see `fix_antigravity_gemini.md` | LOCKED |
 | Ollama / local | `ollama run qwen3.6:27b` inside the first-wake PowerShell wrapper | n/a | ~12s | standard `selfconnect send --submit` works; UIA readback verified | verified 1× 2026-07-24 |
+| Qwen SelfConnect agent | `selfconnect-local-agent --role local-ollama-1 --model qwen3.6:27b` | separate input/command/write gates | Ollama already running | mesh, Win32/UIA, PrintWindow/OCR, guarded send + reply wait | verified two-round chat 2026-07-24 |
 
 ---
 
@@ -106,6 +107,10 @@ send_string(new_win, "\r", char_delay=0.02)      # Enter separately
   `untrusted`, `on-request` (`on-failure` deprecated).
 - `-C <dir>` sets working root; `--search` enables web search.
 - Init ~18s to TUI ready (model banner visible).
+- On 0.145.0, the npm launcher can attempt an in-place update and fail with
+  `EBUSY` while another Codex process holds `codex.exe`. For a supervised peer
+  launch, invoke the installed native `codex.exe` with an initial prompt. Find
+  the new HWND by set difference because Codex replaces the wrapper title.
 - First contact 2026-07-05: 385-char injection, replied in <30s, model gpt-5.5.
 
 #### Codex's OWN feedback on being driven externally (asked live 2026-07-05,
@@ -204,6 +209,13 @@ terminals and burning tokens fleet-wide.
   - output: UIA text readback returned
     `SELFCONNECT-QWEN-ACK I can receive and answer AI messages.`
   - model ran 100% on the RTX 5090 GPU with a 32,768-token active context.
+  - the tool-enabled runtime completed a live two-round conversation with a
+    fresh Codex terminal: it discovered the peer by mesh role, verified
+    HWND/PID/exe/class/title, sent both turns, and waited for `CODEX-ROUND1` and
+    `CODEX-ROUND2` in UIA readback.
+  - enable supervised terminal input only for the session with
+    `$env:SC_LOCAL_AGENT_ALLOW_INPUT='1'`. Commands and file writes remain
+    disabled unless their independent gates are also explicitly enabled.
 
 ---
 

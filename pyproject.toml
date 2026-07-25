@@ -124,6 +124,7 @@ include = [
     "sc_hook_emit.py",
     "sc_hooks.py",
     "sc_local_model_role.py",
+    "sc_local_agent_runtime.py",
     "sc_echo_filter.py",
     "sc_identity.py",
     "sc_firewall.py",
@@ -226,6 +227,7 @@ selfconnect-fabric-host = "sc_fabric_host:main"
 selfconnect-fabric-router = "sc_fabric_router:main"
 selfconnect-fabric-service = "sc_fabric_service:main"
 selfconnect-local-model = "sc_local_model_role:main"
+selfconnect-local-agent = "sc_local_agent_runtime:main"
 selfconnect-tpm-attestation = "sc_tpm_attestation:main"
 
 [tool.pytest.ini_options]
