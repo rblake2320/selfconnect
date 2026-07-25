@@ -273,9 +273,11 @@ def test_kernel_runs_and_resumes_ready_task_steps(tmp_path: Path) -> None:
 
 
 def test_resumed_task_rederives_current_authority(tmp_path: Path) -> None:
+    continuity = "role:default:qwen"
     privileged = CapabilityKernel(
         KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path),
         Authority("creator", frozenset({"observe.system"})),
+        task_owner=continuity,
     )
     graph = privileged.new_task("inspect later", task_id="authority-resume")
     graph.add(TaskStep.create("selfconnect.doctor", {}, step_id="doctor"))
@@ -283,6 +285,7 @@ def test_resumed_task_rederives_current_authority(tmp_path: Path) -> None:
     restricted = CapabilityKernel(
         KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path),
         Authority("resumer"),
+        task_owner=continuity,
     )
     restricted.bind_adapter("doctor", lambda: {"ok": True})
     resumed = restricted.load_task("authority-resume")
@@ -429,6 +432,48 @@ def test_task_cancellation_requires_bound_owner(tmp_path: Path) -> None:
     assert result["ok"] is True
     assert graph.cancellation_requested is True
     assert graph.steps["doctor"].status == "cancelled"
+
+
+def test_unrelated_continuity_identity_cannot_run_task(tmp_path: Path) -> None:
+    config = KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path)
+    owner = CapabilityKernel(
+        config,
+        Authority("qwen:first", frozenset({"observe.system"})),
+        task_owner="role:default:qwen",
+    )
+    graph = owner.new_task("owned execution", task_id="continuity-owned")
+    graph.add(TaskStep.create("selfconnect.doctor", {}, step_id="doctor"))
+    unrelated = CapabilityKernel(
+        config,
+        Authority("other:first", frozenset({"observe.system"})),
+        task_owner="role:default:other",
+    )
+
+    with pytest.raises(PermissionError, match="continuity owner mismatch"):
+        unrelated.run_ready(graph)
+
+
+def test_successor_continuity_identity_rederives_permissions(tmp_path: Path) -> None:
+    config = KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path)
+    continuity = "role:default:qwen"
+    first = CapabilityKernel(
+        config,
+        Authority("qwen:first", frozenset({"observe.system"})),
+        task_owner=continuity,
+    )
+    graph = first.new_task("successor execution", task_id="continuity-successor")
+    graph.add(TaskStep.create("selfconnect.doctor", {}, step_id="doctor"))
+    successor = CapabilityKernel(
+        config,
+        Authority("qwen:second"),
+        task_owner=continuity,
+    )
+
+    resumed = successor.load_task("continuity-successor")
+    result = successor.run_ready(resumed)
+
+    assert result["executed"][0]["status"] == "blocked"
+    assert result["executed"][0]["result"]["verification"]["reason"] == "permission_denied"
 
 
 def test_retry_policy_is_bounded_and_uses_real_permission_denial(tmp_path: Path) -> None:

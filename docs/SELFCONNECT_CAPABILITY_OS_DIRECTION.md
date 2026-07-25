@@ -141,8 +141,9 @@ V1 status: implemented and live-proven.
 - crash/context/process resume;
 - verifier-defined completion.
 
-V1 checkpointing status: implemented. Budgets, schedulers, and recovery policies
-remain.
+V1 checkpointing, completion predicates, budgets, deadlines, owner-bound
+cancellation/retry, and successor recovery are implemented. Event-driven
+scheduling remains in the active-perception workstream.
 
 ### D. Perception and action
 
@@ -323,7 +324,15 @@ Progress:
   emit broker evidence;
 - per-step retry counts and total task attempts are bounded, with exhaustion
   failing closed;
-- a live kill-and-replace Qwen proof remains before the M3 gate is complete.
+- the live Qwen kill-and-replace proof passed on 2026-07-25: distinct
+  predecessor and successor instances returned real model acknowledgements, the
+  predecessor process was terminated, the successor re-derived write denial,
+  resumed and completed only the remaining verified step, did not repeat the
+  completed mutation, and blocked an ambiguous interrupted mutation;
+- proof artifact:
+  `proofs/capability_os/m3_live_qwen_recovery_20260725.json`.
+
+Gate: complete.
 
 ### M4 — MCP capability bridge
 

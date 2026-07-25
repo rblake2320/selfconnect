@@ -59,9 +59,16 @@ class KernelConfig:
 
 
 class CapabilityKernel:
-    def __init__(self, config: KernelConfig, authority: Authority):
+    def __init__(
+        self,
+        config: KernelConfig,
+        authority: Authority,
+        *,
+        task_owner: str = "",
+    ):
         self.config = config
         self.authority = authority
+        self.task_owner = task_owner or authority.principal
         self.registry = SkillRegistry()
         for manifest in BUILTIN_SKILLS:
             self.registry.register(manifest)
@@ -189,7 +196,7 @@ class CapabilityKernel:
             self.config.state_dir / "tasks" / f"{task_id or 'new'}.json",
             task_id=task_id,
             goal=goal,
-            owner=self.authority.principal,
+            owner=self.task_owner,
             deadline_at=deadline_at,
             max_total_attempts=max_total_attempts,
             max_attempts_per_step=max_attempts_per_step,
@@ -204,6 +211,7 @@ class CapabilityKernel:
         if not self.config.task_graphs:
             raise RuntimeError("durable task graphs are disabled")
         graph = TaskGraph.load(self.config.state_dir / "tasks" / f"{task_id}.json")
+        self._require_task_owner(graph)
         self._reconcile_running(graph)
         return graph
 
@@ -212,6 +220,7 @@ class CapabilityKernel:
         if not self.config.task_graphs:
             raise RuntimeError("durable task graphs are disabled")
         graph = TaskGraph.recover(self.config.state_dir / "tasks" / f"{task_id}.json")
+        self._require_task_owner(graph)
         self._reconcile_running(graph)
         return graph
 
@@ -219,6 +228,7 @@ class CapabilityKernel:
         self._require_enabled()
         if not self.config.task_graphs:
             raise RuntimeError("durable task graphs are disabled")
+        self._require_task_owner(graph)
         admission = graph.admission()
         if not admission["ok"]:
             blocked = graph.block_unstarted(str(admission["reason"]))
@@ -282,12 +292,14 @@ class CapabilityKernel:
 
     def retry_task_step(self, graph: TaskGraph, step_id: str, *, reason: str) -> dict[str, Any]:
         self._require_enabled()
-        graph.retry(step_id, requester=self.authority.principal, reason=reason)
+        self._require_task_owner(graph)
+        graph.retry(step_id, requester=self.task_owner, reason=reason)
         record = self.evidence.append(
             "task_step_retry_authorized",
             task_id=graph.task_id,
             step_id=step_id,
             principal=self.authority.principal,
+            task_owner=self.task_owner,
             reason=reason,
             attempt=graph.steps[step_id].attempts,
         )
@@ -295,11 +307,13 @@ class CapabilityKernel:
 
     def cancel_task(self, graph: TaskGraph) -> dict[str, Any]:
         self._require_enabled()
-        graph.cancel(requester=self.authority.principal)
+        self._require_task_owner(graph)
+        graph.cancel(requester=self.task_owner)
         record = self.evidence.append(
             "task_cancelled",
             task_id=graph.task_id,
             principal=self.authority.principal,
+            task_owner=self.task_owner,
         )
         return {"ok": True, "task": graph.summary(), "evidence_id": record["event_id"]}
 
@@ -353,6 +367,10 @@ class CapabilityKernel:
                     execution_id=step.execution_id,
                     reasons=completion["reasons"],
                 )
+
+    def _require_task_owner(self, graph: TaskGraph) -> None:
+        if graph.owner != self.task_owner:
+            raise PermissionError("task continuity owner mismatch")
 
     def _require_enabled(self) -> None:
         if not self.config.enabled:

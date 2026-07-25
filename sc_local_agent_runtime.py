@@ -649,6 +649,7 @@ class LocalAgentRuntime:
                 principal=f"{config.role}:{config.instance_id}",
                 permissions=frozenset(permissions),
             ),
+            task_owner=f"role:{config.mesh}:{config.role}",
         )
         self.collectors = HostCollectors(
             mesh=config.mesh,
