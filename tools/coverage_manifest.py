@@ -8,9 +8,11 @@ import subprocess
 from pathlib import Path
 
 
-def collected_nodes(root: Path) -> set[str]:
+def collected_nodes(root: Path, test_paths: list[str]) -> set[str]:
+    if not test_paths:
+        return set()
     result = subprocess.run(
-        ["python", "-m", "pytest", "--collect-only", "-q"],
+        ["python", "-m", "pytest", "--collect-only", "-q", *test_paths],
         cwd=root,
         text=True,
         capture_output=True,
@@ -30,7 +32,13 @@ def audit(root: Path, manifest_path: Path) -> dict:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("schema") != "selfconnect.coverage-manifest.v1":
         raise ValueError("unsupported coverage manifest schema")
-    nodes = collected_nodes(root)
+    declared_tests = [
+        node.replace("\\", "/")
+        for invariant in manifest.get("invariants", [])
+        for node in invariant.get("tests", [])
+    ]
+    test_paths = sorted({node.split("::", 1)[0] for node in declared_tests})
+    nodes = collected_nodes(root, test_paths)
     unresolved = []
     duplicate_ids = []
     seen_ids = set()
