@@ -15,11 +15,9 @@ import time
 from pathlib import Path
 
 import pytest
-
 import sc_guarded_submit as guarded
 import sc_mesh_registry
 import self_connect as sc
-
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32" or os.environ.get("SELFCONNECT_REAL_INTERACTIVE") != "1",
@@ -75,8 +73,9 @@ except Exception:
     })
     root = str(Path(__file__).parents[1])
     env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    conhost = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "conhost.exe"
     process = subprocess.Popen(
-        [sys.executable, str(receiver_script)],
+        [str(conhost), sys.executable, str(receiver_script)],
         cwd=root,
         env=env,
         creationflags=subprocess.CREATE_NEW_CONSOLE,

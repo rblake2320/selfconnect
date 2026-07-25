@@ -108,7 +108,7 @@
       "evidence": [
         {
           "path": "pyproject.toml",
-          "sha256_text": "ce2a1f486016b1a3fff5f1962e834f541cd375a5b0d276a7c4c2c6c45f6d5c49"
+          "sha256_text": "b431c2f401ea2e793f35b80a8127732b1e9c629ee6b422c0070b9cc1612798bb"
         }
       ]
     },
@@ -587,7 +587,7 @@
         },
         {
           "path": "tests/test_antigravity_controller.py",
-          "sha256_text": "b83ca0e43bf4992cda551f173c13487f2522bb7b67099cf41d1803cb9544a5ed"
+          "sha256_text": "1621475439b83dbe6b6be8345dcfd2ad6ddf7b7548005dab767c37b737762bf9"
         }
       ]
     },
@@ -785,7 +785,7 @@
         },
         {
           "path": "tests/test_tpm_attestation.py",
-          "sha256_text": "ecfd175db3e009cc126933e0098dcb603b8ae67255e53d6c43354602dd0efda2"
+          "sha256_text": "3563f6f21e2c95f159c5974c4c6ff12918545ae70fe7817b30b70353fb5a1284"
         }
       ]
     },

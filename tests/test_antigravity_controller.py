@@ -211,6 +211,28 @@ requires_antigravity = pytest.mark.skipif(
 )
 
 
+def _authenticated_antigravity_available() -> bool:
+    """Require the real signed-in chat UI; never substitute a simulated session."""
+    try:
+        from antigravity_controller import connect, list_buttons
+
+        session = connect()
+        buttons = [name.casefold() for name in list_buttons(session)]
+        return bool(
+            session.model
+            and any("send" in name for name in buttons)
+            and not any("awaiting authentication" in name for name in buttons)
+        )
+    except Exception:
+        return False
+
+
+requires_authenticated_antigravity = pytest.mark.skipif(
+    not _authenticated_antigravity_available(),
+    reason="real Antigravity is running but its chat UI is not authenticated",
+)
+
+
 @requires_antigravity
 class TestIntegration:
     @pytest.fixture(scope="class")
@@ -228,6 +250,7 @@ class TestIntegration:
     def test_connect_title_is_antigravity(self, session):
         assert _is_antigravity_title(session.title)
 
+    @requires_authenticated_antigravity
     def test_connect_model_non_empty(self, session):
         assert session.model != ""
 
@@ -240,17 +263,20 @@ class TestIntegration:
         assert isinstance(buttons, list)
         assert len(buttons) > 0
 
+    @requires_authenticated_antigravity
     def test_send_button_present(self, session):
         from antigravity_controller import list_buttons
         buttons = list_buttons(session)
         send_buttons = [b for b in buttons if "send" in b.lower()]
         assert send_buttons, f"No send button found. Buttons: {buttons[:20]}"
 
+    @requires_authenticated_antigravity
     def test_get_model(self, session):
         from antigravity_controller import get_model
         model = get_model(session)
         assert model != ""
 
+    @requires_authenticated_antigravity
     def test_chat_roundtrip(self, session):
         from antigravity_controller import chat
         response = chat(session, "What model are you? Reply in one sentence.", timeout=45)

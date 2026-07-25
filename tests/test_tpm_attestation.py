@@ -54,10 +54,16 @@ def test_platform_claim_parser_rejects_bad_magic() -> None:
 
 
 @pytest.mark.skipif(tpm.sys.platform != "win32", reason="requires Windows TPM")
-def test_hardware_selftest_when_explicitly_enabled(monkeypatch) -> None:
-    if not tpm.os.environ.get("SELFCONNECT_TEST_TPM_ATTESTATION"):
-        pytest.skip("set SELFCONNECT_TEST_TPM_ATTESTATION=1 for destructive TPM selftest")
-    result = tpm.hardware_selftest()
+def test_hardware_selftest_when_permitted() -> None:
+    try:
+        result = tpm.hardware_selftest()
+    except tpm.TpmAttestationError as exc:
+        if "0x80090010" in str(exc):
+            pytest.skip(
+                "real TPM probe denied machine-key finalization (0x80090010); "
+                "an elevated process is required"
+            )
+        raise
     assert result["ok"] is True
     assert result["quote_verified"] is True
     assert result["nonce_mismatch_rejected"] is True
