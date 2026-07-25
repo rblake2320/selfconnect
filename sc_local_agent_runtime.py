@@ -132,6 +132,8 @@ class RuntimeConfig:
     mesh: str = "default"
     profile: str = "explore"
     context_window: int = 32_768
+    max_output_tokens: int = 2_048
+    request_timeout_seconds: float = 180.0
     poll_seconds: float = 2.0
     allow_input: bool = False
     allow_commands: bool = False
@@ -148,6 +150,8 @@ class RuntimeConfig:
             "mesh": os.environ.get("SC_LOCAL_AGENT_MESH", "default"),
             "profile": os.environ.get("SC_LOCAL_AGENT_PROFILE", "explore"),
             "context_window": int(os.environ.get("SC_LOCAL_AGENT_CTX", "32768")),
+            "max_output_tokens": int(os.environ.get("SC_LOCAL_AGENT_MAX_OUTPUT", "2048")),
+            "request_timeout_seconds": float(os.environ.get("SC_LOCAL_AGENT_REQUEST_TIMEOUT", "180")),
             "poll_seconds": float(os.environ.get("SC_LOCAL_AGENT_POLL", "2")),
             "allow_input": _env_enabled("SC_LOCAL_AGENT_ALLOW_INPUT"),
             "allow_commands": _env_enabled("SC_LOCAL_AGENT_ALLOW_COMMANDS"),
@@ -624,7 +628,10 @@ independent runtime gates."""
             "tools": tool_schemas(),
             "stream": False,
             "think": False,
-            "options": {"num_ctx": self.config.context_window},
+            "options": {
+                "num_ctx": self.config.context_window,
+                "num_predict": self.config.max_output_tokens,
+            },
         }).encode("utf-8")
         request = urllib.request.Request(
             "http://127.0.0.1:11434/api/chat",
@@ -633,7 +640,10 @@ independent runtime gates."""
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=180) as response:
+            with urllib.request.urlopen(
+                request,
+                timeout=self.config.request_timeout_seconds,
+            ) as response:
                 return json.loads(response.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"Ollama request failed: {exc}") from exc

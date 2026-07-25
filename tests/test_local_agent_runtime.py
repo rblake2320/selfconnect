@@ -43,6 +43,16 @@ def test_trace_tools_can_be_enabled_from_environment(monkeypatch) -> None:
     assert config.trace_tools is True
 
 
+def test_generation_limits_can_be_configured_from_environment(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SC_LOCAL_AGENT_MAX_OUTPUT", "512")
+    monkeypatch.setenv("SC_LOCAL_AGENT_REQUEST_TIMEOUT", "45")
+
+    config = runtime_mod.RuntimeConfig.from_env(repo_root=tmp_path)
+
+    assert config.max_output_tokens == 512
+    assert config.request_timeout_seconds == 45
+
+
 def test_each_runtime_config_gets_a_unique_instance_id(tmp_path: Path) -> None:
     first = _config(tmp_path)
     second = _config(tmp_path)

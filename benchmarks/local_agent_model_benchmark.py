@@ -150,6 +150,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--context", type=int, default=32_768)
+    parser.add_argument("--max-output", type=int, default=512)
+    parser.add_argument("--request-timeout", type=float, default=90)
     args = parser.parse_args()
 
     output = Path(args.output).resolve()
@@ -159,7 +162,9 @@ def main() -> int:
     config = RuntimeConfig(
         role=f"bench-{args.model.replace(':', '-').replace('.', '-')}",
         model=args.model,
-        context_window=32_768,
+        context_window=args.context,
+        max_output_tokens=args.max_output,
+        request_timeout_seconds=args.request_timeout,
         allow_input=False,
         allow_commands=False,
         allow_writes=False,
