@@ -28,6 +28,8 @@ state.
 | Model | Run | Score | Time | GPU memory after |
 |---|---:|---:|---:|---:|
 | `qwen3.6:27b` | extended | 18/18 | 50.31 s | 31,851 MB used; 337 MB free |
+| `qwen3.6:27b` | fresh repeat 2 | 18/18 | 51.85 s | 21,421 MB used; 10,767 MB free |
+| `qwen3.6:27b` | fresh repeat 3 | 16/18 | 41.16 s | 21,442 MB used; 10,746 MB free |
 | `gpt-oss:20b` | extended | 16/18 | 14.77 s | 28,878 MB used; 3,310 MB free |
 | `gpt-oss:20b` | repeat | 16/18 | 20.09 s | 28,833 MB used; 3,355 MB free |
 | `nemotron-cascade-2:30b` | extended | 12/18 | 23.44 s | 26,436 MB used; 5,751 MB free |
@@ -36,15 +38,21 @@ state.
 | `qwen3-coder:30b` | extended | 17/18 | 94.60 s | 31,764 MB used; 424 MB free |
 | `qwen3-coder:30b` | repeat | 11/18 | 83.22 s | 31,844 MB used; 344 MB free |
 
-Qwen followed every requested tool contract exactly. GPT-OSS twice skipped the
-disabled send attempt, answering from the known permission state instead of
-calling `send_role_message`. Across the two runs it also lost a point for an
-incorrect missing-role discovery path and a point for reading without first
-calling `verify_role_window`.
+Qwen followed every requested tool contract exactly in its first two extended
+runs. A third fresh run scored 16/18 because it inferred the disabled write and
+command outcomes instead of calling `file_write` and `command` to produce audit
+records. Across the three runs it scored 52/54 overall and followed 25/27 exact
+tool contracts. GPT-OSS twice skipped the disabled send attempt, answering from
+the known permission state instead of calling `send_role_message`. Across the
+two runs it also lost a point for an incorrect missing-role discovery path and
+a point for reading without first calling `verify_role_window`.
 
 Recommendation: keep `qwen3.6:27b` as the default SelfConnect operator when
-tool correctness and auditable behavior matter. Keep `gpt-oss:20b` as the
-faster, lower-VRAM alternative for conversational or lower-risk work.
+tool correctness and auditable behavior matter, but do not treat tool
+compliance as deterministic. The runtime should enforce mandatory audit calls
+for governed workflows instead of relying on model instruction-following
+alone. Keep `gpt-oss:20b` as the faster, lower-VRAM alternative for
+conversational or lower-risk work.
 
 ### NVIDIA compatibility findings
 
