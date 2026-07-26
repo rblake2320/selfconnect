@@ -1,0 +1,150 @@
+{
+  "schema": "selfconnect.live-capability-os-rc-proof.v1",
+  "run_id": "bd840c71fc5e4e02bdac28270695cb2c",
+  "ok": true,
+  "seconds": 17.042,
+  "model": "qwen3.6:27b",
+  "governance": {
+    "ok": true,
+    "profile": "governed",
+    "violations": [],
+    "requirements_enforced_by": "trusted-runtime",
+    "model_override_allowed": false
+  },
+  "meta_tools": [
+    "capability_discover",
+    "capability_inspect",
+    "capability_execute",
+    "capability_task_create",
+    "capability_task_continue"
+  ],
+  "called_tools": [
+    "capability_discover",
+    "capability_inspect",
+    "capability_task_create",
+    "capability_task_continue",
+    "capability_task_continue"
+  ],
+  "answer": "alpha.txt: ALPHA-bd840c71fc5e\nbeta.txt: BETA-4e02bdac2827",
+  "expected_values": [
+    "ALPHA-bd840c71fc5e",
+    "BETA-4e02bdac2827"
+  ],
+  "task": {
+    "version": 2,
+    "task_id": "b746ff7fe9924e0c809df0b12b338fa7",
+    "goal": "Read alpha.txt and beta.txt in order",
+    "owner": "role:capability-os-rc:m7-qwen-bd840c71",
+    "created_at": 1785015817.754865,
+    "deadline_at": 0.0,
+    "max_total_attempts": 20,
+    "max_attempts_per_step": 2,
+    "cancellation_requested": false,
+    "cancelled_by": "",
+    "cancelled_at": 0.0,
+    "checkpoint_sequence": 7,
+    "previous_checkpoint_hash": "48a79a41ad972d98eb2bc01a81a72347038b9a2d81ee70f0dc832005c466dad5",
+    "steps": [
+      {
+        "step_id": "alpha",
+        "capability": "selfconnect.file-read",
+        "arguments": {
+          "path": "alpha.txt"
+        },
+        "depends_on": [],
+        "completion": {
+          "kind": "capability_verified",
+          "require_output_ok": true,
+          "require_verification_ok": true,
+          "require_completed_evidence": true
+        },
+        "status": "completed",
+        "result": {
+          "ok": true,
+          "capability": "selfconnect.file-read",
+          "output": {
+            "ok": true,
+            "path": "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\capability_os\\m7_live_capability_os_rc_repeat2_20260725-state-bd840c71fc5e\\owned-repository\\alpha.txt",
+            "content": "ALPHA-bd840c71fc5e"
+          },
+          "verification": {
+            "ok": true,
+            "checks": [
+              {
+                "name": "output-ok",
+                "ok": true
+              }
+            ]
+          },
+          "evidence_id": "486f09b06a47466ea391b100e75e4f70",
+          "elapsed_ms": 4.385
+        },
+        "attempts": 1,
+        "execution_id": "971e562b23284669899de045e15b7ea7",
+        "manifest_digest": "0f5538031377175b14dd06bcfd406e372716337e755074b7111bf344e745cf1f",
+        "updated_at": 1785015819.6597133
+      },
+      {
+        "step_id": "beta",
+        "capability": "selfconnect.file-read",
+        "arguments": {
+          "path": "beta.txt"
+        },
+        "depends_on": [
+          "alpha"
+        ],
+        "completion": {
+          "kind": "capability_verified",
+          "require_output_ok": true,
+          "require_verification_ok": true,
+          "require_completed_evidence": true
+        },
+        "status": "completed",
+        "result": {
+          "ok": true,
+          "capability": "selfconnect.file-read",
+          "output": {
+            "ok": true,
+            "path": "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\proofs\\capability_os\\m7_live_capability_os_rc_repeat2_20260725-state-bd840c71fc5e\\owned-repository\\beta.txt",
+            "content": "BETA-4e02bdac2827"
+          },
+          "verification": {
+            "ok": true,
+            "checks": [
+              {
+                "name": "output-ok",
+                "ok": true
+              }
+            ]
+          },
+          "evidence_id": "5eb0e888003d4bb29f1866d92d978635",
+          "elapsed_ms": 4.656
+        },
+        "attempts": 1,
+        "execution_id": "97d4634003264a5fb21e7d2ce85abfdb",
+        "manifest_digest": "0f5538031377175b14dd06bcfd406e372716337e755074b7111bf344e745cf1f",
+        "updated_at": 1785015821.6243975
+      }
+    ],
+    "checkpoint_hash": "7b964d34ba929e6d1739c4d851bc2398b449f75876c73018ad3b7446a2ae56bc"
+  },
+  "evidence": {
+    "ok": true,
+    "records": 8,
+    "head_hash": "94aeb54491cbb5940dd0ec52b1eff7f417a05be3ea6810e15e14e2b7d2028386"
+  },
+  "shadow_compiler_integrated": true,
+  "visual_specialist_integrated": true,
+  "mcp_bridge_count": 0,
+  "mcp_live_proof": "proofs/capability_os/m4_live_qwen_mcp_20260725.json",
+  "visual_live_proofs": [
+    "proofs/capability_os/m5_live_visual_specialist_20260725.json",
+    "proofs/capability_os/m5_live_visual_specialist_repeat2_20260725.json",
+    "proofs/capability_os/m5_live_visual_specialist_repeat3_20260725.json"
+  ],
+  "shadow_live_proofs": [
+    "proofs/capability_os/m6_live_shadow_skill_20260725.json",
+    "proofs/capability_os/m6_live_shadow_skill_repeat2_20260725.json",
+    "proofs/capability_os/m6_live_shadow_skill_repeat3_20260725.json"
+  ]
+}

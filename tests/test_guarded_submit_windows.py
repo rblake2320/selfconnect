@@ -15,11 +15,10 @@ import time
 from pathlib import Path
 
 import pytest
-
+import sc_cli
 import sc_guarded_submit as guarded
 import sc_mesh_registry
 import self_connect as sc
-
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "win32" or os.environ.get("SELFCONNECT_REAL_INTERACTIVE") != "1",
@@ -27,9 +26,77 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_real_receiver_hashes_unicode_stdin_and_returns_signed_ack(tmp_path):
+@pytest.mark.parametrize("live_iteration", range(3))
+def test_real_sc_cli_reverifies_identity_at_point_of_use(tmp_path, live_iteration):
     repo_root = Path(__file__).resolve().parents[1]
-    title = f"SC_GUARDED_{os.getpid()}_{time.time_ns()}"
+    title = f"SC_POU_{live_iteration}_{os.getpid()}_{time.time_ns()}"
+    ready = tmp_path / "pou-ready.txt"
+    received = tmp_path / "pou-received.txt"
+    receiver_script = tmp_path / "pou-receiver.py"
+    receiver_script.write_text(
+        """
+import ctypes, os
+from pathlib import Path
+ctypes.windll.kernel32.SetConsoleTitleW(os.environ['SC_TITLE'])
+hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+Path(os.environ['SC_READY']).write_text(str(hwnd), encoding='ascii')
+Path(os.environ['SC_RECEIVED']).write_text(input(), encoding='utf-8')
+""",
+        encoding="utf-8",
+    )
+    env = dict(os.environ)
+    env.update({
+        "SC_TITLE": title,
+        "SC_READY": str(ready),
+        "SC_RECEIVED": str(received),
+    })
+    root = str(repo_root)
+    env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    conhost = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "conhost.exe"
+    process = subprocess.Popen(
+        [str(conhost), sys.executable, str(receiver_script)],
+        cwd=root,
+        env=env,
+        creationflags=subprocess.CREATE_NEW_CONSOLE,
+    )
+    try:
+        deadline = time.time() + 15
+        while time.time() < deadline and not ready.exists():
+            time.sleep(0.1)
+        assert ready.exists(), "point-of-use receiver did not become ready"
+        hwnd = int(ready.read_text(encoding="ascii"))
+        window = next(item for item in sc.list_windows() if item.hwnd == hwnd)
+
+        result = sc_cli.send_text_to_window(
+            hwnd,
+            "POINT-OF-USE-VERIFIED",
+            submit=True,
+            allow_input=True,
+            expected_pid=window.pid,
+            expected_exe=window.exe_name,
+            expected_class=window.class_name,
+            expected_title=window.title,
+            own_pid=os.getpid(),
+        )
+
+        assert result["ok"] is True, json.dumps(result, default=str, sort_keys=True)
+        assert result["guard"]["ok"] is True
+        assert process.wait(timeout=10) == 0
+        # A newly allocated conhost can contain startup keystrokes from the
+        # interactive host. Exact-payload integrity is covered by the signed
+        # guarded-submit test below; this test proves the point-of-use target
+        # identity and delivery path with a unique suffix.
+        assert received.read_text(encoding="utf-8").endswith("POINT-OF-USE-VERIFIED")
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=10)
+
+
+@pytest.mark.parametrize("live_iteration", range(3))
+def test_real_receiver_hashes_unicode_stdin_and_returns_signed_ack(tmp_path, live_iteration):
+    repo_root = Path(__file__).resolve().parents[1]
+    title = f"SC_GUARDED_{live_iteration}_{os.getpid()}_{time.time_ns()}"
     pipe = guarded.make_private_pipe_address()
     key = os.urandom(32)
     ready = tmp_path / "ready.txt"
@@ -75,8 +142,9 @@ except Exception:
     })
     root = str(Path(__file__).parents[1])
     env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    conhost = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "conhost.exe"
     process = subprocess.Popen(
-        [sys.executable, str(receiver_script)],
+        [str(conhost), sys.executable, str(receiver_script)],
         cwd=root,
         env=env,
         creationflags=subprocess.CREATE_NEW_CONSOLE,

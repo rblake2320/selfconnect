@@ -1,0 +1,101 @@
+{
+  "schema": "selfconnect.coverage-manifest.v1",
+  "invariants": [
+    {
+      "id": 1,
+      "statement": "Models never receive authority merely because a skill is visible.",
+      "tests": [
+        "tests/test_capability_kernel.py::test_discovery_reports_missing_authority",
+        "tests/test_capability_kernel.py::test_broker_denies_without_calling_adapter"
+      ]
+    },
+    {
+      "id": 2,
+      "statement": "Skill manifests cannot contain executable or instruction-bearing content.",
+      "tests": [
+        "tests/test_capability_kernel.py::test_external_manifest_rejects_instruction_like_description",
+        "tests/test_mcp_bridge.py::test_real_hostile_mcp_description_is_rejected_after_approval"
+      ]
+    },
+    {
+      "id": 3,
+      "statement": "Only trusted host code registers execution adapters.",
+      "tests": [
+        "tests/test_capability_kernel.py::test_broker_executes_only_registered_adapter_with_evidence",
+        "tests/test_shadow_skill_compiler.py::test_real_trace_compiles_and_replays_but_stays_unregistered"
+      ]
+    },
+    {
+      "id": 4,
+      "statement": "Authority is fixed at task start and re-derived on resume.",
+      "tests": [
+        "tests/test_capability_kernel.py::test_resumed_task_rederives_current_authority",
+        "tests/test_capability_kernel.py::test_successor_continuity_identity_rederives_permissions"
+      ]
+    },
+    {
+      "id": 5,
+      "statement": "Mutation gates remain independently controlled.",
+      "tests": [
+        "tests/test_capability_kernel.py::test_broker_authorize_records_denial_without_model_tool_call",
+        "tests/test_mcp_bridge.py::test_real_mcp_permission_denial_occurs_before_server_execution"
+      ]
+    },
+    {
+      "id": 6,
+      "statement": "OS input requires current target identity verification.",
+      "tests": [
+        "tests/test_package_adapters.py::test_send_text_blocks_without_target_guard",
+        "tests/test_package_adapters.py::test_send_text_allows_matching_target_guard"
+      ]
+    },
+    {
+      "id": 7,
+      "statement": "Environmental text and tool output remain untrusted data.",
+      "tests": [
+        "tests/test_capability_kernel.py::test_external_manifest_rejects_instruction_like_description",
+        "tests/test_live_visual_specialist_proof.py::test_repeated_live_visual_specialist_proof[m5_live_visual_specialist_20260725]"
+      ]
+    },
+    {
+      "id": 8,
+      "statement": "Completion requires verifier evidence rather than model assertion.",
+      "tests": [
+        "tests/test_capability_kernel.py::test_completion_predicate_rejects_unsupported_model_claim",
+        "tests/test_capability_kernel.py::test_resume_reconciles_completed_evidence_without_repeating_adapter"
+      ]
+    },
+    {
+      "id": 9,
+      "statement": "Task and world state record source, time, and freshness.",
+      "tests": [
+        "tests/test_world_state.py::test_world_state_tracks_freshness_source_and_confidence",
+        "tests/test_capability_kernel.py::test_task_checkpoint_detects_snapshot_rollback"
+      ]
+    },
+    {
+      "id": 10,
+      "statement": "Generated skills remain shadow-only under permanent human review.",
+      "tests": [
+        "tests/test_shadow_skill_compiler.py::test_review_requires_a_trusted_separate_ed25519_identity",
+        "tests/test_shadow_skill_compiler.py::test_kernel_exposes_compiler_only_in_explicit_shadow_mode"
+      ]
+    },
+    {
+      "id": 11,
+      "statement": "Capability OS defaults remain disabled and profiles fail closed.",
+      "tests": [
+        "tests/test_capability_os_integration.py::test_governance_profiles_fail_closed",
+        "tests/test_capability_os_integration.py::test_dynamic_task_mode_has_exactly_five_meta_tools"
+      ]
+    },
+    {
+      "id": 12,
+      "statement": "Every externally stated capability is tied to reproducible evidence.",
+      "tests": [
+        "tests/test_release_gate.py::test_repository_release_metadata_and_claim_evidence_pass",
+        "tests/test_live_capability_os_rc_proof.py::test_live_capability_os_rc_proofs_are_independent"
+      ]
+    }
+  ]
+}

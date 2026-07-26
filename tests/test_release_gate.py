@@ -24,8 +24,8 @@ def test_repository_release_metadata_and_claim_evidence_pass() -> None:
     assert "not README claim coverage" in report["claims"][
         "release_ledger_coverage_scope"
     ]
-    assert report["claims"]["tagged_readme_valid"] == 24
-    assert report["claims"]["tagged_readme_total"] == 24
+    assert report["claims"]["tagged_readme_valid"] == 25
+    assert report["claims"]["tagged_readme_total"] == 25
     assert report["claims"]["tagged_readme_coverage_percent"] == 100.0
     assert report["claims"]["natural_language_claim_detection"].startswith("PARTIAL:")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -57,6 +57,29 @@ def test_ruff_is_pinned_to_repository_config(monkeypatch) -> None:
     ruff_command = commands[0]
     config_index = ruff_command.index("--config")
     assert Path(ruff_command[config_index + 1]) == ROOT / "pyproject.toml"
+
+
+def test_release_tests_use_repository_local_unique_basetemp(monkeypatch) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], root: Path, timeout: int = 300) -> dict:
+        commands.append(command)
+        return {
+            "ok": True,
+            "returncode": 0,
+            "duration_seconds": 0.0,
+            "output_tail": "passed",
+        }
+
+    monkeypatch.setattr(release_gate, "_run", fake_run)
+    report = release_gate.audit(ROOT, allow_dirty=True, run_tests=True)
+
+    assert report["commands"]["tests"]["ok"] is True
+    command = commands[0]
+    base_index = command.index("--basetemp")
+    base = Path(command[base_index + 1])
+    assert base.parent == ROOT
+    assert base.name.startswith(".release-pytest-")
 
 
 def test_recorded_service_benchmark_summary_is_exact() -> None:

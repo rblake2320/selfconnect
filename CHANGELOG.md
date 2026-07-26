@@ -1,11 +1,32 @@
 # Changelog
 
+## Unreleased
+
+- Added the disabled-by-default SelfConnect Capability Kernel v1 with
+  digest-pinned skill manifests, progressive discovery, immutable authority,
+  trusted adapter dispatch, strict input validation, verification-gated
+  completion, hash-linked evidence, and durable task graphs.
+- Added optional local-agent dynamic skill tools and a read-only
+  `selfconnect-capabilities` inspection CLI.
+- Added Capability OS direction and novelty-boundary documentation plus the
+  first world-state slice: source attribution, confidence, TTL freshness,
+  sensitive-value hashing, change feeds, broker access, evidence linkage, and
+  live local-agent runtime observations.
+- Added bounded mesh/window/process/service/GPU/platform collectors and
+  broker-owned automatic refresh for missing or expired world-state prefixes.
+- Added the governed Capability OS release candidate with five-tool progressive
+  routing, transactional durable task plans, target-bound visual-specialist
+  registration, mechanical governance profiles, authenticated shadow-skill
+  compilation, and a verified same-user state migration utility.
+- Added repeated real Qwen, MCP, perception, shadow-replay, model-selection,
+  and integrated release-candidate evidence plus a claim/evidence matrix.
+
 All notable changes to SelfConnect are documented here.
 
 ## [Unreleased]
 
 ### Added
-- Added 24 stable public README claim blocks bound to scoped
+- Added 25 stable public README claim blocks bound to scoped
   `release/claims.json` entries and exact excerpt hashes.
 - Added an explicit release claim/package audit step to the Windows CI workflow.
 - The release gate now reports the valid tagged numerator and total tagged

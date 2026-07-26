@@ -1,0 +1,345 @@
+{
+  "benchmark": null,
+  "checks": [
+    {
+      "check_id": "git.clean",
+      "detail": "worktree clean",
+      "status": "pass"
+    },
+    {
+      "check_id": "identity.source_version",
+      "detail": "{'project': '0.12.0', 'source': '0.12.0', 'readme': '0.12.0'}",
+      "status": "pass"
+    },
+    {
+      "check_id": "identity.license",
+      "detail": "LICENSE, classifier, and README must all say Apache License 2.0",
+      "status": "pass"
+    },
+    {
+      "check_id": "boundary.core_dependencies",
+      "detail": "expected=['pillow', 'psutil'] actual=['pillow', 'psutil']",
+      "status": "pass"
+    },
+    {
+      "check_id": "package.extra.claudego",
+      "detail": "contains=['pystray', 'winotify']",
+      "status": "pass"
+    },
+    {
+      "check_id": "package.extra.mcp",
+      "detail": "contains=['mcp']",
+      "status": "pass"
+    },
+    {
+      "check_id": "package.extra.service",
+      "detail": "contains=['pywin32']",
+      "status": "pass"
+    },
+    {
+      "check_id": "package.module_manifest",
+      "detail": "33 modules declared",
+      "status": "pass"
+    },
+    {
+      "check_id": "boundary.core_network_independence",
+      "detail": "core actuation files have no network/MCP imports",
+      "status": "pass"
+    },
+    {
+      "check_id": "boundary.target_guard",
+      "detail": "input gate and target expectations remain explicit",
+      "status": "pass"
+    },
+    {
+      "check_id": "truth.public_wording",
+      "detail": "no prohibited absolute patent/evidence wording in release claim files",
+      "status": "pass"
+    },
+    {
+      "check_id": "truth.no_known_recovery_contradiction",
+      "detail": "known recovery contradiction absent",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.truth.readme_tagged_catalog",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.product.core_win32_bridge",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.runbooks.manual_capture",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.package.installation_extras",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.package.cli_target_guard",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.package.mcp_guarded_surface",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.product.profile_boundaries",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.mesh.registry_hash_chain",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.terminal.os_native_actuation",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.terminal.console_input_transport",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.terminal.uia_textchanged_echo_filter",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.dashboard.claudego_local",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.framing.structured_messages",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.package.public_api_surface",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.history.agent_spawn_exercise",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.history.background_input_exercise",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.history.bidirectional_chat_exercise",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.history.cross_vendor_mesh_exercise",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.history.framing_exercise",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.history.printwindow_ack_exercise",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.history.antigravity_exchange_exercise",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.transport.engineering_distinction",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.antigravity.controller_surface",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.browser.edge_local_fixture",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.fabric_v2.service_benchmark",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.fabric_v2.user_mode_restart_recovery",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.fabric_v2.scm_live_service",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.real_agent.twenty_agent_portable_release_evidence",
+      "detail": "evidence-local-only; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.identity.tpm_platform_attestation",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.enterprise.security_test_posture",
+      "detail": "pending; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.approval.telegram_governed_roundtrip",
+      "detail": "experiment; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.legal.prior_art_exclusivity",
+      "detail": "not-claimed; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.transport.fabric_v2_default_runtime",
+      "detail": "pending; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.capability_os.release_candidate",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.capability_os.routing_tasks",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.capability_os.world_evidence_governance",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.capability_os.mcp_read_only",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.capability_os.visual_specialist",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.capability_os.shadow_skills",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.capability_os.local_model_selection",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "truth.readme_tagged_claims",
+      "detail": "tagged_valid=25; tagged_total=25; coverage applies only to explicit SC-CLAIM blocks",
+      "status": "pass"
+    },
+    {
+      "check_id": "quality.tests",
+      "detail": "exit=0 duration=106.672s; ============================== warnings summary ===============================\n..\\..\\AppData\\Roaming\\Python\\Python312\\site-packages\\pywinauto\\__init__.py:80\n  C:\\Users\\techai\\AppData\\Roaming\\Python\\Python312\\site-packages\\pywinauto\\__init__.py:80: UserWarning: Revert to STA COM threading mode\n    warnings.warn(\"Revert to STA COM threading mode\", UserWarning)\n\nclaudego\\dashboard.py:88\n  C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\claudego\\dashboard.py:88: DeprecationWarning: \n          on_event is deprecated, use lifespan event handlers instead.\n  \n          Read more about it in the\n          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).\n          \n    @app.on_event(\"startup\")\n\n..\\..\\AppData\\Roaming\\Python\\Python312\\site-packages\\fastapi\\applications.py:4579\n  C:\\Users\\techai\\AppData\\Roaming\\Python\\Python312\\site-packages\\fastapi\\applications.py:4579: DeprecationWarning: \n          on_event is deprecated, use lifespan event handlers instead.\n  \n          Read more about it in the\n          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).\n          \n    return self.router.on_event(event_type)\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n944 passed, 16 skipped, 3 warnings in 103.09s (0:01:43)",
+      "status": "pass"
+    },
+    {
+      "check_id": "quality.ruff",
+      "detail": "scope=release package and release-gate files; exit=0 duration=1.375s; All checks passed!",
+      "status": "pass"
+    },
+    {
+      "check_id": "build.wheel",
+      "detail": "selfconnect-0.12.0-py3-none-any.whl; 33 required modules present",
+      "status": "pass"
+    }
+  ],
+  "claims": {
+    "ledger_claim_total": 40,
+    "natural_language_claim_detection": "PARTIAL: free-form README prose outside explicit SC-CLAIM blocks is not mechanically classified or counted. Human review remains required.",
+    "release_ledger_coverage_percent": 100.0,
+    "release_ledger_coverage_scope": "Ledger entries with release=true only; this is not README claim coverage.",
+    "release_ledger_total": 29,
+    "release_ledger_valid": 29,
+    "tag_parse_errors": [],
+    "tagged_readme_coverage_percent": 100.0,
+    "tagged_readme_coverage_scope": "Explicit SC-CLAIM blocks in README.md only. Numerator is valid tagged blocks; denominator is all syntactically valid tagged blocks.",
+    "tagged_readme_total": 25,
+    "tagged_readme_valid": 25
+  },
+  "commands": {
+    "ruff": {
+      "duration_seconds": 1.375,
+      "ok": true,
+      "output_tail": "All checks passed!",
+      "returncode": 0,
+      "scope": "release package and release-gate files"
+    },
+    "tests": {
+      "duration_seconds": 106.672,
+      "ok": true,
+      "output_tail": "============================== warnings summary ===============================\n..\\..\\AppData\\Roaming\\Python\\Python312\\site-packages\\pywinauto\\__init__.py:80\n  C:\\Users\\techai\\AppData\\Roaming\\Python\\Python312\\site-packages\\pywinauto\\__init__.py:80: UserWarning: Revert to STA COM threading mode\n    warnings.warn(\"Revert to STA COM threading mode\", UserWarning)\n\nclaudego\\dashboard.py:88\n  C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel\\claudego\\dashboard.py:88: DeprecationWarning: \n          on_event is deprecated, use lifespan event handlers instead.\n  \n          Read more about it in the\n          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).\n          \n    @app.on_event(\"startup\")\n\n..\\..\\AppData\\Roaming\\Python\\Python312\\site-packages\\fastapi\\applications.py:4579\n  C:\\Users\\techai\\AppData\\Roaming\\Python\\Python312\\site-packages\\fastapi\\applications.py:4579: DeprecationWarning: \n          on_event is deprecated, use lifespan event handlers instead.\n  \n          Read more about it in the\n          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).\n          \n    return self.router.on_event(event_type)\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n944 passed, 16 skipped, 3 warnings in 103.09s (0:01:43)",
+      "returncode": 0
+    },
+    "wheel": {
+      "duration_seconds": 15.516,
+      "missing_modules": [],
+      "ok": true,
+      "output_tail": "Successfully built selfconnect-0.12.0-py3-none-any.whl\n* Creating isolated environment: venv+pip...\n* Installing packages in isolated environment:\n  - hatchling\n* Getting build dependencies for wheel...\n* Building wheel...",
+      "required_modules": 33,
+      "returncode": 0,
+      "wheel_name": "selfconnect-0.12.0-py3-none-any.whl",
+      "wheel_sha256": "adfb19986ed52c3add1c263d22a5a03da4df530808aac587fd68416fb065f415"
+    }
+  },
+  "counts": {
+    "fail": 0,
+    "pass": 56,
+    "warn": 0
+  },
+  "mode": "source",
+  "ok": true,
+  "policy_root": "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel",
+  "repo": {
+    "branch": "feature/capability-kernel-v1",
+    "commit": "29bc63d1bd5b13082f8b02eecb192b37108d5bdc",
+    "dirty": false,
+    "dirty_count": 0,
+    "status": []
+  },
+  "root": "C:\\Users\\techai\\PKA testing\\selfconnect-capability-kernel",
+  "schema_version": 1,
+  "versions": {
+    "project": "0.12.0",
+    "readme": "0.12.0",
+    "source": "0.12.0"
+  }
+}

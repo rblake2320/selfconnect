@@ -1,0 +1,212 @@
+{
+  "checks": {
+    "ambiguous_mutation_blocked": true,
+    "completed_mutation_not_repeated": true,
+    "distinct_instances": true,
+    "evidence_chain_valid": true,
+    "marker_unchanged": true,
+    "predecessor_was_terminated": true,
+    "successor_rederived_write_denial": true,
+    "task_completed_from_verified_evidence": true
+  },
+  "created_at": 1785008716.3624277,
+  "model": "qwen3.6:27b",
+  "ok": true,
+  "predecessor": {
+    "ambiguous_checkpoint_hash": "99a6b7a4e2331c3a63bda17aaea6962a96ea3753b10addb888b1b0d236a6478f",
+    "instance_id": "predecessor-e0ad38524f83475ea5747d25c89901fa",
+    "main_checkpoint_hash": "37f87dee00b65e3bf4b881ab439750fe8da6aea29762d9fb9ad89f4b4b8133b6",
+    "marker_path": "proofs/capability_os/m3_recovery_marker.txt",
+    "marker_sha256": "fb7ab04d66b643a3ce22b14358216b112d9d157e5662da165b1e604568830b70",
+    "ok": true,
+    "pid": 71208,
+    "qwen_response": "QWEN_PREDECESSOR_READY"
+  },
+  "predecessor_exit_after_termination": 1,
+  "run_id": "1785008706-a20985f0",
+  "schema": "selfconnect.capability-os.m3-live-qwen-recovery.v1",
+  "successor": {
+    "ambiguous_checkpoint_verification": {
+      "attempts": 1,
+      "cancellation_requested": false,
+      "cancelled_at": 0.0,
+      "cancelled_by": "",
+      "checkpoint_hash": "2b83e76a83d3de13795a4eb74d32c417d9944957dff8fd48a47f3942bd793d54",
+      "checkpoint_sequence": 4,
+      "complete": false,
+      "deadline_at": 0.0,
+      "goal": "prove ambiguous interrupted mutation blocks",
+      "max_attempts_per_step": 2,
+      "max_total_attempts": 20,
+      "owner": "role:default:qwen-recovery-proof",
+      "statuses": {
+        "blocked": 1
+      },
+      "steps": 1,
+      "task_id": "m3-live-ambiguous"
+    },
+    "ambiguous_step": {
+      "result": {
+        "completion": {
+          "ok": false,
+          "reasons": [
+            "completion_evidence_missing"
+          ]
+        },
+        "error": "ambiguous interrupted execution",
+        "ok": false
+      },
+      "status": "blocked",
+      "target_exists": false
+    },
+    "ambiguous_task": {
+      "attempts": 1,
+      "cancellation_requested": false,
+      "cancelled_at": 0.0,
+      "cancelled_by": "",
+      "checkpoint_hash": "2b83e76a83d3de13795a4eb74d32c417d9944957dff8fd48a47f3942bd793d54",
+      "checkpoint_sequence": 4,
+      "complete": false,
+      "deadline_at": 0.0,
+      "goal": "prove ambiguous interrupted mutation blocks",
+      "max_attempts_per_step": 2,
+      "max_total_attempts": 20,
+      "owner": "role:default:qwen-recovery-proof",
+      "statuses": {
+        "blocked": 1
+      },
+      "steps": 1,
+      "task_id": "m3-live-ambiguous"
+    },
+    "evidence_verification": {
+      "head_hash": "cb0f103bcf0d20b2e7ed9daef6fbcc3d71a20420180d39f0fdfeea24f334dd41",
+      "ok": true,
+      "records": 8
+    },
+    "instance_id": "successor-77638d9d83e54a2baed4b4e0d7acb523",
+    "main_checkpoint_verification": {
+      "attempts": 2,
+      "cancellation_requested": false,
+      "cancelled_at": 0.0,
+      "cancelled_by": "",
+      "checkpoint_hash": "7c46b10af6d086fa56a73b92cf8fc4910a65e09a1b9c04adfa6b047ccb5003aa",
+      "checkpoint_sequence": 7,
+      "complete": true,
+      "deadline_at": 0.0,
+      "goal": "prove completed mutation is not repeated after Qwen replacement",
+      "max_attempts_per_step": 1,
+      "max_total_attempts": 3,
+      "owner": "role:default:qwen-recovery-proof",
+      "statuses": {
+        "completed": 2
+      },
+      "steps": 2,
+      "task_id": "m3-live-main"
+    },
+    "main_task": {
+      "attempts": 2,
+      "cancellation_requested": false,
+      "cancelled_at": 0.0,
+      "cancelled_by": "",
+      "checkpoint_hash": "7c46b10af6d086fa56a73b92cf8fc4910a65e09a1b9c04adfa6b047ccb5003aa",
+      "checkpoint_sequence": 7,
+      "complete": true,
+      "deadline_at": 0.0,
+      "goal": "prove completed mutation is not repeated after Qwen replacement",
+      "max_attempts_per_step": 1,
+      "max_total_attempts": 3,
+      "owner": "role:default:qwen-recovery-proof",
+      "statuses": {
+        "completed": 2
+      },
+      "steps": 2,
+      "task_id": "m3-live-main"
+    },
+    "marker_sha256_after": "fb7ab04d66b643a3ce22b14358216b112d9d157e5662da165b1e604568830b70",
+    "marker_sha256_before": "fb7ab04d66b643a3ce22b14358216b112d9d157e5662da165b1e604568830b70",
+    "ok": true,
+    "pid": 61028,
+    "qwen_response": "QWEN_SUCCESSOR_READY",
+    "resume_result": {
+      "executed": [
+        {
+          "result": {
+            "capability": "selfconnect.doctor",
+            "elapsed_ms": 794.947,
+            "evidence_id": "9847ea4758204db99711955aa248e52b",
+            "ok": true,
+            "output": {
+              "capabilities": {
+                "named_pipe_impersonation": true,
+                "printwindow": true,
+                "tpm_identity": true,
+                "uia_events": false,
+                "uia_text": true,
+                "win32": true
+              },
+              "capability_scope": {
+                "named_pipe_impersonation": "platform probe; experiment/enterprise adapter",
+                "printwindow": "sdk-core capture adapter",
+                "tpm_identity": "platform probe; experiment/enterprise adapter",
+                "uia_events": "platform probe; event-driven adapter is experimental",
+                "uia_text": "optional SDK read adapter when UIA dependencies are installed",
+                "win32": "sdk-core platform probe"
+              },
+              "ok": true,
+              "package": "selfconnect",
+              "platform": "Windows-11-10.0.26200-SP0",
+              "python": "3.12.10",
+              "version": "0.12.0",
+              "visible_window_count": 21
+            },
+            "verification": {
+              "checks": [
+                {
+                  "name": "adapter_result",
+                  "ok": true
+                }
+              ],
+              "ok": true
+            }
+          },
+          "status": "completed",
+          "step_id": "successor-doctor"
+        }
+      ],
+      "ok": true,
+      "task": {
+        "attempts": 2,
+        "cancellation_requested": false,
+        "cancelled_at": 0.0,
+        "cancelled_by": "",
+        "checkpoint_hash": "7c46b10af6d086fa56a73b92cf8fc4910a65e09a1b9c04adfa6b047ccb5003aa",
+        "checkpoint_sequence": 7,
+        "complete": true,
+        "deadline_at": 0.0,
+        "goal": "prove completed mutation is not repeated after Qwen replacement",
+        "max_attempts_per_step": 1,
+        "max_total_attempts": 3,
+        "owner": "role:default:qwen-recovery-proof",
+        "statuses": {
+          "completed": 2
+        },
+        "steps": 2,
+        "task_id": "m3-live-main"
+      }
+    },
+    "run_id": "1785008706-a20985f0",
+    "successor_write_policy": {
+      "allowed": false,
+      "capability": "selfconnect.file-write",
+      "evidence_id": "725829302ddf48b68238272818a62d75",
+      "manifest_digest": "ab9c6300c7c595f6784c5af229700674a67c15ce1b1b7e1373209d6457384a29",
+      "missing_permissions": [
+        "write.file"
+      ],
+      "ok": false
+    },
+    "task_owner": "role:default:qwen-recovery-proof",
+    "write_completion_events_after": 1,
+    "write_completion_events_before": 1
+  }
+}

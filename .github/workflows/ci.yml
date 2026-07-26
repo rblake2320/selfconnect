@@ -10,8 +10,36 @@ permissions:
   contents: read
 
 jobs:
+  hermetic:
+    name: Hermetic (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install hermetic dependencies
+        run: >
+          python -m pip install -e ".[trust,mcp]"
+          pytest pytest-asyncio cryptography
+      - name: Verify invariant coverage map
+        run: python tools/coverage_manifest.py --unresolved
+      - name: Run hermetic Capability OS tier
+        run: >
+          python -m pytest -q
+          tests/test_capability_kernel.py
+          tests/test_world_state.py
+          tests/test_shadow_skill_compiler.py
+          tests/test_mcp_bridge.py
+          tests/test_capability_os_integration.py
+          tests/test_capability_migration.py
+
   lint-python:
-    name: Python syntax + imports
+    name: Windows platform
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -24,21 +52,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[service]" ruff pytest pytest-asyncio python-dotenv python-telegram-bot fastapi uvicorn httpx cryptography dilithium-py
+          python -m pip install -e ".[service,mcp]" ruff==0.14.8 pytest pytest-asyncio python-dotenv python-telegram-bot fastapi uvicorn httpx cryptography dilithium-py
 
       - name: Verify Windows service dependency
         run: python -c "import pywintypes, win32file, win32pipe, winerror; print('pywin32 service dependency available')"
 
-      - name: Ruff lint — all SDK files
-        run: >
-          ruff check
-          self_connect.py
-          antigravity_controller.py
-          approval_partner.py
-          approval_telegram.py
-          claudego/
-          tools/release_gate.py
-          tests/test_release_gate.py
+      - name: Ruff lint — authoritative release scope
+        run: python tools/release_gate.py audit --root . --run-ruff
 
       - name: Syntax check
         run: python -m py_compile self_connect.py

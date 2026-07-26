@@ -1,12 +1,12 @@
 # TPM Platform Attestation
 
-SelfConnect can provision a machine-scoped, non-exportable RSA identity key in
+SelfConnect can provision a user-scoped, non-exportable RSA identity key in
 the Windows Microsoft Platform Crypto Provider and use it to issue a
 nonce-bound `NCRYPT_CLAIM_PLATFORM` quote.
 
 ## Provision
 
-Run from an elevated PowerShell prompt:
+Run from the same unelevated Windows user account that will operate SelfConnect:
 
 ```powershell
 python -m pip install ".[trust]"

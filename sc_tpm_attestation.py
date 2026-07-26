@@ -35,7 +35,6 @@ PROVIDER = "Microsoft Platform Crypto Provider"
 DEFAULT_KEY_NAME = "SelfConnectPlatformAIK-v1"
 DEFAULT_PCR_MASK = 0xFFFFFF
 MAX_CLAIM_BYTES = 64 * 1024
-NCRYPT_MACHINE_KEY_FLAG = 0x20
 NCRYPT_OVERWRITE_KEY_FLAG = 0x80
 NCRYPT_CLAIM_PLATFORM = 0x00010000
 NCRYPTBUFFER_TPM_PLATFORM_CLAIM_PCR_MASK = 80
@@ -179,7 +178,7 @@ def _open_key(api: _NCrypt, key_name: str) -> _Handles:
     try:
         _status(
             "NCryptOpenKey",
-            api.open_key(provider, ctypes.byref(key), key_name, 0, NCRYPT_MACHINE_KEY_FLAG),
+            api.open_key(provider, ctypes.byref(key), key_name, 0, 0),
         )
     except Exception:
         api.free_object(provider)
@@ -240,11 +239,11 @@ def _assert_identity_key(
 def provision_identity_key(
     key_name: str = DEFAULT_KEY_NAME, *, overwrite: bool = False
 ) -> dict[str, Any]:
-    """Create and validate a machine-scoped, non-exportable TPM identity key."""
+    """Create and validate a user-scoped, non-exportable TPM identity key."""
     api = _NCrypt()
     provider = _open_provider(api)
     key = ctypes.c_void_p()
-    flags = NCRYPT_MACHINE_KEY_FLAG | (NCRYPT_OVERWRITE_KEY_FLAG if overwrite else 0)
+    flags = NCRYPT_OVERWRITE_KEY_FLAG if overwrite else 0
     try:
         _status(
             "NCryptCreatePersistedKey",

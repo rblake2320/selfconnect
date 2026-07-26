@@ -1,0 +1,382 @@
+"""Durable task state with evidence-gated completion and checkpoint chaining."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import time
+import uuid
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+from sc_tasks import FileLock
+
+TERMINAL = {"completed", "failed", "blocked", "cancelled"}
+TRANSITIONS = {
+    "pending": {"running", "blocked", "cancelled"},
+    "running": {"completed", "failed", "blocked"},
+    "blocked": {"pending", "cancelled"},
+    "failed": {"pending", "cancelled"},
+    "completed": set(),
+    "cancelled": set(),
+}
+
+
+def _canonical(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+@dataclass(frozen=True)
+class CompletionPredicate:
+    """Runtime-owned proof requirements; a model completion claim is irrelevant."""
+
+    kind: str = "capability_verified"
+    require_output_ok: bool = True
+    require_verification_ok: bool = True
+    require_completed_evidence: bool = True
+
+    def __post_init__(self) -> None:
+        if self.kind != "capability_verified":
+            raise ValueError(f"unsupported completion predicate: {self.kind}")
+
+    def evaluate(
+        self,
+        *,
+        capability: str,
+        execution_id: str,
+        evidence: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        reasons: list[str] = []
+        if evidence is None:
+            reasons.append("completion_evidence_missing")
+            return {"ok": False, "reasons": reasons}
+        details = evidence.get("details", {})
+        if self.require_completed_evidence and evidence.get("event") != "capability_completed":
+            reasons.append("wrong_evidence_event")
+        if details.get("capability") != capability:
+            reasons.append("capability_mismatch")
+        if details.get("execution_id") != execution_id:
+            reasons.append("execution_id_mismatch")
+        if self.require_output_ok and not bool(details.get("output", {}).get("ok")):
+            reasons.append("output_not_ok")
+        if self.require_verification_ok and not bool(details.get("verification", {}).get("ok")):
+            reasons.append("verification_not_ok")
+        if not bool(details.get("ok")):
+            reasons.append("broker_result_not_ok")
+        return {
+            "ok": not reasons,
+            "reasons": reasons,
+            "evidence_id": evidence.get("event_id", ""),
+        }
+
+
+@dataclass
+class TaskStep:
+    step_id: str
+    capability: str
+    arguments: dict[str, Any]
+    depends_on: tuple[str, ...] = ()
+    completion: CompletionPredicate = field(default_factory=CompletionPredicate)
+    status: str = "pending"
+    result: dict[str, Any] = field(default_factory=dict)
+    attempts: int = 0
+    execution_id: str = ""
+    manifest_digest: str = ""
+    updated_at: float = field(default_factory=time.time)
+
+    @classmethod
+    def create(
+        cls,
+        capability: str,
+        arguments: dict[str, Any],
+        *,
+        depends_on: tuple[str, ...] = (),
+        step_id: str = "",
+        completion: CompletionPredicate | None = None,
+        manifest_digest: str = "",
+    ) -> TaskStep:
+        step = cls(
+            step_id or uuid.uuid4().hex,
+            capability,
+            arguments,
+            depends_on,
+            completion or CompletionPredicate(),
+        )
+        step.manifest_digest = manifest_digest
+        return step
+
+
+class TaskGraph:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        task_id: str = "",
+        goal: str = "",
+        owner: str = "",
+        deadline_at: float = 0.0,
+        max_total_attempts: int = 20,
+        max_attempts_per_step: int = 2,
+    ):
+        if deadline_at < 0:
+            raise ValueError("deadline_at cannot be negative")
+        if not 1 <= max_total_attempts <= 10_000:
+            raise ValueError("max_total_attempts must be between 1 and 10000")
+        if not 1 <= max_attempts_per_step <= 100:
+            raise ValueError("max_attempts_per_step must be between 1 and 100")
+        self.path = path
+        self.task_id = task_id or uuid.uuid4().hex
+        self.goal = goal
+        self.owner = owner
+        self.created_at = time.time()
+        self.deadline_at = float(deadline_at)
+        self.max_total_attempts = int(max_total_attempts)
+        self.max_attempts_per_step = int(max_attempts_per_step)
+        self.cancellation_requested = False
+        self.cancelled_by = ""
+        self.cancelled_at = 0.0
+        self.steps: dict[str, TaskStep] = {}
+        self.checkpoint_sequence = 0
+        self.checkpoint_hash = ""
+
+    @property
+    def journal_path(self) -> Path:
+        return self.path.with_suffix(self.path.suffix + ".checkpoints.jsonl")
+
+    def add(self, step: TaskStep) -> None:
+        if step.step_id in self.steps:
+            raise ValueError(f"duplicate step id: {step.step_id}")
+        unknown = set(step.depends_on) - set(self.steps)
+        if unknown:
+            raise ValueError(f"step dependencies must already exist: {sorted(unknown)}")
+        self.steps[step.step_id] = step
+        self.save()
+
+    def ready(self) -> list[TaskStep]:
+        if self.cancellation_requested or not self.admission()["ok"]:
+            return []
+        return [
+            step for step in self.steps.values()
+            if step.status == "pending"
+            and all(self.steps[parent].status == "completed" for parent in step.depends_on)
+        ]
+
+    def admission(self, *, now: float | None = None) -> dict[str, Any]:
+        moment = time.time() if now is None else float(now)
+        attempts = sum(step.attempts for step in self.steps.values())
+        if self.cancellation_requested:
+            return {"ok": False, "reason": "task_cancelled", "attempts": attempts}
+        if self.deadline_at and moment >= self.deadline_at:
+            return {"ok": False, "reason": "task_deadline_exceeded", "attempts": attempts}
+        if attempts >= self.max_total_attempts:
+            return {"ok": False, "reason": "task_attempt_budget_exhausted", "attempts": attempts}
+        return {"ok": True, "reason": "", "attempts": attempts}
+
+    def start(self, step_id: str, execution_id: str) -> None:
+        if not execution_id:
+            raise ValueError("execution_id is required")
+        step = self.steps[step_id]
+        step.execution_id = execution_id
+        self.transition(step_id, "running")
+
+    def transition(self, step_id: str, status: str, result: dict[str, Any] | None = None) -> None:
+        step = self.steps[step_id]
+        if status not in TRANSITIONS.get(step.status, set()):
+            raise ValueError(f"invalid task transition: {step.status} -> {status}")
+        if status == "running":
+            step.attempts += 1
+        step.status = status
+        step.updated_at = time.time()
+        if result is not None:
+            step.result = result
+        self.save()
+
+    def retry(self, step_id: str, *, requester: str, reason: str) -> None:
+        self._require_owner(requester)
+        step = self.steps[step_id]
+        if step.status not in {"failed", "blocked"}:
+            raise ValueError("only failed or blocked steps may be retried")
+        if step.attempts >= self.max_attempts_per_step:
+            raise ValueError("step retry budget exhausted")
+        admission = self.admission()
+        if not admission["ok"]:
+            raise ValueError(str(admission["reason"]))
+        self.transition(
+            step_id,
+            "pending",
+            {
+                "ok": False,
+                "retry_requested_by": requester,
+                "retry_reason": reason[:500],
+            },
+        )
+
+    def cancel(self, *, requester: str) -> None:
+        self._require_owner(requester)
+        if self.cancellation_requested:
+            return
+        self.cancellation_requested = True
+        self.cancelled_by = requester
+        self.cancelled_at = time.time()
+        for step in self.steps.values():
+            if step.status in {"pending", "blocked", "failed"}:
+                step.status = "cancelled"
+                step.updated_at = self.cancelled_at
+                step.result = {"ok": False, "reason": "task_cancelled"}
+        self.save()
+
+    def block_unstarted(self, reason: str) -> list[str]:
+        blocked = []
+        for step in self.steps.values():
+            if step.status == "pending":
+                step.status = "blocked"
+                step.updated_at = time.time()
+                step.result = {"ok": False, "reason": reason}
+                blocked.append(step.step_id)
+        if blocked:
+            self.save()
+        return blocked
+
+    def _require_owner(self, requester: str) -> None:
+        if not self.owner:
+            raise PermissionError("task has no cancellation/retry owner")
+        if requester != self.owner:
+            raise PermissionError("task owner mismatch")
+
+    def summary(self) -> dict[str, Any]:
+        statuses: dict[str, int] = {}
+        for step in self.steps.values():
+            statuses[step.status] = statuses.get(step.status, 0) + 1
+        return {
+            "task_id": self.task_id,
+            "goal": self.goal,
+            "owner": self.owner,
+            "steps": len(self.steps),
+            "statuses": statuses,
+            "deadline_at": self.deadline_at,
+            "max_total_attempts": self.max_total_attempts,
+            "max_attempts_per_step": self.max_attempts_per_step,
+            "attempts": sum(step.attempts for step in self.steps.values()),
+            "cancellation_requested": self.cancellation_requested,
+            "cancelled_by": self.cancelled_by,
+            "cancelled_at": self.cancelled_at,
+            "checkpoint_sequence": self.checkpoint_sequence,
+            "checkpoint_hash": self.checkpoint_hash,
+            "complete": bool(self.steps) and all(step.status == "completed" for step in self.steps.values()),
+        }
+
+    def _snapshot(self, sequence: int, previous_hash: str) -> dict[str, Any]:
+        return {
+            "version": 2,
+            "task_id": self.task_id,
+            "goal": self.goal,
+            "owner": self.owner,
+            "created_at": self.created_at,
+            "deadline_at": self.deadline_at,
+            "max_total_attempts": self.max_total_attempts,
+            "max_attempts_per_step": self.max_attempts_per_step,
+            "cancellation_requested": self.cancellation_requested,
+            "cancelled_by": self.cancelled_by,
+            "cancelled_at": self.cancelled_at,
+            "checkpoint_sequence": sequence,
+            "previous_checkpoint_hash": previous_hash,
+            "steps": [asdict(step) for step in self.steps.values()],
+        }
+
+    @staticmethod
+    def _snapshot_hash(snapshot: dict[str, Any]) -> str:
+        value = dict(snapshot)
+        value.pop("checkpoint_hash", None)
+        return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _verify_snapshot(cls, snapshot: dict[str, Any]) -> str:
+        expected = cls._snapshot_hash(snapshot)
+        if snapshot.get("checkpoint_hash") != expected:
+            raise ValueError("task checkpoint hash mismatch")
+        return expected
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock = self.journal_path.with_suffix(self.journal_path.suffix + ".lock")
+        with FileLock(lock):
+            journal = self._read_journal()
+            journal_head = str(journal[-1].get("checkpoint_hash", "")) if journal else ""
+            if journal_head != self.checkpoint_hash:
+                raise ValueError("task checkpoint fork or rollback detected")
+            sequence = self.checkpoint_sequence + 1
+            snapshot = self._snapshot(sequence, self.checkpoint_hash)
+            checkpoint_hash = self._snapshot_hash(snapshot)
+            snapshot["checkpoint_hash"] = checkpoint_hash
+            with self.journal_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(snapshot, sort_keys=True, ensure_ascii=True) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            temp = self.path.with_suffix(self.path.suffix + f".{os.getpid()}.tmp")
+            temp.write_text(json.dumps(snapshot, indent=2, ensure_ascii=True), encoding="utf-8")
+            os.replace(temp, self.path)
+            self.checkpoint_sequence = sequence
+            self.checkpoint_hash = checkpoint_hash
+
+    def _read_journal(self) -> list[dict[str, Any]]:
+        if not self.journal_path.exists():
+            return []
+        rows = [
+            json.loads(line)
+            for line in self.journal_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        previous = ""
+        for index, row in enumerate(rows, 1):
+            self._verify_snapshot(row)
+            if row.get("checkpoint_sequence") != index:
+                raise ValueError("task checkpoint sequence mismatch")
+            if row.get("previous_checkpoint_hash") != previous:
+                raise ValueError("task checkpoint chain mismatch")
+            previous = str(row["checkpoint_hash"])
+        return rows
+
+    @classmethod
+    def load(cls, path: Path) -> TaskGraph:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if value.get("version") == 2:
+            cls._verify_snapshot(value)
+        graph = cls(
+            path,
+            task_id=value["task_id"],
+            goal=value.get("goal", ""),
+            owner=value.get("owner", ""),
+            deadline_at=float(value.get("deadline_at", 0.0)),
+            max_total_attempts=int(value.get("max_total_attempts", 20)),
+            max_attempts_per_step=int(value.get("max_attempts_per_step", 2)),
+        )
+        graph.created_at = float(value.get("created_at", time.time()))
+        graph.cancellation_requested = bool(value.get("cancellation_requested", False))
+        graph.cancelled_by = str(value.get("cancelled_by", ""))
+        graph.cancelled_at = float(value.get("cancelled_at", 0.0))
+        graph.checkpoint_sequence = int(value.get("checkpoint_sequence", 0))
+        graph.checkpoint_hash = str(value.get("checkpoint_hash", ""))
+        for item in value.get("steps", []):
+            item["depends_on"] = tuple(item.get("depends_on", ()))
+            item["completion"] = CompletionPredicate(**item.get("completion", {}))
+            step = TaskStep(**item)
+            graph.steps[step.step_id] = step
+        if value.get("version") == 2:
+            journal = graph._read_journal()
+            if not journal or journal[-1]["checkpoint_hash"] != graph.checkpoint_hash:
+                raise ValueError("task snapshot is not the latest witnessed checkpoint")
+        return graph
+
+    @classmethod
+    def recover(cls, path: Path) -> TaskGraph:
+        probe = cls(path)
+        journal = probe._read_journal()
+        if not journal:
+            raise ValueError("no task checkpoint journal is available")
+        snapshot = journal[-1]
+        temp = path.with_suffix(path.suffix + f".{os.getpid()}.recovery.tmp")
+        temp.write_text(json.dumps(snapshot, indent=2, ensure_ascii=True), encoding="utf-8")
+        os.replace(temp, path)
+        return cls.load(path)

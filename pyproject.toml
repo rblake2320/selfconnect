@@ -46,6 +46,14 @@ shell = [
 mcp = [
     "mcp>=1.0.0",
 ]
+capability-os = [
+    "cryptography>=42.0.0",
+    "pywin32>=306",
+    "pywinauto>=0.6.8",
+    "comtypes>=1.4.0",
+    "pytesseract>=0.3.10",
+    "mcp>=1.0.0",
+]
 telegram = [
     "python-dotenv>=1.0.0",
     "python-telegram-bot>=22.0",
@@ -124,6 +132,12 @@ include = [
     "sc_hook_emit.py",
     "sc_hooks.py",
     "sc_local_model_role.py",
+    "sc_local_agent_runtime.py",
+    "sc_local_agent_harness.py",
+    "sc_capabilities.py",
+    "sc_capability_migrate.py",
+    "selfconnect_capabilities/**",
+    "sc_qwen_core.py",
     "sc_echo_filter.py",
     "sc_identity.py",
     "sc_firewall.py",
@@ -194,6 +208,8 @@ include = [
     "docs/PROVEN_VS_UNTESTED.md",
     "docs/SELFCONNECT_PRODUCT_BOUNDARIES.md",
     "docs/TPM_PLATFORM_ATTESTATION.md",
+    "docs/CAPABILITY_KERNEL_V1.md",
+    "docs/SELFCONNECT_CAPABILITY_OS_DIRECTION.md",
     "skills/selfconnect-win32/**",
 ]
 
@@ -226,6 +242,9 @@ selfconnect-fabric-host = "sc_fabric_host:main"
 selfconnect-fabric-router = "sc_fabric_router:main"
 selfconnect-fabric-service = "sc_fabric_service:main"
 selfconnect-local-model = "sc_local_model_role:main"
+selfconnect-local-agent = "sc_local_agent_runtime:main"
+selfconnect-capabilities = "sc_capabilities:main"
+selfconnect-capabilities-migrate = "sc_capability_migrate:main"
 selfconnect-tpm-attestation = "sc_tpm_attestation:main"
 
 [tool.pytest.ini_options]

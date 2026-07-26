@@ -28,6 +28,15 @@ tmp_*.png
 
 # Test temp output
 tests/_tmp/
+.pytest-*/
+.*-live-test/
+.*-audit.json
+.model-*.stdout
+.model-*.stderr
+.vram-cold*.stdout
+.vram-cold*.stderr
+.skip-audit-live.txt
+.rcga-*
 
 # Fabric benchmark artifacts stay local unless deliberately redacted/promoted.
 experiments/fabric_v2/results/
