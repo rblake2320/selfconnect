@@ -135,6 +135,8 @@ def _run(command: list[str], root: Path, timeout: int = 600) -> dict[str, Any]:
             cwd=root,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
         )

@@ -48,7 +48,7 @@ def _source_runs(repository, registry, evidence, broker, authority):
     digest = registry.get("selfconnect.file-read").digest()
     runs = []
     for index in range(3):
-        path = repository / f"source-{index}.txt"
+        path = repository / f"A7f9Q2m8Z4x6C1v3B5n7K9p2-source-{index}.txt"
         path.write_text(f"real source {index}", encoding="utf-8")
         result = broker.execute(
             "selfconnect.file-read",

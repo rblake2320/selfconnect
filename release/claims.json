@@ -28,7 +28,7 @@
       "evidence": [
         {
           "path": "tools/release_gate.py",
-          "sha256_text": "9d2ab64512f73d46cd9cf02bd16934a545ff8b051d612bfd5263e026307ebd1b"
+          "sha256_text": "ee8fd2e4f0fceebb24e689d44fdaea57109d61dc12106fbf48e5e2b09676f08c"
         },
         {
           "path": "tests/test_release_gate.py",

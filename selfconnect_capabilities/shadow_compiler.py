@@ -136,7 +136,8 @@ class ShadowSkillCompiler:
                     raise ValueError("source argument shape changed across runs")
                 # Paths and changing values are inputs. Stable, non-path constants
                 # remain fixed preconditions in the shadow procedure.
-                parameterize = len({_sha256(value) for value in values}) > 1
+                parameterize = "[redacted]" in values
+                parameterize = parameterize or len({_sha256(value) for value in values}) > 1
                 parameterize = parameterize or (
                     isinstance(values[0], str) and Path(values[0]).is_absolute()
                 )

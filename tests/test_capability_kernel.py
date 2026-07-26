@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -233,6 +234,11 @@ def test_evidence_key_is_dpapi_protected_and_entropy_is_redacted(tmp_path: Path)
     record = evidence.append("secret-boundary", free_form=secret)
 
     assert record["details"]["free_form"] == "[redacted]"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows DPAPI has no Linux equivalent")
+def test_evidence_key_is_dpapi_protected_on_windows(tmp_path: Path) -> None:
+    evidence = EvidenceStore(tmp_path / "evidence.jsonl")
     protected = evidence.integrity.path.read_bytes()
     assert evidence.integrity.key not in protected
 
@@ -399,22 +405,27 @@ def test_resumed_task_rederives_current_authority(tmp_path: Path) -> None:
 
 
 def test_resume_reconciles_completed_evidence_without_repeating_adapter(tmp_path: Path) -> None:
-    config = KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path)
-    authority = Authority("qwen", frozenset({"observe.system"}))
-    real_doctor = SelfConnectTools(RuntimeConfig(repo_root=Path(__file__).parents[1])).doctor
+    repository = tmp_path / "owned-repository"
+    repository.mkdir()
+    source = repository / "resume.txt"
+    source.write_text("resume evidence", encoding="utf-8")
+    config = KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path / "state")
+    authority = Authority("qwen", frozenset({"read.file"}))
+    real_file_read = SelfConnectTools(RuntimeConfig(repo_root=repository)).file_read
     first = CapabilityKernel(config, authority)
-    first.bind_adapter("doctor", real_doctor)
+    first.bind_adapter("file-read", real_file_read)
     graph = first.new_task("resume safely", task_id="reconcile-complete")
-    first.add_task_step(graph, "selfconnect.doctor", {}, step_id="doctor")
-    graph.start("doctor", "execution-complete")
+    arguments = {"path": str(source)}
+    first.add_task_step(graph, "selfconnect.file-read", arguments, step_id="read")
+    graph.start("read", "execution-complete")
     result = first.broker.execute(
-        "selfconnect.doctor",
-        {},
+        "selfconnect.file-read",
+        arguments,
         authority,
-        expected_manifest_digest=first.registry.get("selfconnect.doctor").digest(),
+        expected_manifest_digest=first.registry.get("selfconnect.file-read").digest(),
         evidence_context={
             "task_id": graph.task_id,
-            "step_id": "doctor",
+            "step_id": "read",
             "execution_id": "execution-complete",
         },
     )
@@ -427,7 +438,7 @@ def test_resume_reconciles_completed_evidence_without_repeating_adapter(tmp_path
     ]
 
     successor = CapabilityKernel(config, authority)
-    successor.bind_adapter("doctor", real_doctor)
+    successor.bind_adapter("file-read", real_file_read)
     resumed = successor.load_task("reconcile-complete")
     completed_after = [
         record
@@ -436,8 +447,8 @@ def test_resume_reconciles_completed_evidence_without_repeating_adapter(tmp_path
         and record["details"].get("execution_id") == "execution-complete"
     ]
 
-    assert resumed.steps["doctor"].status == "completed"
-    assert resumed.steps["doctor"].result["recovered"] is True
+    assert resumed.steps["read"].status == "completed"
+    assert resumed.steps["read"].result["recovered"] is True
     assert len(completed_before) == len(completed_after) == 1
 
 
@@ -486,22 +497,27 @@ def test_expired_task_blocks_without_executing_real_capability(tmp_path: Path) -
 
 
 def test_total_attempt_budget_blocks_later_real_capability(tmp_path: Path) -> None:
+    repository = tmp_path / "owned-repository"
+    repository.mkdir()
+    source = repository / "budget.txt"
+    source.write_text("budget evidence", encoding="utf-8")
     kernel = CapabilityKernel(
-        KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path),
-        Authority("budget-owner", frozenset({"observe.system"})),
+        KernelConfig(enabled=True, task_graphs=True, state_dir=tmp_path / "state"),
+        Authority("budget-owner", frozenset({"read.file"})),
     )
-    real_doctor = SelfConnectTools(RuntimeConfig(repo_root=Path(__file__).parents[1])).doctor
-    kernel.bind_adapter("doctor", real_doctor)
+    real_file_read = SelfConnectTools(RuntimeConfig(repo_root=repository)).file_read
+    kernel.bind_adapter("file-read", real_file_read)
     graph = kernel.new_task(
         "one attempt only",
         task_id="budget-one",
         max_total_attempts=1,
     )
-    kernel.add_task_step(graph, "selfconnect.doctor", {}, step_id="first")
+    arguments = {"path": str(source)}
+    kernel.add_task_step(graph, "selfconnect.file-read", arguments, step_id="first")
     kernel.add_task_step(
         graph,
-        "selfconnect.doctor",
-        {},
+        "selfconnect.file-read",
+        arguments,
         depends_on=("first",),
         step_id="second",
     )
