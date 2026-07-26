@@ -36,7 +36,7 @@
         },
         {
           "path": ".github/workflows/ci.yml",
-          "sha256_text": "1d3f61809933a862c6dd98dc669c6c01361437135a3815b9038f7f34593cf34c"
+          "sha256_text": "24f85406318c401d9ff7054513906b5fe7bfdb2c595e01cd270f08e0a7fce8bd"
         }
       ]
     },
@@ -785,7 +785,7 @@
         },
         {
           "path": "tests/test_tpm_attestation.py",
-          "sha256_text": "3563f6f21e2c95f159c5974c4c6ff12918545ae70fe7817b30b70353fb5a1284"
+          "sha256_text": "01adc42d37dd8bb2beadcda2a4a859ad25494f3476dabcd84f0942c7d51adc9e"
         },
         {
           "path": "proofs/capability_os/tpm_user_scope_live_20260725.json",

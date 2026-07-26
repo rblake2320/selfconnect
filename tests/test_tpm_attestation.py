@@ -58,6 +58,11 @@ def test_hardware_selftest_when_permitted() -> None:
     try:
         result = tpm.hardware_selftest()
     except tpm.TpmAttestationError as exc:
+        if "0x80090030" in str(exc):
+            pytest.skip(
+                "real Microsoft Platform Crypto Provider is unavailable "
+                "(0x80090030), as on GitHub-hosted Windows VMs without a TPM"
+            )
         if "0x80090010" in str(exc):
             pytest.skip(
                 "real TPM probe denied machine-key finalization (0x80090010); "

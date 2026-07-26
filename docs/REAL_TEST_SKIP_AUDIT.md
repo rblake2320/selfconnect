@@ -20,6 +20,10 @@ Microsoft Platform Crypto Provider key, and the real unelevated hardware
 self-test passed with quote verification, nonce-mismatch rejection, and
 tamper rejection. Evidence:
 `proofs/capability_os/tpm_user_scope_live_20260725.json`.
+On a Windows CI VM that has no Microsoft Platform Crypto Provider, the same
+probe reports `0x80090030` and is explicitly skipped because no software TPM,
+mock provider, or fabricated quote is substituted. The hardware-tier result
+on this machine remains the release evidence.
 
 The M5 visual-specialist, M6 shadow compiler, and M7 integrated governed-Qwen
 gates have no skips. M5 is backed by three independent native Win32/UIA/OCR/VLM
