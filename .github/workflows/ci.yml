@@ -52,7 +52,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[service]" ruff pytest pytest-asyncio python-dotenv python-telegram-bot fastapi uvicorn httpx cryptography dilithium-py
+          python -m pip install -e ".[service]" ruff==0.14.8 pytest pytest-asyncio python-dotenv python-telegram-bot fastapi uvicorn httpx cryptography dilithium-py
 
       - name: Verify Windows service dependency
         run: python -c "import pywintypes, win32file, win32pipe, winerror; print('pywin32 service dependency available')"
