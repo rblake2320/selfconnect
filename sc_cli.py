@@ -9,10 +9,15 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import hashlib
+import itertools
 import json
 import os
 import platform
+import re
 import sys
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -333,6 +338,113 @@ def capture_window(hwnd: int, path: str = "", crop: bool = True) -> dict[str, An
     return {"ok": bool(saved), "hwnd": hwnd, "path": saved}
 
 
+_ACTIVE_TUI_RE = re.compile(
+    r"(working\s*\(|esc to interrupt|ctrl\+c to interrupt|thinking|press esc)",
+    re.IGNORECASE,
+)
+
+
+def analyze_terminal_samples(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Classify terminal usability from timestamped UIA text snapshots."""
+    hashes = [str(item.get("sha256", "")) for item in samples]
+    transitions = sum(a != b for a, b in itertools.pairwise(hashes))
+    texts = [str(item.get("text", "")) for item in samples]
+    active_tui = any(_ACTIVE_TUI_RE.search(text) for text in texts)
+    read_failures = sum(not item.get("read_ok", False) for item in samples)
+    rapidly_redrawing = transitions >= 2 and active_tui
+    reasons: list[str] = []
+    if read_failures:
+        reasons.append(f"uia_read_failed={read_failures}/{len(samples)}")
+    if rapidly_redrawing:
+        reasons.append("active_tui_repeatedly_redrawing")
+    return {
+        "ok": not read_failures and not rapidly_redrawing,
+        "state": (
+            "tui_redraw_risk"
+            if rapidly_redrawing
+            else "read_failure"
+            if read_failures
+            else "stable_or_idle"
+        ),
+        "sample_count": len(samples),
+        "text_transitions": transitions,
+        "active_tui_marker": active_tui,
+        "read_failures": read_failures,
+        "scroll_selection_risk": rapidly_redrawing,
+        "reasons": reasons,
+        "remediation": (
+            "Restart the agent in inline/no-alternate-screen mode. "
+            "For Codex use `codex --no-alt-screen` and set "
+            "`tui.alternate_screen = \"never\"`."
+            if rapidly_redrawing
+            else ""
+        ),
+    }
+
+
+def terminal_health(
+    hwnd: int,
+    *,
+    seconds: float = 3.0,
+    interval: float = 0.5,
+    log_path: str = "",
+    capture_on_risk: bool = False,
+) -> dict[str, Any]:
+    """Sample a terminal and persist evidence of redraw/usability failures."""
+    hwnd = parse_hwnd(hwnd)
+    interval = max(0.1, float(interval))
+    sample_total = max(2, int(max(interval, float(seconds)) / interval) + 1)
+    samples: list[dict[str, Any]] = []
+    for index in range(sample_total):
+        observed_at = datetime.now(UTC).isoformat()
+        try:
+            reading = read_window(hwnd)
+            text = str(reading.get("text", ""))
+            samples.append({
+                "observed_at": observed_at,
+                "read_ok": bool(reading.get("method") != "none"),
+                "method": reading.get("method", "none"),
+                "characters": len(text),
+                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "text": text,
+            })
+        except Exception as exc:
+            samples.append({
+                "observed_at": observed_at,
+                "read_ok": False,
+                "method": "error",
+                "characters": 0,
+                "sha256": "",
+                "text": "",
+                "error": str(exc),
+            })
+        if index + 1 < sample_total:
+            time.sleep(interval)
+
+    report = {
+        "kind": "terminal_health",
+        "hwnd": hwnd,
+        "observed_at": datetime.now(UTC).isoformat(),
+        **analyze_terminal_samples(samples),
+        "samples": [
+            {key: value for key, value in item.items() if key != "text"}
+            for item in samples
+        ],
+    }
+    if capture_on_risk and not report["ok"]:
+        proof_dir = Path(log_path).parent if log_path else Path.cwd() / "proofs"
+        proof_dir.mkdir(parents=True, exist_ok=True)
+        report["capture"] = capture_window(
+            hwnd, str(proof_dir / f"terminal_health_{hwnd}_{int(time.time())}.png")
+        )
+    if log_path:
+        destination = Path(log_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(report, sort_keys=True) + "\n")
+    return report
+
+
 def input_allowed(explicit: bool = False, env_name: str = "SELFCONNECT_ALLOW_INPUT") -> bool:
     return explicit or os.environ.get(env_name, "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -490,6 +602,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--path", default="")
     p.add_argument("--no-crop", action="store_true")
 
+    p = sub.add_parser(
+        "terminal-health",
+        help="sample UIA text for redraw, scroll, and selection usability risk",
+    )
+    p.add_argument("--hwnd", required=True, type=parse_hwnd)
+    p.add_argument("--seconds", type=float, default=3.0)
+    p.add_argument("--interval", type=float, default=0.5)
+    p.add_argument("--log", default="", help="append durable JSONL evidence here")
+    p.add_argument("--capture-on-risk", action="store_true")
+
     p = sub.add_parser("guard", help="verify an HWND still points at the expected target")
     p.add_argument("--hwnd", required=True, type=parse_hwnd)
     p.add_argument("--expect-pid", type=int, default=None)
@@ -559,6 +681,15 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "capture":
             return _print_json(capture_window(args.hwnd, args.path, crop=not args.no_crop))
+
+        if args.command == "terminal-health":
+            return _print_json(terminal_health(
+                args.hwnd,
+                seconds=args.seconds,
+                interval=args.interval,
+                log_path=args.log,
+                capture_on_risk=args.capture_on_risk,
+            ))
 
         if args.command == "guard":
             return _print_json(verify_target(

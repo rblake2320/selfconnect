@@ -852,3 +852,28 @@ def test_doctor_report_shape_on_windows():
     }
     assert "capability_scope" in report
     assert "platform probe" in report["capability_scope"]["tpm_identity"]
+
+
+def test_terminal_health_classifies_active_redraw_risk():
+    samples = [
+        {"read_ok": True, "sha256": "a", "text": "Working (1s · esc to interrupt)"},
+        {"read_ok": True, "sha256": "b", "text": "Working (2s · esc to interrupt)"},
+        {"read_ok": True, "sha256": "c", "text": "Working (3s · esc to interrupt)"},
+    ]
+    report = sc_cli.analyze_terminal_samples(samples)
+    assert report["ok"] is False
+    assert report["state"] == "tui_redraw_risk"
+    assert report["scroll_selection_risk"] is True
+    assert "--no-alt-screen" in report["remediation"]
+
+
+def test_terminal_health_does_not_call_stable_terminal_frozen():
+    samples = [
+        {"read_ok": True, "sha256": "same", "text": "ready"},
+        {"read_ok": True, "sha256": "same", "text": "ready"},
+        {"read_ok": True, "sha256": "same", "text": "ready"},
+    ]
+    report = sc_cli.analyze_terminal_samples(samples)
+    assert report["ok"] is True
+    assert report["state"] == "stable_or_idle"
+    assert report["scroll_selection_risk"] is False

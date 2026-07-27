@@ -62,7 +62,7 @@ Codex template:
 ```powershell
 $repo = "C:\Users\techai\PKA testing\selfconnect"
 $title = "SC Codex Worker"
-$cmd = "`$Host.UI.RawUI.WindowTitle = '$title'; Set-Location -LiteralPath '$repo'; codex"
+$cmd = "`$Host.UI.RawUI.WindowTitle = '$title'; Set-Location -LiteralPath '$repo'; codex --no-alt-screen"
 
 Start-Process -FilePath powershell.exe `
   -WorkingDirectory $repo `
@@ -117,6 +117,24 @@ Read the terminal and confirm it is at a prompt:
 ```powershell
 selfconnect read --hwnd <HWND>
 ```
+
+If a terminal flickers or temporarily prevents scrolling, selection, or copying,
+capture a bounded health trace. This records timestamped UIA hashes rather than
+terminal contents and optionally saves a screenshot when repeated active-TUI
+redraws are detected:
+
+```powershell
+python -m sc_cli terminal-health `
+  --hwnd <HWND> `
+  --seconds 5 `
+  --interval 0.5 `
+  --log proofs/terminal-health.jsonl `
+  --capture-on-risk
+```
+
+`tui_redraw_risk` means the window is responsive but not reliably user-operable.
+For Codex, restart it with `--no-alt-screen` and set
+`tui.alternate_screen = "never"` in `%USERPROFILE%\.codex\config.toml`.
 
 ## Mesh Registration
 
