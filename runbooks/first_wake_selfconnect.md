@@ -124,11 +124,11 @@ terminal contents and optionally saves a screenshot when repeated active-TUI
 redraws are detected:
 
 ```powershell
-python -m sc_cli terminal-health `
-  --hwnd <HWND> `
-  --seconds 5 `
-  --interval 0.5 `
-  --log proofs/terminal-health.jsonl `
+selfconnect doctor --json `
+  --terminal-hwnd <HWND> `
+  --terminal-seconds 5 `
+  --terminal-interval 0.5 `
+  --terminal-log proofs/terminal-health.jsonl `
   --capture-on-risk
 ```
 

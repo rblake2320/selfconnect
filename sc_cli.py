@@ -245,7 +245,17 @@ def verify_target(
     }
 
 
-def doctor_report(include_windows: bool = False, query: str = "", limit: int = 20) -> dict[str, Any]:
+def doctor_report(
+    include_windows: bool = False,
+    query: str = "",
+    limit: int = 20,
+    *,
+    terminal_hwnd: int | None = None,
+    terminal_seconds: float = 3.0,
+    terminal_interval: float = 0.5,
+    terminal_log: str = "",
+    capture_on_risk: bool = False,
+) -> dict[str, Any]:
     sc = _load_sc()
     windows = sc.list_windows()
     report: dict[str, Any] = {
@@ -261,6 +271,14 @@ def doctor_report(include_windows: bool = False, query: str = "", limit: int = 2
         report["windows"] = [
             window_to_dict(w) for w in _filter_windows(windows, query, limit)
         ]
+    if terminal_hwnd is not None:
+        report["terminal_health"] = terminal_health(
+            terminal_hwnd,
+            seconds=terminal_seconds,
+            interval=terminal_interval,
+            log_path=terminal_log,
+            capture_on_risk=capture_on_risk,
+        )
     return report
 
 
@@ -587,6 +605,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--windows", action="store_true", help="include a window sample")
     p.add_argument("--query", default="", help="filter included windows")
     p.add_argument("--limit", type=int, default=20)
+    p.add_argument(
+        "--terminal-hwnd",
+        type=parse_hwnd,
+        default=None,
+        help="also run the bounded terminal usability/redraw diagnostic",
+    )
+    p.add_argument("--terminal-seconds", type=float, default=3.0)
+    p.add_argument("--terminal-interval", type=float, default=0.5)
+    p.add_argument("--terminal-log", default="", help="append terminal evidence as JSONL")
+    p.add_argument("--capture-on-risk", action="store_true")
 
     p = sub.add_parser("windows", help="list visible windows")
     p.add_argument("--query", default="", help="filter by title, exe, or class")
@@ -659,7 +687,16 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "doctor":
-            report = doctor_report(args.windows, args.query, args.limit)
+            report = doctor_report(
+                args.windows,
+                args.query,
+                args.limit,
+                terminal_hwnd=args.terminal_hwnd,
+                terminal_seconds=args.terminal_seconds,
+                terminal_interval=args.terminal_interval,
+                terminal_log=args.terminal_log,
+                capture_on_risk=args.capture_on_risk,
+            )
             if args.json:
                 return _print_json(report)
             print(f"selfconnect {report['version']} on {report['platform']}")
@@ -670,6 +707,12 @@ def main(argv: list[str] | None = None) -> int:
             if args.windows:
                 print()
                 return _print_windows(report["windows"])
+            if args.terminal_hwnd is not None:
+                health = report["terminal_health"]
+                print(f"terminal health: {health['state']}")
+                print(f"scroll/selection risk: {health['scroll_selection_risk']}")
+                if health["remediation"]:
+                    print(f"remediation: {health['remediation']}")
             return 0
 
         if args.command == "windows":

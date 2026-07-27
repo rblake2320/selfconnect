@@ -877,3 +877,15 @@ def test_terminal_health_does_not_call_stable_terminal_frozen():
     assert report["ok"] is True
     assert report["state"] == "stable_or_idle"
     assert report["scroll_selection_risk"] is False
+
+
+def test_doctor_can_include_terminal_health(monkeypatch):
+    expected = {
+        "ok": False,
+        "state": "tui_redraw_risk",
+        "scroll_selection_risk": True,
+        "remediation": "restart inline",
+    }
+    monkeypatch.setattr(sc_cli, "terminal_health", lambda *_args, **_kwargs: expected)
+    report = sc_cli.doctor_report(terminal_hwnd=123)
+    assert report["terminal_health"] == expected
