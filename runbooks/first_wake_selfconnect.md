@@ -133,8 +133,11 @@ selfconnect doctor --json `
 ```
 
 `tui_redraw_risk` means the window is responsive but not reliably user-operable.
-For Codex, restart it with `--no-alt-screen` and set
-`tui.alternate_screen = "never"` in `%USERPROFILE%\.codex\config.toml`.
+For Codex 0.145.0, `--no-alt-screen`, `tui.alternate_screen = "never"`,
+`tui.raw_output_mode = true`, and `tui.animations = false` were all tested
+together and did not fix native scrolling/selection during active output.
+Capture evidence and use the transcript view as a workaround; do not report
+these settings as a permanent repair.
 
 ## Mesh Registration
 

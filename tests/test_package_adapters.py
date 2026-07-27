@@ -864,7 +864,7 @@ def test_terminal_health_classifies_active_redraw_risk():
     assert report["ok"] is False
     assert report["state"] == "tui_redraw_risk"
     assert report["scroll_selection_risk"] is True
-    assert "--no-alt-screen" in report["remediation"]
+    assert "No verified repair" in report["remediation"]
 
 
 def test_terminal_health_does_not_call_stable_terminal_frozen():
@@ -889,3 +889,13 @@ def test_doctor_can_include_terminal_health(monkeypatch):
     monkeypatch.setattr(sc_cli, "terminal_health", lambda *_args, **_kwargs: expected)
     report = sc_cli.doctor_report(terminal_hwnd=123)
     assert report["terminal_health"] == expected
+
+
+def test_stable_terminal_text_removes_only_braille_activity_prefix():
+    source = "\u2839 techai\nnormal \u2839 content\n\u280b worker"
+    assert sc_cli.stable_terminal_text(source) == "techai\nnormal \u2839 content\nworker"
+
+
+def test_common_prefix_length_supports_tail_only_mirror_updates():
+    assert sc_cli.common_prefix_length("stable old tail", "stable new tail") == len("stable ")
+    assert sc_cli.common_prefix_length("", "new") == 0

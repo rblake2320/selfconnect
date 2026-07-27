@@ -391,9 +391,9 @@ def analyze_terminal_samples(samples: list[dict[str, Any]]) -> dict[str, Any]:
         "scroll_selection_risk": rapidly_redrawing,
         "reasons": reasons,
         "remediation": (
-            "Restart the agent in inline/no-alternate-screen mode. "
-            "For Codex use `codex --no-alt-screen` and set "
-            "`tui.alternate_screen = \"never\"`."
+            "No verified repair. Capture evidence and use the agent's static "
+            "transcript view as an operator workaround. Codex 0.145.0 still "
+            "reproduced this with no-alt-screen, raw output, and animations disabled."
             if rapidly_redrawing
             else ""
         ),
@@ -461,6 +461,85 @@ def terminal_health(
         with destination.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(report, sort_keys=True) + "\n")
     return report
+
+
+def stable_terminal_text(text: str) -> str:
+    """Remove volatile activity glyphs from repeated Windows Terminal titles."""
+    lines = text.replace("\r\n", "\n").splitlines()
+    normalized = [
+        re.sub(r"^[\u2800-\u28ff]\s+", "", line)
+        for line in lines
+    ]
+    return "\n".join(normalized)
+
+
+def common_prefix_length(left: str, right: str) -> int:
+    limit = min(len(left), len(right))
+    index = 0
+    while index < limit and left[index] == right[index]:
+        index += 1
+    return index
+
+
+def terminal_mirror(hwnd: int, interval: float = 0.5) -> int:
+    """Open a stable, read-only companion transcript for a redraw-heavy TUI."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    hwnd = parse_hwnd(hwnd)
+    root = tk.Tk()
+    root.title(f"SelfConnect Stable Transcript - HWND {hwnd}")
+    root.geometry("1100x800")
+
+    toolbar = ttk.Frame(root)
+    toolbar.pack(fill="x")
+    follow = tk.BooleanVar(value=True)
+    ttk.Checkbutton(toolbar, text="Follow output", variable=follow).pack(side="left", padx=8, pady=6)
+    status = tk.StringVar(value="Connecting...")
+    ttk.Label(toolbar, textvariable=status).pack(side="right", padx=8)
+
+    frame = ttk.Frame(root)
+    frame.pack(fill="both", expand=True)
+    text_widget = tk.Text(
+        frame,
+        wrap="word",
+        font=("Cascadia Mono", 10),
+        undo=False,
+        exportselection=True,
+    )
+    scrollbar = ttk.Scrollbar(frame, orient="vertical", command=text_widget.yview)
+    text_widget.configure(yscrollcommand=scrollbar.set)
+    text_widget.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    current = ""
+
+    def refresh() -> None:
+        nonlocal current
+        try:
+            reading = read_window(hwnd)
+            incoming = stable_terminal_text(str(reading.get("text", "")))
+            prefix = common_prefix_length(current, incoming)
+            was_at_bottom = text_widget.yview()[1] >= 0.995
+            prior_view = text_widget.yview()
+            text_widget.delete(f"1.0+{prefix}c", "end")
+            text_widget.insert("end", incoming[prefix:])
+            current = incoming
+            if follow.get() and was_at_bottom:
+                text_widget.see("end")
+            elif not follow.get():
+                text_widget.yview_moveto(prior_view[0])
+            status.set(
+                f"{reading.get('method', 'none')} | {len(incoming):,} chars | "
+                f"{datetime.now().strftime('%H:%M:%S')}"
+            )
+        except Exception as exc:
+            status.set(f"Read failed: {exc}")
+        root.after(max(100, int(interval * 1000)), refresh)
+
+    refresh()
+    root.mainloop()
+    return 0
 
 
 def input_allowed(explicit: bool = False, env_name: str = "SELFCONNECT_ALLOW_INPUT") -> bool:
@@ -640,6 +719,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--log", default="", help="append durable JSONL evidence here")
     p.add_argument("--capture-on-risk", action="store_true")
 
+    p = sub.add_parser(
+        "mirror",
+        help="open a stable read-only transcript companion for a terminal",
+    )
+    p.add_argument("--hwnd", required=True, type=parse_hwnd)
+    p.add_argument("--interval", type=float, default=0.5)
+
     p = sub.add_parser("guard", help="verify an HWND still points at the expected target")
     p.add_argument("--hwnd", required=True, type=parse_hwnd)
     p.add_argument("--expect-pid", type=int, default=None)
@@ -733,6 +819,9 @@ def main(argv: list[str] | None = None) -> int:
                 log_path=args.log,
                 capture_on_risk=args.capture_on_risk,
             ))
+
+        if args.command == "mirror":
+            return terminal_mirror(args.hwnd, args.interval)
 
         if args.command == "guard":
             return _print_json(verify_target(

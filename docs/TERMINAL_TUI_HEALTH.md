@@ -38,9 +38,9 @@ screenshot. A result of `tui_redraw_risk` means:
 `stable_or_idle` does not prove that mouse input works. It means this bounded
 probe did not observe the specific repeated active-TUI redraw condition.
 
-## Codex remediation
+## Codex status: unresolved
 
-Start Codex without the alternate screen:
+The following mitigations were tested:
 
 ```powershell
 codex --no-alt-screen
@@ -52,16 +52,40 @@ For a persistent per-user setting, add:
 [tui]
 alternate_screen = "never"
 raw_output_mode = true
+animations = false
 ```
 
-to `%USERPROFILE%\.codex\config.toml`.
+They did not fix the issue. A fresh Codex 0.145.0 process launched with
+`--no-alt-screen -c tui.animations=false`, while loading
+`raw_output_mode=true`, still prevented reliable scrolling/selection during
+active output. A controlled run produced seven text-buffer transitions in
+eleven samples and the operator reproduced the lockout.
 
-Launch wrappers and SelfConnect runbooks should still pass
-`--no-alt-screen` explicitly. The flag protects launch paths that load a
-different configuration directory or predate the configuration change.
+These settings may reduce alternate-screen and animation activity, but they
+must not be described as a permanent fix. There is currently no verified
+SelfConnect-side repair for the Codex TUI behavior.
 
-The setting only applies when a new Codex process starts. An already-running
-alternate-screen session must be exited or resumed in a newly launched process.
+`Ctrl+T` can open Codex's transcript view as an operator workaround. Waiting
+for the active response to finish also restores usability in observed runs.
+Neither is a fix for native terminal interaction during generation.
+
+## SelfConnect stable transcript companion
+
+SelfConnect provides a read-only companion window when native terminal
+interaction is unusable:
+
+```powershell
+selfconnect mirror --hwnd <HWND>
+```
+
+The companion reads the guarded terminal through UIA, removes volatile title
+spinner glyphs, and updates only the changed suffix. Turning off `Follow output`
+keeps the operator's viewport fixed while new output arrives. Selection and
+copying occur in the companion rather than the repainting agent TUI.
+
+This restores access to scroll/select/copy through a separate SelfConnect
+surface. It does not repair the underlying Codex terminal renderer and must not
+be described as doing so.
 
 ## Other agent TUIs
 
@@ -82,4 +106,5 @@ For any recurrence, preserve:
 - whether usability returned at the same time the active render stopped.
 
 This evidence separates an OS/window hang, failed UIA transport, and an active
-but user-hostile TUI redraw loop.
+but user-hostile TUI redraw loop. It diagnoses the failure; it does not repair
+the third-party TUI.
