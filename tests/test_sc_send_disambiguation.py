@@ -32,7 +32,7 @@ TWINS = [Win(0x1111, "claude 2"), Win(0x2222, "claude 2")]
 
 def test_sole_active_registration_wins():
     winner, rows = pick_by_registry(
-        TWINS, reg(agent(0x2222), agent(0x1111, status="closing")))
+        TWINS, now=200.0, registry=reg(agent(0x2222), agent(0x1111, status="closing")))
     assert winner == TWINS[1]
     assert {(r[0].hwnd, r[1]) for r in rows} == {(0x1111, "closing"),
                                                  (0x2222, "active")}
@@ -40,14 +40,14 @@ def test_sole_active_registration_wins():
 
 def test_two_active_registrations_stay_ambiguous():
     winner, _ = pick_by_registry(
-        TWINS, reg(agent(0x1111, role="claude-2"),
+        TWINS, now=200.0, registry=reg(agent(0x1111, role="claude-2"),
                    agent(0x2222, role="claude-2-old")))
     assert winner is None
 
 
 def test_no_active_registration_stays_ambiguous():
     winner, rows = pick_by_registry(
-        TWINS, reg(agent(0x1111, status="invalidated")))
+        TWINS, now=200.0, registry=reg(agent(0x1111, status="invalidated")))
     assert winner is None
     assert dict((r[0].hwnd, r[1]) for r in rows) == {0x1111: "invalidated",
                                                      0x2222: "unregistered"}
@@ -82,6 +82,30 @@ def test_record_for_prefers_active_then_recency():
 def test_single_match_never_touches_registry_semantics():
     # One title match is not ambiguity; pick_by_registry is only consulted
     # for len(matches) > 1, but stays sane if called anyway.
-    winner, rows = pick_by_registry([TWINS[0]], reg(agent(0x1111)))
+    winner, rows = pick_by_registry([TWINS[0]], reg(agent(0x1111)), now=200.0)
     assert winner == TWINS[0]
     assert rows[0][1] == "active"
+
+
+def test_stale_active_twin_cannot_win(sc_send_module=None):
+    # F1 (claude-1 review): 31/39 active records were >7d old when measured.
+    # An aged "active" record is not evidence the window is still that agent,
+    # so it must not beat a live-unregistered twin.
+    from sc_send import STALE_ACTIVE_SECONDS
+    old = agent(0x1111, last_seen=100.0)
+    now = 100.0 + STALE_ACTIVE_SECONDS + 1
+    winner, rows = pick_by_registry(TWINS, reg(old), now=now)
+    assert winner is None
+    assert dict((r[0].hwnd, r[1]) for r in rows) == {0x1111: "active-stale",
+                                                     0x2222: "unregistered"}
+
+
+def test_fresh_active_beats_stale_active():
+    from sc_send import STALE_ACTIVE_SECONDS
+    now = 1000.0 + STALE_ACTIVE_SECONDS + 1
+    stale = agent(0x1111, birth="stale-twin", last_seen=1000.0)
+    fresh = agent(0x2222, birth="live", last_seen=now - 60)
+    winner, rows = pick_by_registry(TWINS, reg(stale, fresh), now=now)
+    assert winner == TWINS[1]
+    assert dict((r[0].hwnd, r[1]) for r in rows) == {0x1111: "active-stale",
+                                                     0x2222: "active"}

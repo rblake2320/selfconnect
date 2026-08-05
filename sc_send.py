@@ -39,6 +39,13 @@ def find_targets(sub):
             if sub in (w.title or "").lower() and w.hwnd != me]
 
 
+# An "active" record whose last_seen is older than this is not evidence the
+# window is still that agent: 31 of 39 active records were >7 days old when
+# measured (2026-08-04), so unbounded trust would let a stale-active twin beat
+# a live-unregistered window and print DISAMBIGUATED confidently.
+STALE_ACTIVE_SECONDS = 24 * 3600
+
+
 def registry_record_for(hwnd, registry):
     """Best registry record for an hwnd: an active one, else most recent."""
     candidates = [rec for rec in (registry or {}).get("agents", [])
@@ -50,24 +57,30 @@ def registry_record_for(hwnd, registry):
     return max(pool, key=lambda rec: rec.get("last_seen") or 0)
 
 
-def pick_by_registry(matches, registry):
+def pick_by_registry(matches, registry, now=None):
     """Resolve duplicate-title matches through mesh-registry classification.
 
-    Returns (winner, rows). winner is the ONE match holding an active
-    registration, or None when zero or several qualify — ambiguity between
-    two live registered agents, rotated HWNDs (active record pointing at a
-    window that no longer matches), and unreadable registries all stay
-    fail-closed. rows carry (window, status, role, birth_id) for display.
+    Returns (winner, rows). winner is the ONE match holding a FRESH active
+    registration (last_seen within STALE_ACTIVE_SECONDS), or None when zero
+    or several qualify — ambiguity between two live registered agents,
+    rotated HWNDs, stale-active twins, and unreadable registries all stay
+    fail-closed. rows carry (window, status, role, birth_id) for display;
+    an aged active record shows as "active-stale".
     """
+    import time
+    now = time.time() if now is None else now
     rows = []
     active_matches = []
     for win in matches:
         rec = registry_record_for(win.hwnd, registry)
         status = rec.get("status") if rec else "unregistered"
+        fresh = bool(rec) and (now - (rec.get("last_seen") or 0)) <= STALE_ACTIVE_SECONDS
+        if status == "active" and not fresh:
+            status = "active-stale"
         rows.append((win, status,
                      rec.get("role") if rec else None,
                      rec.get("birth_id") if rec else None))
-        if rec and rec.get("status") == "active":
+        if status == "active":
             active_matches.append(win)
     winner = active_matches[0] if len(active_matches) == 1 else None
     return winner, rows
