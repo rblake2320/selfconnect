@@ -109,13 +109,26 @@ def main():
     if not matches:
         print(f"NO MATCH for {args.to!r} — run with --list to see windows")
         return 1
-    if len(matches) > 1 and not args.first:
+    if len(matches) > 1:
         try:
             from sc_mesh_registry import load_registry
             registry = load_registry()
         except Exception:  # registry unreadable → behave exactly as before
             registry = None
         winner, rows = pick_by_registry(matches, registry)
+        if args.first:
+            # --first stays an override, but never a silent one: enumeration
+            # order changes mid-session (observed twice, 2026-08-04), so a
+            # bare --first can re-flip onto a dead twin with no signal.
+            chosen = matches[0]
+            if winner is not None and winner.hwnd != chosen.hwnd:
+                _, _, role, birth = next(r for r in rows
+                                         if r[0].hwnd == winner.hwnd)
+                print(f"WARNING --first overrides the registry: taking "
+                      f"0x{chosen.hwnd:08X} while the fresh-active match is "
+                      f"0x{winner.hwnd:08X} (role={role} birth={birth}). "
+                      "Drop --first to send to the live agent.")
+            matches = [chosen]
         if winner is not None:
             _, status, role, birth = next(r for r in rows if r[0].hwnd == winner.hwnd)
             print(f"DISAMBIGUATED via mesh registry: role={role} birth={birth} "

@@ -109,3 +109,18 @@ def test_fresh_active_beats_stale_active():
     assert winner == TWINS[1]
     assert dict((r[0].hwnd, r[1]) for r in rows) == {0x1111: "active-stale",
                                                      0x2222: "active"}
+
+
+def test_first_override_still_reports_the_fresh_active_winner():
+    """--first must not silently discard classification.
+
+    Live incidents (2026-08-04, x2): `--to "codex 1" --first` delivered to an
+    UNREGISTERED twin because enumeration order changed mid-session. --first
+    remains an override, but pick_by_registry still names the live agent so
+    the caller can warn.
+    """
+    winner, rows = pick_by_registry(
+        TWINS, reg(agent(0x2222, role="codex-beast-primary-1",
+                         last_seen=195.0)), now=200.0)
+    assert winner == TWINS[1]              # the live agent, not enumeration[0]
+    assert rows[0][0].hwnd == 0x1111 and rows[0][1] == "unregistered"
