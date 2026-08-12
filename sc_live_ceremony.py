@@ -13,15 +13,23 @@ import importlib.util
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
+from base64 import b64decode, b64encode
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+_EVIDENCE_TTL_SECONDS = 60
+_EVIDENCE_CLOCK_SKEW_SECONDS = 5
 _REQUIRED_COMPONENTS = {
     "runtime": "sc_assignment_runtime.py",
     "trust_pipe": "sc_seat_pipe.py",
@@ -88,6 +96,39 @@ class ExactRoute:
 
 
 @dataclass(frozen=True)
+class EvidenceTrust:
+    """Pinned coordinator key and exact operator authorization expectation."""
+
+    coordinator_id: str
+    key_id: str
+    public_key: bytes
+    operator_id: str
+    operator_authorization_id: str
+
+    def __post_init__(self) -> None:
+        for value, label in (
+            (self.coordinator_id, "coordinator_id"),
+            (self.key_id, "key_id"),
+            (self.operator_id, "operator_id"),
+            (self.operator_authorization_id, "operator_authorization_id"),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"evidence {label} is required")
+        if not isinstance(self.public_key, bytes) or len(self.public_key) != 32:
+            raise ValueError("evidence coordinator Ed25519 public key must be 32 bytes")
+
+
+@dataclass(frozen=True)
+class EvidenceSigner:
+    trust: EvidenceTrust
+    sign: Callable[[bytes], bytes]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.trust, EvidenceTrust) or not callable(self.sign):
+            raise TypeError("pinned evidence trust and coordinator signer are required")
+
+
+@dataclass(frozen=True)
 class CeremonyPorts:
     """Reviewed API bindings supplied only after final branches are approved."""
 
@@ -128,6 +169,81 @@ def _canonical(value: Any) -> bytes:
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC).replace(microsecond=0)
+
+
+def _utc_text(value: datetime) -> str:
+    if value.tzinfo is None or value.utcoffset() != timedelta(0):
+        raise CeremonyError("evidence timestamp must be UTC")
+    return value.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_utc(value: Any) -> datetime:
+    if not isinstance(value, str):
+        raise CeremonyError("evidence timestamp is missing")
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError as exc:
+        raise CeremonyError("evidence timestamp is not canonical UTC") from exc
+    return parsed.replace(tzinfo=UTC)
+
+
+def verify_evidence_bundle(
+    bundle: Mapping[str, Any],
+    *,
+    trust: EvidenceTrust,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Verify a final bundle against independently pinned signer/operator trust."""
+    envelope = _mapping(bundle, "final evidence bundle")
+    body = _mapping(envelope.get("body"), "signed evidence body")
+    signature_record = _mapping(envelope.get("signature"), "evidence signature")
+    expected_identity = {
+        "coordinator_id": trust.coordinator_id,
+        "key_id": trust.key_id,
+        "operator_id": trust.operator_id,
+        "operator_authorization_id": trust.operator_authorization_id,
+    }
+    if any(body.get(field) != value for field, value in expected_identity.items()):
+        raise CeremonyError("evidence signer/operator binding mismatch")
+    issued_at = _parse_utc(body.get("issued_at_utc"))
+    expires_at = _parse_utc(body.get("expires_at_utc"))
+    if (expires_at - issued_at).total_seconds() != _EVIDENCE_TTL_SECONDS:
+        raise CeremonyError("evidence validity window is not bounded")
+    observed = _utc_now() if now is None else now
+    if observed.tzinfo is None or observed.utcoffset() != timedelta(0):
+        raise CeremonyError("evidence verification clock must be UTC")
+    skew = timedelta(seconds=_EVIDENCE_CLOCK_SKEW_SECONDS)
+    if issued_at > observed + skew or expires_at < observed - skew:
+        raise CeremonyError("evidence timestamp is outside its validity window")
+    pinned_shas = body.get("pinned_shas")
+    reviewed = body.get("reviewed_checkouts")
+    if not isinstance(pinned_shas, Mapping) or not isinstance(reviewed, list):
+        raise CeremonyError("evidence lacks exact pinned checkout SHAs")
+    recorded = {item.get("component"): item.get("commit_sha") for item in reviewed if isinstance(item, Mapping)}
+    if (
+        len(reviewed) != len(_REQUIRED_COMPONENTS)
+        or dict(pinned_shas) != recorded
+        or set(recorded) != set(_REQUIRED_COMPONENTS)
+        or any(not isinstance(sha, str) or _SHA.fullmatch(sha) is None for sha in recorded.values())
+    ):
+        raise CeremonyError("evidence pinned SHA binding mismatch")
+    if not isinstance(body.get("evidence_nonce"), str) or _HEX64.fullmatch(body["evidence_nonce"]) is None:
+        raise CeremonyError("evidence nonce is invalid")
+    if signature_record.get("algorithm") != "Ed25519" or signature_record.get("key_id") != trust.key_id:
+        raise CeremonyError("evidence signature metadata mismatch")
+    payload = _canonical(body)
+    if envelope.get("body_sha256") != hashlib.sha256(payload).hexdigest():
+        raise CeremonyError("evidence body digest mismatch")
+    try:
+        signature = b64decode(signature_record.get("signature_b64", ""), validate=True)
+        Ed25519PublicKey.from_public_bytes(trust.public_key).verify(signature, payload)
+    except (InvalidSignature, TypeError, ValueError) as exc:
+        raise CeremonyError("evidence coordinator signature is invalid") from exc
+    return body
 
 
 def _git(worktree: Path, *args: str) -> str:
@@ -328,6 +444,7 @@ def run_live_ceremony(
     checkouts: Sequence[ReviewedCheckout],
     route: ExactRoute,
     ports: CeremonyPorts,
+    evidence_signer: EvidenceSigner,
 ) -> dict[str, Any]:
     """Run both terminal-failure paths and fixed adversarial probes.
 
@@ -335,6 +452,8 @@ def run_live_ceremony(
     composer text, HWND/PID/title observations, and PostMessage queue acceptance
     are intentionally absent from the authority surface.
     """
+    if not isinstance(evidence_signer, EvidenceSigner):
+        raise TypeError("a pinned coordinator evidence signer is required")
     checkout_evidence = verify_reviewed_checkouts(checkouts)
     cases = [_run_trigger_case(ports, route, trigger) for trigger in _TRIGGERS]
     rejected = []
@@ -347,9 +466,19 @@ def run_live_ceremony(
             raise CeremonyError(f"negative probe raised unrelated error: {probe}:{type(exc).__name__}") from exc
         else:
             raise CeremonyError(f"negative probe did not fail closed: {probe}")
-    evidence = {
-        "schema": "selfconnect-live-assignment-ceremony-v1",
+    issued_at = _utc_now()
+    trust = evidence_signer.trust
+    body = {
+        "schema": "selfconnect-live-assignment-ceremony-v2",
         "claim": "cryptographic API composition evidence; screen evidence is non-authoritative",
+        "issued_at_utc": _utc_text(issued_at),
+        "expires_at_utc": _utc_text(issued_at + timedelta(seconds=_EVIDENCE_TTL_SECONDS)),
+        "evidence_nonce": secrets.token_hex(32),
+        "coordinator_id": trust.coordinator_id,
+        "key_id": trust.key_id,
+        "operator_id": trust.operator_id,
+        "operator_authorization_id": trust.operator_authorization_id,
+        "pinned_shas": {item["component"]: item["commit_sha"] for item in checkout_evidence},
         "reviewed_checkouts": checkout_evidence,
         "route": {
             "hwnd": route.hwnd,
@@ -364,10 +493,26 @@ def run_live_ceremony(
         "cases": cases,
         "negative_rejections": rejected,
     }
-    evidence["evidence_sha256"] = _digest(evidence)
-    if _HEX64.fullmatch(evidence["evidence_sha256"]) is None:
+    payload = _canonical(body)
+    try:
+        signature = evidence_signer.sign(payload)
+    except Exception as exc:
+        raise CeremonyError("coordinator evidence signing failed") from exc
+    if not isinstance(signature, bytes):
+        raise CeremonyError("coordinator evidence signer returned an invalid signature")
+    bundle = {
+        "body": body,
+        "body_sha256": hashlib.sha256(payload).hexdigest(),
+        "signature": {
+            "algorithm": "Ed25519",
+            "key_id": trust.key_id,
+            "signature_b64": b64encode(signature).decode("ascii"),
+        },
+    }
+    verify_evidence_bundle(bundle, trust=trust, now=issued_at)
+    if _HEX64.fullmatch(bundle["body_sha256"]) is None:
         raise AssertionError("unreachable evidence digest failure")
-    return evidence
+    return bundle
 
 
 def missing_live_prerequisites() -> tuple[str, ...]:
@@ -387,10 +532,13 @@ def missing_live_prerequisites() -> tuple[str, ...]:
 __all__ = [
     "CeremonyError",
     "CeremonyPorts",
+    "EvidenceSigner",
+    "EvidenceTrust",
     "ExactRoute",
     "ReviewedCheckout",
     "SeatIdentity",
     "missing_live_prerequisites",
     "run_live_ceremony",
+    "verify_evidence_bundle",
     "verify_reviewed_checkouts",
 ]

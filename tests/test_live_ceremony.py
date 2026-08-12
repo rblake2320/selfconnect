@@ -2,14 +2,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 import sc_live_ceremony as ceremony
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 class ProtocolRejected(ValueError):
     pass
+
+
+_PRIVATE_KEY = Ed25519PrivateKey.generate()
+_TRUST = ceremony.EvidenceTrust(
+    coordinator_id="codex-12-4abf6b40",
+    key_id="coordinator-evidence-key-1",
+    public_key=_PRIVATE_KEY.public_key().public_bytes_raw(),
+    operator_id="operator-techai",
+    operator_authorization_id="live-ceremony-authorization-20260812",
+)
+_SIGNER = ceremony.EvidenceSigner(trust=_TRUST, sign=_PRIVATE_KEY.sign)
 
 
 def _canonical(value):
@@ -18,6 +32,15 @@ def _canonical(value):
 
 def _digest(value):
     return hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def _run(*, checkouts, route, ports, evidence_signer=_SIGNER):
+    return ceremony.run_live_ceremony(
+        checkouts=checkouts,
+        route=route,
+        ports=ports,
+        evidence_signer=evidence_signer,
+    )
 
 
 class Driver:
@@ -151,18 +174,19 @@ def pins(tmp_path, monkeypatch):
 
 
 def test_two_trigger_live_plan_and_all_negatives(route, pins):
-    result = ceremony.run_live_ceremony(checkouts=pins, route=route, ports=Driver().ports())
-    assert [item["trigger"] for item in result["cases"]] == ["blocked", "rejected"]
-    assert all(item["replacement_birth_id"] == "seat-new" for item in result["cases"])
-    assert len(result["negative_rejections"]) == 7
-    assert len(result["evidence_sha256"]) == 64
-    assert "non-authoritative" in result["claim"]
-    assert [item["component"] for item in result["reviewed_checkouts"]] == [
+    result = _run(checkouts=pins, route=route, ports=Driver().ports())
+    body = result["body"]
+    assert [item["trigger"] for item in body["cases"]] == ["blocked", "rejected"]
+    assert all(item["replacement_birth_id"] == "seat-new" for item in body["cases"])
+    assert len(body["negative_rejections"]) == 7
+    assert len(result["body_sha256"]) == 64
+    assert "non-authoritative" in body["claim"]
+    assert [item["component"] for item in body["reviewed_checkouts"]] == [
         "runtime",
         "trust_pipe",
         "failover",
     ]
-    for checkout, evidence in zip(pins, result["reviewed_checkouts"], strict=True):
+    for checkout, evidence in zip(pins, body["reviewed_checkouts"], strict=True):
         assert (
             Path(evidence["module_file"])
             == (checkout.worktree / ceremony._REQUIRED_COMPONENTS[checkout.component]).resolve()
@@ -173,17 +197,17 @@ def test_two_trigger_live_plan_and_all_negatives(route, pins):
 def test_non_windows_and_missing_or_dirty_pins_fail_closed(route, pins, monkeypatch):
     monkeypatch.setattr(ceremony.os, "name", "posix")
     with pytest.raises(ceremony.CeremonyError, match="Windows-only"):
-        ceremony.run_live_ceremony(checkouts=pins, route=route, ports=Driver().ports())
+        _run(checkouts=pins, route=route, ports=Driver().ports())
     monkeypatch.setattr(ceremony.os, "name", "nt")
     with pytest.raises(ceremony.CeremonyError, match="required"):
-        ceremony.run_live_ceremony(checkouts=pins[:2], route=route, ports=Driver().ports())
+        _run(checkouts=pins[:2], route=route, ports=Driver().ports())
     monkeypatch.setattr(
         ceremony,
         "_git",
         lambda _path, *args: "dirty" if args == ("status", "--porcelain") else pins[0].commit_sha,
     )
     with pytest.raises(ceremony.CeremonyError):
-        ceremony.run_live_ceremony(checkouts=pins, route=route, ports=Driver().ports())
+        _run(checkouts=pins, route=route, ports=Driver().ports())
 
 
 def test_wrong_sha_fails_before_dispatch(route, pins, monkeypatch):
@@ -197,7 +221,7 @@ def test_wrong_sha_fails_before_dispatch(route, pins, monkeypatch):
         lambda _path, *args: "d" * 40 if args == ("rev-parse", "HEAD") else "",
     )
     with pytest.raises(ceremony.CeremonyError, match="SHA mismatch"):
-        ceremony.run_live_ceremony(checkouts=pins, route=route, ports=ports)
+        _run(checkouts=pins, route=route, ports=ports)
     assert calls == []
 
 
@@ -211,7 +235,7 @@ def test_missing_reviewed_module_fails_before_dispatch(route, pins):
     pins[0].worktree.joinpath("sc_assignment_runtime.py").unlink()
     ports = ceremony.CeremonyPorts(**{**Driver().ports().__dict__, "dispatch": lambda *_args: calls.append(True)})
     with pytest.raises(ceremony.CeremonyError, match="reviewed module is missing"):
-        ceremony.run_live_ceremony(checkouts=pins, route=route, ports=ports)
+        _run(checkouts=pins, route=route, ports=ports)
     assert calls == []
 
 
@@ -239,7 +263,7 @@ def test_guarded_submit_shape_cannot_be_weakened(route, pins):
 
         ports = ceremony.CeremonyPorts(**{**driver.ports().__dict__, "dispatch": dispatch})
         with pytest.raises(ceremony.CeremonyError, match="authenticate"):
-            ceremony.run_live_ceremony(checkouts=pins, route=route, ports=ports)
+            _run(checkouts=pins, route=route, ports=ports)
 
 
 def test_wrong_seat_assignment_fails(route, pins):
@@ -253,7 +277,7 @@ def test_wrong_seat_assignment_fails(route, pins):
 
     ports = ceremony.CeremonyPorts(**{**driver.ports().__dict__, "dispatch": dispatch})
     with pytest.raises(ceremony.CeremonyError, match="exact intended seat"):
-        ceremony.run_live_ceremony(checkouts=pins, route=route, ports=ports)
+        _run(checkouts=pins, route=route, ports=ports)
 
 
 def test_sequence_gap_and_wrong_ack_fail(route, pins):
@@ -268,7 +292,7 @@ def test_sequence_gap_and_wrong_ack_fail(route, pins):
 
     ports = ceremony.CeremonyPorts(**{**driver.ports().__dict__, "seat_transition": gap})
     with pytest.raises(ceremony.CeremonyError, match="state/sequence"):
-        ceremony.run_live_ceremony(checkouts=pins, route=route, ports=ports)
+        _run(checkouts=pins, route=route, ports=ports)
 
     driver = Driver()
     ports = ceremony.CeremonyPorts(
@@ -282,7 +306,7 @@ def test_sequence_gap_and_wrong_ack_fail(route, pins):
         }
     )
     with pytest.raises(ceremony.CeremonyError, match="exact verified receipt"):
-        ceremony.run_live_ceremony(checkouts=pins, route=route, ports=ports)
+        _run(checkouts=pins, route=route, ports=ports)
 
 
 @pytest.mark.parametrize(
@@ -302,7 +326,7 @@ def test_failover_requires_fresh_birth_generation_key_and_epoch(field, route, pi
 
     ports = ceremony.CeremonyPorts(**{**driver.ports().__dict__, "failover": failover})
     with pytest.raises((ceremony.CeremonyError, ValueError), match=r"fresh|generation"):
-        ceremony.run_live_ceremony(checkouts=pins, route=route, ports=ports)
+        _run(checkouts=pins, route=route, ports=ports)
 
 
 def test_process_kill_and_missing_delivery_receipt_reject(route, pins):
@@ -320,7 +344,7 @@ def test_process_kill_and_missing_delivery_receipt_reject(route, pins):
 
         ports = ceremony.CeremonyPorts(**{**driver.ports().__dict__, "failover": failover})
         with pytest.raises(ceremony.CeremonyError):
-            ceremony.run_live_ceremony(checkouts=pins, route=route, ports=ports)
+            _run(checkouts=pins, route=route, ports=ports)
 
 
 def test_every_negative_probe_must_raise(route, pins):
@@ -334,7 +358,7 @@ def test_every_negative_probe_must_raise(route, pins):
 
         ports = ceremony.CeremonyPorts(**{**driver.ports().__dict__, "negative_probe": negative})
         with pytest.raises(ceremony.CeremonyError, match=allowed):
-            ceremony.run_live_ceremony(checkouts=pins, route=route, ports=ports)
+            _run(checkouts=pins, route=route, ports=ports)
 
 
 @pytest.mark.parametrize("error", (NotImplementedError, AttributeError, RuntimeError, ValueError))
@@ -344,7 +368,7 @@ def test_unrelated_negative_probe_errors_are_harness_failures(error, route, pins
 
     ports = ceremony.CeremonyPorts(**{**Driver().ports().__dict__, "negative_probe": negative})
     with pytest.raises(ceremony.CeremonyError, match=f"unrelated error: wrong_seat:{error.__name__}"):
-        ceremony.run_live_ceremony(checkouts=pins, route=route, ports=ports)
+        _run(checkouts=pins, route=route, ports=ports)
 
 
 @pytest.mark.parametrize("error", (Exception, RuntimeError, NotImplementedError, AttributeError))
@@ -354,11 +378,76 @@ def test_broad_or_harness_errors_cannot_be_declared_protocol_errors(error):
         ceremony.CeremonyPorts(**{**values, "protocol_errors": (error,)})
 
 
+def test_final_bundle_is_signed_timestamped_operator_bound_and_pins_exact_shas(route, pins):
+    bundle = _run(checkouts=pins, route=route, ports=Driver().ports())
+    body = ceremony.verify_evidence_bundle(bundle, trust=_TRUST)
+    assert body["coordinator_id"] == _TRUST.coordinator_id
+    assert body["key_id"] == _TRUST.key_id
+    assert body["operator_id"] == _TRUST.operator_id
+    assert body["operator_authorization_id"] == _TRUST.operator_authorization_id
+    assert body["pinned_shas"] == {item.component: item.commit_sha for item in pins}
+    issued = datetime.strptime(body["issued_at_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    expires = datetime.strptime(body["expires_at_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    assert expires - issued == timedelta(seconds=60)
+    assert len(body["evidence_nonce"]) == 64
+    assert bundle["signature"]["algorithm"] == "Ed25519"
+
+
+@pytest.mark.parametrize("field", ("operator_id", "operator_authorization_id", "coordinator_id", "key_id"))
+def test_signed_bundle_identity_tampering_rejects(field, route, pins):
+    bundle = _run(checkouts=pins, route=route, ports=Driver().ports())
+    forged = deepcopy(bundle)
+    forged["body"][field] = "attacker"
+    with pytest.raises(ceremony.CeremonyError, match="signer/operator binding"):
+        ceremony.verify_evidence_bundle(forged, trust=_TRUST)
+
+
+def test_signed_bundle_pin_tampering_and_expiry_reject(route, pins):
+    bundle = _run(checkouts=pins, route=route, ports=Driver().ports())
+    forged = deepcopy(bundle)
+    forged["body"]["pinned_shas"]["runtime"] = "f" * 40
+    with pytest.raises(ceremony.CeremonyError, match="pinned SHA binding"):
+        ceremony.verify_evidence_bundle(forged, trust=_TRUST)
+    expires = datetime.strptime(bundle["body"]["expires_at_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    with pytest.raises(ceremony.CeremonyError, match="outside its validity window"):
+        ceremony.verify_evidence_bundle(bundle, trust=_TRUST, now=expires + timedelta(seconds=6))
+
+
+def test_rehashed_body_tampering_still_fails_coordinator_signature(route, pins):
+    bundle = _run(checkouts=pins, route=route, ports=Driver().ports())
+    forged = deepcopy(bundle)
+    forged["body"]["cases"][0]["trigger"] = "completed"
+    forged["body_sha256"] = _digest(forged["body"])
+    with pytest.raises(ceremony.CeremonyError, match="signature is invalid"):
+        ceremony.verify_evidence_bundle(forged, trust=_TRUST)
+
+
+def test_wrong_coordinator_key_and_signer_failure_reject(route, pins):
+    attacker = Ed25519PrivateKey.generate()
+    wrong_signer = ceremony.EvidenceSigner(trust=_TRUST, sign=attacker.sign)
+    with pytest.raises(ceremony.CeremonyError, match="signature is invalid"):
+        _run(checkouts=pins, route=route, ports=Driver().ports(), evidence_signer=wrong_signer)
+
+    def broken_signer(_payload):
+        raise OSError("key unavailable")
+
+    unavailable = ceremony.EvidenceSigner(trust=_TRUST, sign=broken_signer)
+    with pytest.raises(ceremony.CeremonyError, match="signing failed"):
+        _run(checkouts=pins, route=route, ports=Driver().ports(), evidence_signer=unavailable)
+
+
+def test_evidence_trust_requires_exact_operator_and_coordinator_identity():
+    values = dict(_TRUST.__dict__)
+    for field in ("coordinator_id", "key_id", "operator_id", "operator_authorization_id"):
+        with pytest.raises(ValueError, match=field):
+            ceremony.EvidenceTrust(**{**values, field: ""})
+
+
 def test_authority_surface_has_no_screen_or_postmessage_inputs():
     import inspect
 
     parameters = set(inspect.signature(ceremony.run_live_ceremony).parameters)
-    assert parameters == {"checkouts", "route", "ports"}
+    assert parameters == {"checkouts", "route", "ports", "evidence_signer"}
     names = {str(name).lower() for name in ceremony.run_live_ceremony.__code__.co_names}
     assert all(term not in names for term in ("uia", "ocr", "composer", "postmessage"))
     assert len(ceremony.missing_live_prerequisites()) == 8
