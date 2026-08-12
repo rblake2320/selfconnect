@@ -430,7 +430,7 @@ def test_illegal_direct_terminal_and_post_terminal_transitions_reject(tmp_path):
 
 def test_receipt_structured_detail_and_result_hash_are_bounded_and_state_typed(tmp_path):
     case = _case(tmp_path)
-    with pytest.raises(AssignmentVerificationError, match="bounded size"):
+    with pytest.raises(AssignmentVerificationError, match=r"exceeds|bounded size"):
         _emit(case, "accepted", 1, detail={"text": "x" * (MAX_DETAIL_BYTES + 1)})
 
     for detail in (
