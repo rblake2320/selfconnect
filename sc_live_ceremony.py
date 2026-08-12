@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import inspect
 import json
 import os
 import re
@@ -21,6 +22,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
@@ -35,6 +37,15 @@ _REQUIRED_COMPONENTS = {
     "trust_pipe": "sc_seat_pipe.py",
     "failover": "sc_assignment_failover.py",
 }
+_PORT_NAMES = (
+    "dispatch",
+    "seat_transition",
+    "verify_receipt",
+    "acknowledge_receipt",
+    "failover",
+    "replacement_transition",
+    "negative_probe",
+)
 _TRIGGERS = ("blocked", "rejected")
 _NEGATIVE_PROBES = (
     "wrong_seat",
@@ -44,6 +55,7 @@ _NEGATIVE_PROBES = (
     "tab_drift",
     "revoked_key",
     "forged_composer_text",
+    "stub_or_dry_run",
 )
 
 
@@ -140,9 +152,10 @@ class CeremonyPorts:
     replacement_transition: Callable[[Mapping[str, Any], str], Mapping[str, Any]]
     negative_probe: Callable[[str], None]
     protocol_errors: tuple[type[Exception], ...]
+    bindings: Mapping[str, str]
 
     def __post_init__(self) -> None:
-        callables = tuple(value for name, value in self.__dict__.items() if name != "protocol_errors")
+        callables = tuple(getattr(self, name) for name in _PORT_NAMES)
         if any(not callable(value) for value in callables):
             raise TypeError("every ceremony port must be callable")
         if (
@@ -156,6 +169,13 @@ class CeremonyPorts:
             )
         ):
             raise TypeError("specific protocol verification error classes are required")
+        if (
+            not isinstance(self.bindings, Mapping)
+            or set(self.bindings) != set(_PORT_NAMES)
+            or any(component not in _REQUIRED_COMPONENTS for component in self.bindings.values())
+        ):
+            raise TypeError("every ceremony port requires a canonical component binding")
+        object.__setattr__(self, "bindings", MappingProxyType(dict(self.bindings)))
 
 
 def _canonical(value: Any) -> bytes:
@@ -233,6 +253,27 @@ def verify_evidence_bundle(
         raise CeremonyError("evidence pinned SHA binding mismatch")
     if not isinstance(body.get("evidence_nonce"), str) or _HEX64.fullmatch(body["evidence_nonce"]) is None:
         raise CeremonyError("evidence nonce is invalid")
+    module_files = {item.get("component"): item.get("module_file") for item in reviewed if isinstance(item, Mapping)}
+    port_bindings = body.get("port_bindings")
+    if not isinstance(port_bindings, list) or len(port_bindings) != len(_PORT_NAMES):
+        raise CeremonyError("evidence port bindings are incomplete")
+    bound = {item.get("port"): item for item in port_bindings if isinstance(item, Mapping)}
+    if set(bound) != set(_PORT_NAMES) or any(
+        item.get("component") not in _REQUIRED_COMPONENTS
+        or item.get("module_file") != module_files.get(item.get("component"))
+        for item in bound.values()
+    ):
+        raise CeremonyError("evidence port binding mismatch")
+    if body.get("execution_mode") != "live" or body.get("dry_run") is not False or body.get("stub") is not False:
+        raise CeremonyError("stub or dry-run evidence is not a live ceremony")
+    storage = body.get("storage")
+    if (
+        not isinstance(storage, Mapping)
+        or storage.get("protection") != "windows-owner-and-system-dacl"
+        or not isinstance(storage.get("path"), str)
+        or not Path(storage["path"]).is_absolute()
+    ):
+        raise CeremonyError("evidence storage binding is invalid")
     if signature_record.get("algorithm") != "Ed25519" or signature_record.get("key_id") != trust.key_id:
         raise CeremonyError("evidence signature metadata mismatch")
     payload = _canonical(body)
@@ -284,6 +325,77 @@ def _load_reviewed_module(checkout: ReviewedCheckout) -> tuple[Any, Path]:
     return module, actual
 
 
+def _callable_module_file(callback: Callable[..., Any]) -> Path:
+    target = inspect.unwrap(callback)
+    if inspect.ismethod(target):
+        target = target.__func__
+    module = inspect.getmodule(target)
+    origin = getattr(module, "__file__", None)
+    source = inspect.getsourcefile(target)
+    if not isinstance(origin, str) or not origin or not isinstance(source, str) or not source:
+        raise CeremonyError("ceremony port has no importable module origin")
+    resolved = Path(origin).resolve()
+    if Path(source).resolve() != resolved:
+        raise CeremonyError("ceremony port source/module origin mismatch")
+    return resolved
+
+
+def verify_port_bindings(
+    ports: CeremonyPorts,
+    checkout_evidence: Sequence[Mapping[str, str]],
+) -> list[dict[str, str]]:
+    """Bind every callable to the exact module imported from a reviewed SHA."""
+    expected = {item["component"]: Path(item["module_file"]).resolve() for item in checkout_evidence}
+    evidence = []
+    for name in _PORT_NAMES:
+        component = ports.bindings[name]
+        actual = _callable_module_file(getattr(ports, name))
+        if actual != expected[component]:
+            raise CeremonyError(f"ceremony port is not bound to its pinned module: {name}")
+        evidence.append({"port": name, "component": component, "module_file": str(actual)})
+    return evidence
+
+
+def _apply_private_dacl(path: Path) -> None:
+    from sc_guarded_submit import _protect_evidence_path
+
+    _protect_evidence_path(path)
+
+
+def persist_evidence_bundle(bundle: Mapping[str, Any], path: Path) -> Path:
+    """Atomically persist canonical evidence under an owner/SYSTEM Windows DACL."""
+    if os.name != "nt":
+        raise CeremonyError("DACL-protected ceremony evidence requires Windows")
+    destination = Path(path).resolve()
+    if not destination.parent.is_dir() or destination.exists():
+        raise CeremonyError("ceremony evidence destination is unsafe")
+    payload = _canonical(bundle) + b"\n"
+    temporary = destination.parent / f".{destination.name}.{secrets.token_hex(16)}.tmp"
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        _apply_private_dacl(temporary)
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = None
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.rename(temporary, destination)
+        _apply_private_dacl(destination)
+        if destination.read_bytes() != payload:
+            raise CeremonyError("persisted ceremony evidence verification failed")
+    except CeremonyError:
+        raise
+    except Exception as exc:
+        raise CeremonyError("cannot persist DACL-protected ceremony evidence") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if temporary.exists():
+            temporary.unlink()
+    return destination
+
+
 def verify_reviewed_checkouts(checkouts: Sequence[ReviewedCheckout]) -> list[dict[str, str]]:
     """Require Windows, canonical components, clean SHAs, and imported origins."""
     if os.name != "nt":
@@ -327,6 +439,9 @@ def _assignment(dispatch: Mapping[str, Any], route: ExactRoute) -> dict[str, Any
         and result.get("delivery_verified") is True
         and result.get("peer_acknowledged") is True
         and result.get("decision") == "accepted"
+        and result.get("execution_mode") == "live"
+        and result.get("dry_run") is False
+        and result.get("stub") is False
     ):
         raise CeremonyError("guarded submit did not authenticate assignment processing")
     assignment = _mapping(dispatch.get("assignment"), "assignment dispatch")
@@ -445,6 +560,7 @@ def run_live_ceremony(
     route: ExactRoute,
     ports: CeremonyPorts,
     evidence_signer: EvidenceSigner,
+    evidence_path: Path,
 ) -> dict[str, Any]:
     """Run both terminal-failure paths and fixed adversarial probes.
 
@@ -455,6 +571,7 @@ def run_live_ceremony(
     if not isinstance(evidence_signer, EvidenceSigner):
         raise TypeError("a pinned coordinator evidence signer is required")
     checkout_evidence = verify_reviewed_checkouts(checkouts)
+    port_evidence = verify_port_bindings(ports, checkout_evidence)
     cases = [_run_trigger_case(ports, route, trigger) for trigger in _TRIGGERS]
     rejected = []
     for probe in _NEGATIVE_PROBES:
@@ -480,6 +597,14 @@ def run_live_ceremony(
         "operator_authorization_id": trust.operator_authorization_id,
         "pinned_shas": {item["component"]: item["commit_sha"] for item in checkout_evidence},
         "reviewed_checkouts": checkout_evidence,
+        "port_bindings": port_evidence,
+        "execution_mode": "live",
+        "dry_run": False,
+        "stub": False,
+        "storage": {
+            "path": str(Path(evidence_path).resolve()),
+            "protection": "windows-owner-and-system-dacl",
+        },
         "route": {
             "hwnd": route.hwnd,
             "pid": route.pid,
@@ -512,6 +637,9 @@ def run_live_ceremony(
     verify_evidence_bundle(bundle, trust=trust, now=issued_at)
     if _HEX64.fullmatch(bundle["body_sha256"]) is None:
         raise AssertionError("unreachable evidence digest failure")
+    persisted = persist_evidence_bundle(bundle, evidence_path)
+    if persisted != Path(body["storage"]["path"]):
+        raise CeremonyError("persisted evidence path binding mismatch")
     return bundle
 
 
@@ -538,7 +666,9 @@ __all__ = [
     "ReviewedCheckout",
     "SeatIdentity",
     "missing_live_prerequisites",
+    "persist_evidence_bundle",
     "run_live_ceremony",
     "verify_evidence_bundle",
+    "verify_port_bindings",
     "verify_reviewed_checkouts",
 ]

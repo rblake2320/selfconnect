@@ -34,12 +34,15 @@ def _digest(value):
     return hashlib.sha256(_canonical(value)).hexdigest()
 
 
-def _run(*, checkouts, route, ports, evidence_signer=_SIGNER):
+def _run(*, checkouts, route, ports, evidence_signer=_SIGNER, evidence_path=None):
+    if evidence_path is None:
+        evidence_path = checkouts[0].worktree.parent / "ceremony-evidence.json"
     return ceremony.run_live_ceremony(
         checkouts=checkouts,
         route=route,
         ports=ports,
         evidence_signer=evidence_signer,
+        evidence_path=evidence_path,
     )
 
 
@@ -70,6 +73,9 @@ class Driver:
                 "peer_acknowledged": True,
                 "decision": "accepted",
                 "trigger": trigger,
+                "execution_mode": "live",
+                "dry_run": False,
+                "stub": False,
             },
         }
 
@@ -132,6 +138,15 @@ class Driver:
             replacement_transition=self.transition,
             negative_probe=self.negative,
             protocol_errors=(ProtocolRejected,),
+            bindings={
+                "dispatch": "runtime",
+                "seat_transition": "runtime",
+                "verify_receipt": "trust_pipe",
+                "acknowledge_receipt": "runtime",
+                "failover": "failover",
+                "replacement_transition": "runtime",
+                "negative_probe": "runtime",
+            },
         )
 
 
@@ -170,6 +185,25 @@ def pins(tmp_path, monkeypatch):
         raise AssertionError(args)
 
     monkeypatch.setattr(ceremony, "_git", git)
+    module_paths = {
+        item.component: (item.worktree / ceremony._REQUIRED_COMPONENTS[item.component]).resolve() for item in items
+    }
+    callback_components = {
+        "dispatch": "runtime",
+        "transition": "runtime",
+        "verify": "trust_pipe",
+        "acknowledge": "runtime",
+        "failover": "failover",
+        "negative": "runtime",
+        "<lambda>": "runtime",
+        "gap": "runtime",
+    }
+    monkeypatch.setattr(
+        ceremony,
+        "_callable_module_file",
+        lambda callback: module_paths[callback_components[callback.__name__]],
+    )
+    monkeypatch.setattr(ceremony, "_apply_private_dacl", lambda _path: None)
     return items
 
 
@@ -178,7 +212,7 @@ def test_two_trigger_live_plan_and_all_negatives(route, pins):
     body = result["body"]
     assert [item["trigger"] for item in body["cases"]] == ["blocked", "rejected"]
     assert all(item["replacement_birth_id"] == "seat-new" for item in body["cases"])
-    assert len(body["negative_rejections"]) == 7
+    assert len(body["negative_rejections"]) == 8
     assert len(result["body_sha256"]) == 64
     assert "non-authoritative" in body["claim"]
     assert [item["component"] for item in body["reviewed_checkouts"]] == [
@@ -391,6 +425,11 @@ def test_final_bundle_is_signed_timestamped_operator_bound_and_pins_exact_shas(r
     assert expires - issued == timedelta(seconds=60)
     assert len(body["evidence_nonce"]) == 64
     assert bundle["signature"]["algorithm"] == "Ed25519"
+    assert {item["port"] for item in body["port_bindings"]} == set(ceremony._PORT_NAMES)
+    assert body["execution_mode"] == "live"
+    assert body["dry_run"] is False
+    assert body["stub"] is False
+    assert body["storage"]["protection"] == "windows-owner-and-system-dacl"
 
 
 @pytest.mark.parametrize("field", ("operator_id", "operator_authorization_id", "coordinator_id", "key_id"))
@@ -443,11 +482,69 @@ def test_evidence_trust_requires_exact_operator_and_coordinator_identity():
             ceremony.EvidenceTrust(**{**values, field: ""})
 
 
+def test_signed_bundle_is_atomically_persisted_after_private_dacl(route, pins, monkeypatch):
+    protected = []
+    monkeypatch.setattr(ceremony, "_apply_private_dacl", lambda path: protected.append(Path(path)))
+    destination = pins[0].worktree.parent / "signed-evidence.json"
+    bundle = _run(checkouts=pins, route=route, ports=Driver().ports(), evidence_path=destination)
+    assert destination.read_bytes() == ceremony._canonical(bundle) + b"\n"
+    assert protected[-1] == destination.resolve()
+    assert len(protected) == 2
+    assert bundle["body"]["storage"]["path"] == str(destination.resolve())
+
+
+def test_dacl_failure_leaves_no_evidence(route, pins, monkeypatch):
+    destination = pins[0].worktree.parent / "unprotected-evidence.json"
+
+    def fail_dacl(_path):
+        raise OSError("DACL unavailable")
+
+    monkeypatch.setattr(ceremony, "_apply_private_dacl", fail_dacl)
+    with pytest.raises(ceremony.CeremonyError, match="DACL-protected"):
+        _run(checkouts=pins, route=route, ports=Driver().ports(), evidence_path=destination)
+    assert not destination.exists()
+
+
+def test_port_outside_exact_imported_module_rejects_before_evidence(route, pins, monkeypatch):
+    destination = pins[0].worktree.parent / "wrong-port-evidence.json"
+    original = ceremony._callable_module_file
+
+    def origin(callback):
+        if callback.__name__ == "dispatch":
+            return Path(__file__).resolve()
+        return original(callback)
+
+    monkeypatch.setattr(ceremony, "_callable_module_file", origin)
+    with pytest.raises(ceremony.CeremonyError, match="not bound to its pinned module: dispatch"):
+        _run(checkouts=pins, route=route, ports=Driver().ports(), evidence_path=destination)
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    (("execution_mode", "dry-run"), ("dry_run", True), ("stub", True)),
+)
+def test_stub_or_dry_run_dispatch_cannot_produce_evidence(field, value, route, pins):
+    driver = Driver()
+    original = driver.dispatch
+    destination = pins[0].worktree.parent / f"{field}-evidence.json"
+
+    def dispatch(case, trigger):
+        result = original(case, trigger)
+        result["submit_result"][field] = value
+        return result
+
+    ports = ceremony.CeremonyPorts(**{**driver.ports().__dict__, "dispatch": dispatch})
+    with pytest.raises(ceremony.CeremonyError, match="authenticate assignment processing"):
+        _run(checkouts=pins, route=route, ports=ports, evidence_path=destination)
+    assert not destination.exists()
+
+
 def test_authority_surface_has_no_screen_or_postmessage_inputs():
     import inspect
 
     parameters = set(inspect.signature(ceremony.run_live_ceremony).parameters)
-    assert parameters == {"checkouts", "route", "ports", "evidence_signer"}
+    assert parameters == {"checkouts", "route", "ports", "evidence_signer", "evidence_path"}
     names = {str(name).lower() for name in ceremony.run_live_ceremony.__code__.co_names}
     assert all(term not in names for term in ("uia", "ocr", "composer", "postmessage"))
     assert len(ceremony.missing_live_prerequisites()) == 8
