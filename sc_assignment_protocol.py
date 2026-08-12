@@ -14,6 +14,7 @@ import math
 import secrets
 import sqlite3
 import time
+import unicodedata
 from collections.abc import Callable, Iterable
 from contextlib import closing
 from dataclasses import asdict, is_dataclass
@@ -164,8 +165,14 @@ def _public_key(value: Any, name: str) -> str:
 
 
 def _bounded_text(value: Any, name: str, limit: int) -> str:
-    if type(value) is not str or not value or "\x00" in value:
+    if type(value) is not str or not value:
         raise AssignmentVerificationError(f"invalid {name}")
+    if unicodedata.normalize("NFC", value) != value:
+        raise AssignmentVerificationError(f"{name} must use NFC-normalized Unicode")
+    for character in value:
+        category = unicodedata.category(character)
+        if category.startswith("C") or category in {"Zl", "Zp"}:
+            raise AssignmentVerificationError(f"{name} contains a forbidden control character")
     try:
         encoded = value.encode("utf-8")
     except UnicodeEncodeError as exc:

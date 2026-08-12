@@ -232,7 +232,19 @@ def test_assignment_payload_is_inline_bounded_and_external_substitution_is_impos
         PAYLOAD.encode()
     ).hexdigest()
     assert "payload" not in inspect.signature(verify_consume_assignment).parameters
-    for payload in ("", "x" * (MAX_PAYLOAD_BYTES + 1), "bad\x00payload"):
+    forbidden_payloads = (
+        "",
+        "x" * (MAX_PAYLOAD_BYTES + 1),
+        "bad\x00payload",
+        "line one\rline two",
+        "line one\nline two",
+        "text \x1b[2J\x1b[H wiped",
+        "\x04\x05\x0e\x14",
+        "direction\u202eoverride",
+        "line\u2028separator",
+        "Cafe\u0301",
+    )
+    for index, payload in enumerate(forbidden_payloads):
         with pytest.raises(AssignmentVerificationError):
             issue_assignment(
                 payload,
@@ -245,9 +257,25 @@ def test_assignment_payload_is_inline_bounded_and_external_substitution_is_impos
                 terminal_tab_identity=case["tab"],
                 response_receiver_public_key_hex=case["response_receiver"].public_key_hex,
                 response_channel=case["channel"],
-                store=AssignmentStateStore(tmp_path / f"bad-{len(payload)}.sqlite3"),
+                store=AssignmentStateStore(tmp_path / f"bad-{index}.sqlite3"),
                 now=NOW,
             )
+
+    allowed = issue_assignment(
+        "Café assignment for seat 🛡️",
+        coordinator_identity=case["coordinator"],
+        coordinator_birth_id="codex-12-4abf6b40",
+        coordinator_generation=7,
+        receiver_enrollment=case["enrollment"],
+        authority_public_key_hex=case["authority"].public_key_hex,
+        target_identity=case["target"],
+        terminal_tab_identity=case["tab"],
+        response_receiver_public_key_hex=case["response_receiver"].public_key_hex,
+        response_channel=case["channel"],
+        store=AssignmentStateStore(tmp_path / "unicode-ok.sqlite3"),
+        now=NOW,
+    )
+    assert allowed["payload"] == "Café assignment for seat 🛡️"
 
 
 def test_exact_target_terminal_tab_and_response_receiver_bindings_reject(tmp_path):
