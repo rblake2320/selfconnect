@@ -432,6 +432,16 @@ def test_receipt_structured_detail_and_result_hash_are_bounded_and_state_typed(t
     case = _case(tmp_path)
     with pytest.raises(AssignmentVerificationError, match="bounded size"):
         _emit(case, "accepted", 1, detail={"text": "x" * (MAX_DETAIL_BYTES + 1)})
+
+    for detail in (
+        {"note": "done \x1b[2J\x1b[H cleared"},
+        {"bidi": "safe\u202egnp.exe"},
+        {"nested": ["line one\rline two"]},
+        {"bad\x04key": "value"},
+        {"not_nfc": "Cafe\u0301"},
+    ):
+        with pytest.raises(AssignmentVerificationError):
+            _emit(case, "accepted", 1, detail=detail)
     with pytest.raises(AssignmentVerificationError, match="requires result"):
         _emit(case, "completed", 1)
     with pytest.raises(AssignmentVerificationError, match="only completed"):

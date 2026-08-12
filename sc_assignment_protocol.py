@@ -184,6 +184,19 @@ def _bounded_text(value: Any, name: str, limit: int) -> str:
 
 def _bounded_detail(value: Any) -> tuple[dict[str, Any], str]:
     detail = _snapshot(value, "receipt detail")
+
+    def validate_text(node: Any, location: str) -> None:
+        if isinstance(node, dict):
+            for key, child in node.items():
+                _bounded_text(key, f"{location} key", MAX_DETAIL_BYTES)
+                validate_text(child, f"{location}.{key}")
+        elif isinstance(node, list):
+            for index, child in enumerate(node):
+                validate_text(child, f"{location}[{index}]")
+        elif isinstance(node, str):
+            _bounded_text(node, location, MAX_DETAIL_BYTES)
+
+    validate_text(detail, "receipt detail")
     raw = _canonical(detail)
     if len(raw) > MAX_DETAIL_BYTES:
         raise AssignmentVerificationError("receipt detail exceeds the bounded size")
