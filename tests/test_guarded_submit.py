@@ -625,10 +625,10 @@ def test_signed_ack_response_key_must_match_authenticated_operation_snapshot():
 def test_strict_idempotent_audit_append_does_not_duplicate(tmp_path):
     path = tmp_path / "events.jsonl"
     first = sc_mesh_registry.append_event(
-        "ack", event_log_path=path, strict=True, strict_idempotency_key="ack:1", repo_snapshot={},
+        "ack", event_log_path=path, strict=True, strict_idempotency_key="ack:1", repo_snapshot={}, kind=7000, kind_class="observational",
     )
     second = sc_mesh_registry.append_event(
-        "ack", event_log_path=path, strict=True, strict_idempotency_key="ack:1", repo_snapshot={},
+        "ack", event_log_path=path, strict=True, strict_idempotency_key="ack:1", repo_snapshot={}, kind=7000, kind_class="observational",
     )
     assert second["idempotent_replay"] is True
     assert first["event"]["event_hash"] == second["event"]["event_hash"]
@@ -639,12 +639,12 @@ def test_strict_idempotency_key_rejects_conflicting_intended_event(tmp_path):
     path = tmp_path / "events.jsonl"
     sc_mesh_registry.append_event(
         "ack", status="accepted", data={"digest": "a"}, event_log_path=path,
-        strict=True, strict_idempotency_key="ack:1", repo_snapshot={},
+        strict=True, strict_idempotency_key="ack:1", repo_snapshot={}, kind=7000, kind_class="observational",
     )
     with pytest.raises(sc_mesh_registry.EventLogIntegrityError, match="different event"):
         sc_mesh_registry.append_event(
             "ack", status="rejected", data={"digest": "b"}, event_log_path=path,
-            strict=True, strict_idempotency_key="ack:1", repo_snapshot={},
+            strict=True, strict_idempotency_key="ack:1", repo_snapshot={}, kind=7000, kind_class="observational",
         )
 
 
@@ -1278,7 +1278,7 @@ def test_strict_event_append_serializes_concurrent_writers(tmp_path):
     path = tmp_path / "events.jsonl"
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(lambda index: sc_mesh_registry.append_event(
-            f"event-{index}", event_log_path=path, strict=True, repo_snapshot={},
+            f"event-{index}", event_log_path=path, strict=True, repo_snapshot={}, kind=7001 + index, kind_class="observational",
         ), range(20)))
     verified = sc_mesh_registry.verify_events(event_log_path=path)
     assert verified["ok"] is True
@@ -1289,10 +1289,10 @@ def test_strict_event_append_fsyncs_and_rejects_tamper(tmp_path, monkeypatch):
     path = tmp_path / "events.jsonl"
     calls = []
     monkeypatch.setattr(os, "fsync", lambda fd: calls.append(fd))
-    sc_mesh_registry.append_event("first", event_log_path=path, strict=True, repo_snapshot={})
+    sc_mesh_registry.append_event("first", event_log_path=path, strict=True, repo_snapshot={}, kind=7025, kind_class="observational")
     assert len(calls) == 1
     record = json.loads(path.read_text(encoding="utf-8"))
     record["event_type"] = "tampered"
     path.write_text(json.dumps(record) + "\n", encoding="utf-8")
     with pytest.raises(sc_mesh_registry.EventLogIntegrityError):
-        sc_mesh_registry.append_event("second", event_log_path=path, strict=True, repo_snapshot={})
+        sc_mesh_registry.append_event("second", event_log_path=path, strict=True, repo_snapshot={}, kind=7026, kind_class="observational")

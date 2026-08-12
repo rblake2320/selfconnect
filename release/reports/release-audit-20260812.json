@@ -1,0 +1,292 @@
+{
+  "benchmark": null,
+  "checks": [
+    {
+      "check_id": "git.clean",
+      "detail": "dirty files=46",
+      "status": "warn"
+    },
+    {
+      "check_id": "identity.source_version",
+      "detail": "{'project': '0.12.0', 'source': '0.12.0', 'readme': '0.12.0'}",
+      "status": "pass"
+    },
+    {
+      "check_id": "identity.license",
+      "detail": "LICENSE, classifier, and README must all say Apache License 2.0",
+      "status": "pass"
+    },
+    {
+      "check_id": "boundary.core_dependencies",
+      "detail": "expected=['pillow', 'psutil'] actual=['pillow', 'psutil']",
+      "status": "pass"
+    },
+    {
+      "check_id": "package.extra.claudego",
+      "detail": "contains=['pystray', 'winotify']",
+      "status": "pass"
+    },
+    {
+      "check_id": "package.extra.mcp",
+      "detail": "contains=['mcp']",
+      "status": "pass"
+    },
+    {
+      "check_id": "package.extra.service",
+      "detail": "contains=['pywin32']",
+      "status": "pass"
+    },
+    {
+      "check_id": "package.module_manifest",
+      "detail": "31 modules declared",
+      "status": "pass"
+    },
+    {
+      "check_id": "boundary.core_network_independence",
+      "detail": "core actuation files have no network/MCP imports",
+      "status": "pass"
+    },
+    {
+      "check_id": "boundary.target_guard",
+      "detail": "input gate and target expectations remain explicit",
+      "status": "pass"
+    },
+    {
+      "check_id": "truth.public_wording",
+      "detail": "no prohibited absolute patent/evidence wording in release claim files",
+      "status": "pass"
+    },
+    {
+      "check_id": "truth.no_known_recovery_contradiction",
+      "detail": "known recovery contradiction absent",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.truth.readme_tagged_catalog",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.product.core_win32_bridge",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.runbooks.manual_capture",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.package.installation_extras",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.package.cli_target_guard",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.package.mcp_guarded_surface",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.product.profile_boundaries",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.mesh.registry_hash_chain",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.terminal.os_native_actuation",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.terminal.console_input_transport",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.terminal.uia_textchanged_echo_filter",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.dashboard.claudego_local",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.framing.structured_messages",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.package.public_api_surface",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.history.agent_spawn_exercise",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.history.background_input_exercise",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.history.bidirectional_chat_exercise",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.history.cross_vendor_mesh_exercise",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.history.framing_exercise",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.history.printwindow_ack_exercise",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.history.antigravity_exchange_exercise",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.transport.engineering_distinction",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.antigravity.controller_surface",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.browser.edge_local_fixture",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.fabric_v2.service_benchmark",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.fabric_v2.user_mode_restart_recovery",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.fabric_v2.scm_live_service",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.real_agent.twenty_agent_portable_release_evidence",
+      "detail": "evidence-local-only; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.identity.tpm_platform_attestation",
+      "detail": "proven; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.enterprise.security_test_posture",
+      "detail": "pending; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.approval.telegram_governed_roundtrip",
+      "detail": "experiment; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.legal.prior_art_exclusivity",
+      "detail": "not-claimed; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "claim.transport.fabric_v2_default_runtime",
+      "detail": "pending; boundary and evidence valid",
+      "status": "pass"
+    },
+    {
+      "check_id": "truth.readme_tagged_claims",
+      "detail": "tagged_valid=24; tagged_total=24; coverage applies only to explicit SC-CLAIM blocks",
+      "status": "pass"
+    }
+  ],
+  "claims": {
+    "ledger_claim_total": 33,
+    "natural_language_claim_detection": "PARTIAL: free-form README prose outside explicit SC-CLAIM blocks is not mechanically classified or counted. Human review remains required.",
+    "release_ledger_coverage_percent": 100.0,
+    "release_ledger_coverage_scope": "Ledger entries with release=true only; this is not README claim coverage.",
+    "release_ledger_total": 28,
+    "release_ledger_valid": 28,
+    "tag_parse_errors": [],
+    "tagged_readme_coverage_percent": 100.0,
+    "tagged_readme_coverage_scope": "Explicit SC-CLAIM blocks in README.md only. Numerator is valid tagged blocks; denominator is all syntactically valid tagged blocks.",
+    "tagged_readme_total": 24,
+    "tagged_readme_valid": 24
+  },
+  "commands": {},
+  "counts": {
+    "fail": 0,
+    "pass": 45,
+    "warn": 1
+  },
+  "mode": "source",
+  "ok": true,
+  "policy_root": "C:\\Users\\techai\\PKA testing\\selfconnect",
+  "repo": {
+    "branch": "docs/verify-qwen-selfconnect",
+    "commit": "07699ff2399f031e284bea488b91f6d7cb595a7c",
+    "dirty": true,
+    "dirty_count": 46,
+    "status": [
+      "M release/claims.json",
+      " M runbooks/agent_launch_registry.md",
+      " M runbooks/first_wake_selfconnect.md",
+      " M sc_envelope.py",
+      " M sc_fabric_benchmark.py",
+      " M sc_fleet_guard.py",
+      " M sc_guarded_submit.py",
+      " M sc_identity.py",
+      " M sc_mesh_registry.py",
+      " M sc_pq.py",
+      " M tests/test_guarded_submit.py",
+      " M tests/test_mesh_envelope_wiring.py",
+      " M tests/test_sc_envelope.py",
+      " M tests/test_trust_layer.py",
+      "?? .pytest-benchmark-final2/",
+      "?? .pytest-challengers-final/",
+      "?? .pytest-clean-trace-final/",
+      "?? .pytest-clean-trace/",
+      "?? .pytest-crucible-final-core/",
+      "?? .pytest-crucible-final-independent/"
+    ]
+  },
+  "root": "C:\\Users\\techai\\PKA testing\\selfconnect",
+  "schema_version": 1,
+  "versions": {
+    "project": "0.12.0",
+    "readme": "0.12.0",
+    "source": "0.12.0"
+  }
+}

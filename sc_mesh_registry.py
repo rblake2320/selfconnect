@@ -8,9 +8,13 @@ their role/window/task.
 from __future__ import annotations
 
 import argparse
+import copy
+import functools
+import inspect
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import subprocess
@@ -22,10 +26,11 @@ from pathlib import Path
 from typing import Any
 
 import sc_cli
+import sc_event_kinds
 from sc_tasks import FileLock
 
 REGISTRY_VERSION = 1
-EVENT_LOG_VERSION = 1
+EVENT_LOG_VERSION = 2
 EVENT_GENESIS_HASH = "0" * 64
 STRICT_EVENT_EVIDENCE_BOUNDARY = (
     "strict fsync plus hash chaining detects replacement after observation; local administrators, "
@@ -34,6 +39,11 @@ STRICT_EVENT_EVIDENCE_BOUNDARY = (
 DEFAULT_MESH = "default"
 DEFAULT_PROFILE = "explore"
 VALID_PROFILES = {"explore", "governed"}
+VALID_AGENT_STATUSES = {
+    "active", "working", "registered", "handoff", "standby", "blocked",
+    "done", "complete", "completed", "removed", "inactive", "invalidated",
+    "standby_alias", "off_rails", "stuck", "degraded", "compacting",
+}
 STALE_HEARTBEAT_SECONDS = 15 * 60
 OLD_SESSION_SECONDS = 2 * 60 * 60
 VERY_OLD_SESSION_SECONDS = 4 * 60 * 60
@@ -182,6 +192,13 @@ def _normalize_profile(profile: str | None) -> str:
     return value
 
 
+def _normalize_status(status: str) -> str:
+    value = str(status).strip().lower()
+    if value not in VALID_AGENT_STATUSES:
+        raise ValueError(f"status must be one of: {', '.join(sorted(VALID_AGENT_STATUSES))}")
+    return value
+
+
 def load_registry(path: str | Path | None = None) -> dict[str, Any]:
     registry_path = Path(path) if path else default_registry_path()
     if not registry_path.exists():
@@ -212,6 +229,90 @@ def load_registry(path: str | Path | None = None) -> dict[str, Any]:
                     title=str(agent.get("title", "")),
                 )
     return data
+
+
+def load_registry_strict(path: str | Path | None = None) -> dict[str, Any]:
+    """Load a registry for governance decisions, preserving integrity failures."""
+    registry_path = Path(path) if path else default_registry_path()
+    if not registry_path.exists():
+        raise FileNotFoundError(f"mesh registry does not exist: {registry_path}")
+    try:
+        data = json.loads(registry_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"mesh registry is malformed: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("agents"), list):
+        raise ValueError("mesh registry must contain an agents array")
+    if type(data.get("version")) is not int or data["version"] != REGISTRY_VERSION:
+        raise ValueError(f"mesh registry version must be exactly {REGISTRY_VERSION}")
+    updated_at = data.get("updated_at")
+    if (
+        not isinstance(updated_at, (int, float))
+        or isinstance(updated_at, bool)
+        or not math.isfinite(float(updated_at))
+    ):
+        raise ValueError("mesh registry updated_at must be a finite timestamp")
+    required_text = ("mesh", "role", "birth_id", "agent", "class_name", "status", "profile")
+    identities: set[tuple[str, str]] = set()
+    birth_ids: set[str] = set()
+    for index, agent in enumerate(data["agents"]):
+        if not isinstance(agent, dict):
+            raise ValueError(f"mesh registry agent {index} must be an object")
+        for field in required_text:
+            if not isinstance(agent.get(field), str) or not agent[field].strip():
+                raise ValueError(f"mesh registry agent {index} has invalid {field}")
+        for field in ("generation", "hwnd", "pid"):
+            if type(agent.get(field)) is not int or agent[field] < 0:
+                raise ValueError(f"mesh registry agent {index} has invalid {field}")
+        for field in ("created_at", "last_seen"):
+            value = agent.get(field)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value)):
+                raise ValueError(f"mesh registry agent {index} has invalid {field}")
+        if agent["generation"] < 1:
+            raise ValueError(f"mesh registry agent {index} has invalid generation")
+        if agent["profile"] not in VALID_PROFILES:
+            raise ValueError(f"mesh registry agent {index} has unknown profile")
+        if agent["status"].lower() not in VALID_AGENT_STATUSES:
+            raise ValueError(f"mesh registry agent {index} has unknown status")
+        identity = (agent["mesh"], agent["role"])
+        if identity in identities or agent["birth_id"] in birth_ids:
+            raise ValueError(f"mesh registry agent {index} duplicates an identity")
+        identities.add(identity)
+        birth_ids.add(agent["birth_id"])
+        is_virtual = agent["hwnd"] == 0
+        if is_virtual != (agent["class_name"] == "virtual"):
+            raise ValueError(f"mesh registry agent {index} has inconsistent virtual binding")
+        if not is_virtual:
+            if agent["pid"] <= 0:
+                raise ValueError(f"mesh registry agent {index} has invalid live pid")
+            for field in ("exe_name", "title", "window_fingerprint"):
+                if not isinstance(agent.get(field), str):
+                    raise ValueError(f"mesh registry agent {index} has invalid {field}")
+            if not agent["exe_name"].strip():
+                raise ValueError(f"mesh registry agent {index} has empty exe_name")
+        fingerprint = str(agent.get("window_fingerprint", ""))
+        if len(fingerprint) != 16 or any(ch not in "0123456789abcdef" for ch in fingerprint):
+            raise ValueError(f"mesh registry agent {index} has invalid window_fingerprint")
+    validated = copy.deepcopy(data)
+    for agent in validated["agents"]:
+        agent.setdefault("token_estimate", None)
+        agent.setdefault("compact_count", 0)
+        agent.setdefault("missed_acks", 0)
+    return validated
+
+
+def _registry_writer(function):
+    """Serialize every registry read-modify-write operation on one lock file."""
+    signature = inspect.signature(function)
+
+    @functools.wraps(function)
+    def wrapped(*args, **kwargs):
+        bound = signature.bind_partial(*args, **kwargs)
+        value = bound.arguments.get("registry_path")
+        resolved = Path(value) if value else default_registry_path()
+        with FileLock(resolved.with_name(f"{resolved.name}.lock")):
+            return function(*args, **kwargs)
+
+    return wrapped
 
 
 def save_registry(registry: dict[str, Any], path: str | Path | None = None) -> Path:
@@ -287,6 +388,8 @@ def append_event(
     repo_snapshot: dict[str, Any] | None = None,
     strict: bool = False,
     strict_idempotency_key: str = "",
+    kind: int | None = None,
+    kind_class: str | None = None,
 ) -> dict[str, Any]:
     """Append a durable mesh event.
 
@@ -299,6 +402,11 @@ def append_event(
     path.parent.mkdir(parents=True, exist_ok=True)
     if strict_idempotency_key and not strict:
         raise ValueError("strict_idempotency_key requires strict append mode")
+    kind_envelope = sc_event_kinds.envelope_for(
+        event_type,
+        kind=kind,
+        kind_class=kind_class,
+    )
     event_data = dict(data or {})
     if strict_idempotency_key:
         event_data["strict_idempotency_key"] = strict_idempotency_key
@@ -307,6 +415,7 @@ def append_event(
         "event_type": event_type, "mesh": mesh, "role": role, "birth_id": birth_id,
         "generation": generation, "agent": agent, "hwnd": hwnd, "task": task,
         "status": status, "profile": profile, "summary": summary, "data": event_data,
+        **kind_envelope,
     }
     intended_digest = hashlib.sha256(
         json.dumps(intended, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
@@ -317,6 +426,7 @@ def append_event(
     def build_record(prev_event_hash: str) -> dict[str, Any]:
         record = {
             "version": EVENT_LOG_VERSION,
+            **kind_envelope,
             "event_id": uuid.uuid4().hex,
             "event_type": event_type,
             "created_at": _now(),
@@ -391,6 +501,7 @@ def load_events(
         if not isinstance(item, dict):
             parse_error_count += 1
             continue
+
         if role and item.get("role") != role:
             continue
         if birth_id and item.get("birth_id") != birth_id:
@@ -425,6 +536,7 @@ def verify_events(
     expected_prev_hash = EVENT_GENESIS_HASH
     head_hash = EVENT_GENESIS_HASH
     events_checked = 0
+    saw_v2 = False
 
     for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
@@ -437,6 +549,19 @@ def verify_events(
         if not isinstance(item, dict):
             errors.append({"line": line_no, "error": "not_object"})
             continue
+
+        kind_error = sc_event_kinds.validate_envelope(item)
+        if kind_error:
+            errors.append({"line": line_no, "error": kind_error})
+        raw_version = item.get("version", 1)
+        if type(raw_version) is not int or raw_version not in {1, EVENT_LOG_VERSION}:
+            version = 0
+            errors.append({"line": line_no, "error": "invalid_event_version"})
+        else:
+            version = raw_version
+        if saw_v2 and version < 2:
+            errors.append({"line": line_no, "error": "event_schema_downgrade"})
+        saw_v2 = saw_v2 or version >= 2
 
         events_checked += 1
         stored_prev_hash = item.get("prev_event_hash")
@@ -519,6 +644,7 @@ def _find_agent(registry: dict[str, Any], mesh: str, role: str) -> dict[str, Any
     return None
 
 
+@_registry_writer
 def register_agent(
     hwnd: int,
     role: str,
@@ -542,6 +668,7 @@ def register_agent(
         return {"ok": False, "error": "role is required"}
     try:
         normalized_profile = _normalize_profile(profile)
+        normalized_status = _normalize_status(status)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -596,7 +723,7 @@ def register_agent(
             title=str(actual["title"]),
         ),
         "task": task,
-        "status": status,
+        "status": normalized_status,
         "profile": normalized_profile,
         "notes": notes,
         "session_id": guard["session_id"],
@@ -619,6 +746,7 @@ def register_agent(
     return {"ok": True, "path": str(saved), "agent": record}
 
 
+@_registry_writer
 def register_virtual_agent(
     role: str,
     *,
@@ -648,6 +776,7 @@ def register_virtual_agent(
         return {"ok": False, "error": "role is required"}
     try:
         normalized_profile = _normalize_profile(profile)
+        normalized_status = _normalize_status(status)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -696,7 +825,7 @@ def register_virtual_agent(
             title=title,
         ),
         "task": task,
-        "status": status,
+        "status": normalized_status,
         "profile": normalized_profile,
         "notes": notes,
         "session_id": None,
@@ -722,6 +851,7 @@ def register_virtual_agent(
     return {"ok": True, "path": str(saved), "agent": record}
 
 
+@_registry_writer
 def update_agent(
     role: str,
     *,
@@ -742,7 +872,10 @@ def update_agent(
     if task is not None:
         existing["task"] = task
     if status is not None:
-        existing["status"] = status
+        try:
+            existing["status"] = _normalize_status(status)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
     if profile is not None:
         try:
             existing["profile"] = _normalize_profile(profile)
@@ -773,6 +906,7 @@ def update_agent(
     return {"ok": True, "path": str(saved), "agent": existing}
 
 
+@_registry_writer
 def heartbeat(role: str, *, mesh: str = DEFAULT_MESH, registry_path: str | Path | None = None) -> dict[str, Any]:
     registry = load_registry(registry_path)
     existing = _find_agent(registry, mesh, role)
@@ -812,6 +946,7 @@ def heartbeat(role: str, *, mesh: str = DEFAULT_MESH, registry_path: str | Path 
     return {"ok": guard["ok"], "path": str(saved), "agent": existing, "guard": guard}
 
 
+@_registry_writer
 def remove_agent(role: str, *, mesh: str = DEFAULT_MESH, registry_path: str | Path | None = None) -> dict[str, Any]:
     registry = load_registry(registry_path)
     existing = _find_agent(registry, mesh, role)
@@ -919,6 +1054,179 @@ def health_report(registry: dict[str, Any], *, now: float | None = None) -> dict
     return {"generated_at": current, "counts": counts, "agents": items}
 
 
+def reconcile_registry(
+    *,
+    mesh: str = DEFAULT_MESH,
+    registry_path: str | Path | None = None,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Plan or apply non-destructive stale-window and alias reconciliation.
+
+    Rows are never deleted. Invalid window bindings become ``invalidated`` and
+    later duplicate aliases for the same live HWND become ``standby_alias``.
+    The oldest binding remains canonical, which avoids silently transferring
+    authority to a newly created alias.
+    """
+    resolved_path = Path(registry_path) if registry_path else default_registry_path()
+    lock_path = resolved_path.with_name(f"{resolved_path.name}.lock")
+    with FileLock(lock_path):
+        return _reconcile_registry_locked(
+            mesh=mesh,
+            registry_path=resolved_path,
+            apply=apply,
+        )
+
+
+def _reconcile_registry_locked(
+    *,
+    mesh: str,
+    registry_path: Path,
+    apply: bool,
+) -> dict[str, Any]:
+    registry = load_registry_strict(registry_path)
+    source_revision = hashlib.sha256(
+        json.dumps(registry, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    ).hexdigest()
+    working = copy.deepcopy(registry)
+    active_statuses = {"active", "working", "registered", "handoff", "standby"}
+    actions: list[dict[str, Any]] = []
+    recovered_actions: list[dict[str, Any]] = []
+    live_by_hwnd: dict[int, list[dict[str, Any]]] = {}
+
+    if apply:
+        event_path = default_event_log_path(registry_path)
+        if event_path.exists():
+            verified_events = verify_events(event_log_path=event_path)
+            if not verified_events["ok"]:
+                raise EventLogIntegrityError(
+                    "event log failed verification before reconciliation intent replay"
+                )
+            for line in event_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                event = json.loads(line)
+                event_data = event.get("data") or {}
+                if (
+                    event.get("event_type") != "role_reconciled"
+                    or event_data.get("source_registry_revision") != source_revision
+                ):
+                    continue
+                allowed_transition = {
+                    "target_binding_invalid": "invalidated",
+                    "duplicate_hwnd_alias": "standby_alias",
+                }.get(str(event_data.get("reason", "")))
+                if allowed_transition is None or event_data.get("to_status") != allowed_transition:
+                    raise EventLogIntegrityError("reconciliation intent has an invalid transition")
+                agent = _find_agent(working, mesh, str(event.get("role", "")))
+                if agent is None or str(agent.get("birth_id", "")) != str(event.get("birth_id", "")):
+                    continue
+                if str(agent.get("status", "")) != str(event_data.get("from_status", "")):
+                    continue
+                agent["status"] = str(event_data.get("to_status", ""))
+                if agent["status"] == "invalidated":
+                    agent["guard_ok"] = False
+                    agent["guard_reasons"] = list(event_data.get("guard_reasons", []))
+                if agent["status"] == "standby_alias":
+                    agent["alias_of"] = str(event_data.get("canonical_role", ""))
+                recovered_actions.append({**event_data, "recovered_from_intent": True})
+
+    for agent in working.get("agents", []):
+        if agent.get("mesh") != mesh:
+            continue
+        hwnd = int(agent.get("hwnd", 0) or 0)
+        if hwnd <= 0 or agent.get("class_name") == "virtual":
+            continue
+        guard = sc_cli.verify_target(
+            hwnd,
+            expected_pid=int(agent.get("pid", 0) or 0),
+            expected_exe=str(agent.get("exe_name", "")),
+            expected_class=str(agent.get("class_name", "")),
+            expected_title=str(agent.get("title", "")),
+            require_expectation=True,
+            require_terminal=bool(agent.get("is_terminal", True)),
+        )
+        actual = guard.get("actual") or {}
+        expected_fingerprint = str(agent.get("window_fingerprint", ""))
+        actual_fingerprint = _window_fingerprint(
+            hwnd=hwnd,
+            pid=int(actual.get("pid", 0) or 0),
+            class_name=str(actual.get("class_name", "")),
+            title=str(actual.get("title", "")),
+        )
+        if expected_fingerprint and actual_fingerprint != expected_fingerprint:
+            guard = {
+                **guard,
+                "ok": False,
+                "reasons": [*list(guard.get("reasons", [])), "window fingerprint mismatch"],
+            }
+        if not guard.get("ok"):
+            previous = str(agent.get("status", ""))
+            if previous != "invalidated":
+                actions.append({
+                    "role": str(agent.get("role", "")), "hwnd": hwnd,
+                    "from_status": previous, "to_status": "invalidated",
+                    "reason": "target_binding_invalid", "guard_reasons": list(guard.get("reasons", [])),
+                })
+                agent["status"] = "invalidated"
+                agent["guard_ok"] = False
+                agent["guard_reasons"] = list(guard.get("reasons", []))
+            continue
+        if str(agent.get("status", "")).lower() in active_statuses:
+            live_by_hwnd.setdefault(hwnd, []).append(agent)
+
+    for hwnd, aliases in live_by_hwnd.items():
+        if len(aliases) < 2:
+            continue
+        ordered = sorted(
+            aliases,
+            key=lambda item: (float(item.get("created_at", 0.0)), str(item.get("role", ""))),
+        )
+        canonical = ordered[0]
+        for alias in ordered[1:]:
+            previous = str(alias.get("status", ""))
+            if previous == "standby_alias":
+                continue
+            actions.append({
+                "role": str(alias.get("role", "")), "hwnd": hwnd,
+                "from_status": previous, "to_status": "standby_alias",
+                "reason": "duplicate_hwnd_alias", "canonical_role": str(canonical.get("role", "")),
+            })
+            alias["status"] = "standby_alias"
+            alias["alias_of"] = str(canonical.get("role", ""))
+
+    saved_path = str(registry_path)
+    if apply and actions:
+        # Append durable intent before current-state mutation. A failed event
+        # append leaves the registry unchanged; a crash after intent is
+        # recoverable by replaying this deterministic reconciliation.
+        for action in actions:
+            agent = _find_agent(working, mesh, action["role"]) or {}
+            action = {**action, "source_registry_revision": source_revision}
+            append_event(
+                "role_reconciled",
+                **_agent_event_payload(agent),
+                summary=f"role reconciled: {action['reason']}",
+                data=action,
+                registry_path=saved_path,
+                strict=True,
+                strict_idempotency_key=(
+                    f"reconcile:{source_revision}:{agent.get('birth_id','')}:"
+                    f"{action['from_status']}:{action['to_status']}"
+                ),
+            )
+        saved_path = str(save_registry(working, registry_path))
+    elif apply and recovered_actions:
+        saved_path = str(save_registry(working, registry_path))
+    reported_actions = [*recovered_actions, *actions]
+    return {
+        "ok": True,
+        "applied": bool(apply),
+        "path": saved_path,
+        "action_count": len(reported_actions),
+        "actions": reported_actions,
+    }
+
+
 def _git_value(repo_path: Path, *args: str) -> str:
     try:
         result = subprocess.run(
@@ -958,6 +1266,7 @@ def _format_agent_line(agent: dict[str, Any], health: dict[str, Any]) -> str:
     )
 
 
+@_registry_writer
 def write_compact_handoff(
     role: str,
     *,
@@ -970,6 +1279,10 @@ def write_compact_handoff(
     status: str = "handoff",
     registry_path: str | Path | None = None,
 ) -> dict[str, Any]:
+    try:
+        normalized_status = _normalize_status(status) if status else ""
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
     registry = load_registry(registry_path)
     existing = _find_agent(registry, mesh, role)
     if not existing:
@@ -1040,8 +1353,8 @@ def write_compact_handoff(
     existing["last_handoff_at"] = current
     existing["compact_count"] = int(existing.get("compact_count") or 0) + 1
     existing["last_seen"] = current
-    if status:
-        existing["status"] = status
+    if normalized_status:
+        existing["status"] = normalized_status
     saved = save_registry(registry, registry_path)
     append_event(
         "role_handoff",
@@ -1187,11 +1500,17 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("watch")
     p.add_argument("--json", action="store_true")
 
+    p = sub.add_parser("reconcile")
+    p.add_argument("--mesh", default=DEFAULT_MESH)
+    p.add_argument("--apply", action="store_true", help="apply reversible status changes; never deletes rows")
+
     p = sub.add_parser("repo")
     p.add_argument("--repo", default="", help="repo path to snapshot; defaults to current directory")
 
     p = sub.add_parser("event")
     p.add_argument("--type", dest="event_type", required=True)
+    p.add_argument("--kind", type=int, default=None)
+    p.add_argument("--kind-class", choices=sorted(sc_event_kinds.VALID_CLASSES), default=None)
     p.add_argument("--mesh", default=DEFAULT_MESH)
     p.add_argument("--role", default="")
     p.add_argument("--birth-id", default="")
@@ -1283,6 +1602,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "watch":
         report = watch_report(load_registry(registry_path))
         return _print_json(report) if args.json else _print_watch(report)
+    if args.command == "reconcile":
+        return _print_json(reconcile_registry(
+            mesh=args.mesh,
+            registry_path=registry_path,
+            apply=args.apply,
+        ))
     if args.command == "repo":
         return _print_json(git_snapshot(args.repo or None))
     if args.command == "event":
@@ -1310,6 +1635,8 @@ def main(argv: list[str] | None = None) -> int:
             registry_path=registry_path,
             event_log_path=args.event_log or None,
             repo_path=args.repo or None,
+            kind=args.kind,
+            kind_class=args.kind_class,
         ))
     if args.command == "events":
         return _print_json(load_events(

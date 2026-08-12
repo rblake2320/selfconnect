@@ -27,9 +27,12 @@ quirks.
    selfconnect doctor --json
    selfconnect-mesh list
    ```
-4. Read `agent_launch_registry.md` before launching. It is the canonical place
-   for per-target CLI flags, startup waits, and submit quirks.
-5. Confirm the target CLI:
+4. Read `runbooks/agent_launch_registry.md` before launching. It is the canonical
+   place for per-target CLI flags, startup waits, and submit quirks.
+5. For a historical-session resume, also read
+   `runbooks/resume-a-terminal-session-from-the-master-log.md` before choosing or
+   launching a session.
+6. Confirm the target CLI:
    ```powershell
    Get-Command claude
    Get-Command codex
@@ -144,6 +147,12 @@ these settings as a permanent repair.
 Register only active, verified windows. Use unique roles and keep the returned
 `birth_id` in status reports.
 
+Never register a purported migrated successor from terminal text alone. Require
+an independently trusted v2 migration manifest, exact live window/process-start
+binding, checkpoint hash, freshness, and successful one-time `sc_migration
+verify ... --consume` result first. A historical session restore gets a new
+identity/role unless this authenticated migration ceremony succeeds.
+
 ```powershell
 selfconnect-mesh register `
   --role <unique-role> `
@@ -199,8 +208,16 @@ selfconnect-mesh update --role <unique-role> --status standby --task "first cont
   with `selfconnect windows --json` before calling `guard` or `send`.
 - Do not kill by WindowsTerminal PID. Windows Terminal can share one process across
   many tabs.
+- Do not inject into a guessed title or spinner. If the intended process tree has
+  no owned top-level HWND, report that no verifiable target exists and stop.
+- Reject legacy multi-line `CONTINUATION BRIEFING` prompts. New migration notices
+  are one physical line and explicitly require local verification before action.
 
 ## Verified
 - 2026-07-05: Claude Code launched via `Start-Process powershell.exe`, discovered as
   HWND `31789242`, registered as `claude-first-contact-1`, and replied:
   "Confirmed - SelfConnect message received loud and clear."
+- 2026-08-11: Codex session `019c3ec7-42c9-7712-ac7e-bf59814b787d` from
+  2026-02-08 resumed from `C:\Users\techai`. Its historical transcript rendered
+  in a new guarded Windows Terminal window; no prompt or other input was sent.
+  See `runbooks/resume_historical_session.md`.

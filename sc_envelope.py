@@ -26,6 +26,7 @@ from typing import Optional
 __version__ = "0.12.0"
 
 DEFAULT_KEY_PATH = Path.home() / ".selfconnect" / "mesh.key"
+DEFAULT_CREDENTIAL_TARGET = "SelfConnect/mesh/envelope-default"
 SIG_ALG = "hmac-sha256"
 ENVELOPE_MAX_AGE_S = 300.0  # replayed signed messages older than this are rejected
 
@@ -34,9 +35,37 @@ class EnvelopeError(RuntimeError):
     pass
 
 
-def load_or_create_mesh_key(path: Path | str = DEFAULT_KEY_PATH) -> bytes:
-    """Load the shared mesh key, creating a random 32-byte one on first use."""
-    path = Path(path)
+def load_or_create_mesh_key(
+    path: Path | str | None = None,
+    *,
+    allow_plaintext_file: bool = False,
+) -> bytes:
+    """Load/create the mesh key in Credential Manager by default.
+
+    An explicit file path is a test/interop escape hatch and requires an
+    equally explicit plaintext opt-in.
+    """
+    if path is None and os.name == "nt":
+        from sc_windows_credentials import read_secret, write_secret
+
+        stored = read_secret(DEFAULT_CREDENTIAL_TARGET)
+        if stored is not None:
+            if len(stored) != 32:
+                raise EnvelopeError("stored mesh credential has an invalid length")
+            return stored
+        legacy = DEFAULT_KEY_PATH
+        key = bytes.fromhex(legacy.read_text(encoding="utf-8").strip()) if legacy.exists() else os.urandom(32)
+        if len(key) != 32:
+            raise EnvelopeError("legacy mesh key must contain exactly 32 bytes")
+        write_secret(DEFAULT_CREDENTIAL_TARGET, key)
+        if not hmac.compare_digest(read_secret(DEFAULT_CREDENTIAL_TARGET) or b"", key):
+            raise EnvelopeError("Credential Manager read-back verification failed")
+        if legacy.exists():
+            legacy.unlink()
+        return key
+    path = Path(path or DEFAULT_KEY_PATH)
+    if not allow_plaintext_file:
+        raise EnvelopeError("plaintext mesh-key files require allow_plaintext_file=True")
     if path.exists():
         return bytes.fromhex(path.read_text(encoding="utf-8").strip())
     path.parent.mkdir(parents=True, exist_ok=True)

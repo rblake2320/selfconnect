@@ -3,6 +3,8 @@
 import time
 
 import pytest
+import sc_envelope
+import sc_windows_credentials
 from sc_envelope import (
     AgentCard,
     Envelope,
@@ -15,15 +17,33 @@ from sc_envelope import (
 
 @pytest.fixture
 def key(tmp_path):
-    return load_or_create_mesh_key(tmp_path / "mesh.key")
+    return load_or_create_mesh_key(tmp_path / "mesh.key", allow_plaintext_file=True)
 
 
 def test_key_created_once_and_reloaded(tmp_path):
     path = tmp_path / "k" / "mesh.key"
-    k1 = load_or_create_mesh_key(path)
-    k2 = load_or_create_mesh_key(path)
+    k1 = load_or_create_mesh_key(path, allow_plaintext_file=True)
+    k2 = load_or_create_mesh_key(path, allow_plaintext_file=True)
     assert k1 == k2
     assert len(k1) == 32
+
+
+def test_invalid_length_legacy_key_is_preserved_during_credential_migration(tmp_path, monkeypatch):
+    legacy = tmp_path / "mesh.key"
+    legacy.write_text((b"short").hex(), encoding="utf-8")
+    writes = []
+    monkeypatch.setattr(sc_envelope, "DEFAULT_KEY_PATH", legacy)
+    monkeypatch.setattr(sc_envelope.os, "name", "nt")
+    monkeypatch.setattr(
+        sc_windows_credentials, "write_secret", lambda target, value: writes.append((target, value))
+    )
+    monkeypatch.setattr(sc_windows_credentials, "read_secret", lambda _target: None)
+
+    with pytest.raises(EnvelopeError, match="exactly 32 bytes"):
+        load_or_create_mesh_key()
+
+    assert legacy.exists()
+    assert writes == []
 
 
 def test_sign_and_verify_roundtrip(key):

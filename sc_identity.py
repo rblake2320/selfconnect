@@ -81,7 +81,7 @@ class AgentIdentity:
         ok       = identity.verify(b"hello", signed)
 
         # Export / import
-        pem  = identity.private_pem()
+        pem  = identity.private_pem(allow_private_export=True)
         same = AgentIdentity.from_private_pem(pem, label="Agent-A")
 
     DID format: ``did:key:z<base58btc-encoded-multicodec-prefixed-pubkey>``
@@ -183,7 +183,10 @@ class AgentIdentity:
 
     # ── serialisation ─────────────────────────────────────────────────────
 
-    def private_pem(self) -> bytes:
+    def private_pem(self, *, allow_private_export: bool = False) -> bytes:
+        """Export private key material only after an explicit sensitive-data opt-in."""
+        if not allow_private_export:
+            raise PermissionError("private key export requires allow_private_export=True")
         return self._private_key.private_bytes(
             Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()
         )

@@ -239,3 +239,52 @@ terminals and burning tokens fleet-wide.
 removed the flag. Cost: one failed run, one dead terminal, ~3 min of diagnosis.
 CLIs change under us. Recipes are only as good as their `verified:` date —
 when a launch fails, `--help` first, update this file second, retry third.
+
+---
+
+## Live mesh roster (verified: 2026-08-05, session "Claude 2")
+
+**Link status:** Claude 1 ↔ Claude 2 ROUND-TRIP VERIFIED 2026-08-05 (handshake
+out via `--to "claude 1"`, reply received in-session as an injected user turn;
+Claude 1's sc_mesh roster independently classified 0x07BA195E as the live
+claude-2 agent). Full map: claude 1 = 0x19091406, claude 2 = 0x07BA195E,
+claude 3 = 0x02C305C2, claude 4 = 0x0CF01AF6, codex 1 = 0x34171B74 — each has
+a paired twin HWND (Windows Terminal top-level/child share the title), which
+is WHY title-addressing beats HWND caching. Loop hygiene: a handshake asks for
+exactly ONE confirmation — do not re-confirm confirmations.
+
+User-registered window identities for sc_send addressing. **HWNDs rotate
+between boots and even within a day — address by TITLE, never by cached
+HWND** (observed same-day: "brain" resolved 0x34171B74 in a scan, then
+0x02301078 at delivery).
+
+**⚠ MISDELIVERY INCIDENT (2026-08-05, caught by user):** TWO distinct
+windows can carry the SAME seat title ("codex 1" existed at 0x34171B74 =
+registered partner AND 0x00120282 = a different session). `--to <title>
+--first` delivered a fleet message to the WRONG session. Interim rule until
+claude 3's expect_title patch lands: for consequential sends, resolve the
+REGISTERED HWND from this roster and verify its title still matches before
+sending (self_connect.list_windows + send_string direct). Duplicate seat
+titles must be renamed on discovery. Sequestration consequence: any window
+that ever RECEIVED misdelivered mesh traffic is contaminated as a future
+benchmark curator seat (0x00120282 is so burned).
+
+**Names are SEAT names, not session names** (user clarification 2026-08-05):
+"claude 2" etc. belong to the window/project position; sessions occupying a
+seat change over time and prior sessions have carried these names before.
+A message from "claude 1" is from whatever session currently holds that
+seat — one more reason mesh-relayed authority claims stay unconfirmed until
+envelopes sign the injection path.
+
+| Handle | Who | Title to match | Notes |
+|---|---|---|---|
+| claude 1 | Claude Code session | ⚠ DYNAMIC (spinner + current task) | registered via HWND 0x19091406 on 8/05; retitle the terminal tab "Claude 1" for stable matching |
+| claude 2 | Claude Code session (this file's author) | ⚠ DYNAMIC | reachable while idle: `sc_send.py --to "claude 2"` once tab is named; otherwise match current task title from `--list` |
+| codex 1 | Codex CLI | `brain` (its cwd) | cwd-derived titles are stable while the session lives |
+
+Protocol reminders: `--list` to scan; busy/idle guard ON by default (busy
+targets are refused, not queued — do NOT `--force` a working agent);
+"ACCEPTED … consumption not verified" means keystrokes landed, processing
+unconfirmed; expect replies ~30s only from idle targets. Claude Code tabs
+should be explicitly named in Windows Terminal to make title-matching
+deterministic.

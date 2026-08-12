@@ -143,8 +143,26 @@ def _default_baseline_path(output_root: Path, transport: str) -> Path:
     return output_root / f"baseline_5agent_{transport}.json"
 
 
-def patent_freeze_status(repo_root: str | Path = ".") -> dict[str, Any]:
-    root = Path(repo_root)
+def _resolve_repo_root(repo_root: str | Path | None = None) -> Path:
+    """Resolve the SelfConnect repository independent of the caller's cwd."""
+    requested = Path(repo_root).expanduser() if repo_root not in (None, "", ".") else None
+    if requested is not None:
+        return requested.resolve()
+    candidates = [Path.cwd(), Path(__file__).resolve().parent]
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        resolved = candidate.resolve()
+        if all((resolved / rel).exists() for rel in FREEZE_DOCS):
+            return resolved
+        for parent in resolved.parents:
+            if all((parent / rel).exists() for rel in FREEZE_DOCS):
+                return parent
+    return (requested or Path(__file__).resolve().parent).resolve()
+
+
+def patent_freeze_status(repo_root: str | Path | None = None) -> dict[str, Any]:
+    root = _resolve_repo_root(repo_root)
     missing = []
     marker_hits: dict[str, bool] = {marker: False for marker in FREEZE_MARKERS}
     for rel in FREEZE_DOCS:
@@ -159,6 +177,7 @@ def patent_freeze_status(repo_root: str | Path = ".") -> dict[str, Any]:
     missing_markers = [marker for marker, found in marker_hits.items() if not found]
     return {
         "ok": not missing and not missing_markers,
+        "repo_root": str(root),
         "required_docs": list(FREEZE_DOCS),
         "missing_docs": missing,
         "required_markers": list(FREEZE_MARKERS),
@@ -1037,7 +1056,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("freeze-check")
-    p.add_argument("--repo-root", default=".")
+    p.add_argument("--repo-root", default="", help="optional override; otherwise locate the repo from this module")
 
     p = sub.add_parser("run")
     p.add_argument("--agents", type=int, required=True)
