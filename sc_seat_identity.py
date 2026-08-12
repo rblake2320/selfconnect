@@ -203,8 +203,13 @@ def key_id(public_key_hex: str) -> str:
     return _sha256(raw)
 
 
-def enroll_receiver_key(identity: Any, path: str | Path) -> Path:
-    """Explicitly pin a response-pipe receiver key; never auto-enroll."""
+def _enroll_local_receiver_key_for_test(identity: Any, path: str | Path) -> Path:
+    """Create local receiver fixture state without making an authority claim.
+
+    The production package intentionally exposes no receiver-root bootstrap or
+    reset API.  A separately privileged provisioning boundary must install the
+    receiver trust store used by high-assurance verification.
+    """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     public_key_hex = str(identity.public_key_hex)
@@ -225,7 +230,8 @@ def enroll_receiver_key(identity: Any, path: str | Path) -> Path:
     return target.resolve()
 
 
-def trusted_receiver_public_key(receiver_id: str, path: str | Path) -> str:
+def trusted_local_receiver_public_key(receiver_id: str, path: str | Path) -> str:
+    """Resolve a locally pinned receiver key without asserting high assurance."""
     data = canonical_json_loads(Path(path).read_bytes())
     if data.get("schema") != RECEIVER_TRUST_SCHEMA or not isinstance(data.get("receivers"), list):
         raise ValueError("seat receiver trust store is malformed")
@@ -522,6 +528,7 @@ def verify_proof(
     if (
         receiver_id != key_id(receiver_public_key_hex)
         or channel_body.get("transport") != "private_named_pipe_v1"
+        or channel_body.get("assurance") != "same_user_observation"
         or channel_body.get("response_address_sha256") != challenge_body["response_address_sha256"]
         or channel_body.get("server_nonce") != challenge_body["server_nonce"]
     ):
@@ -595,17 +602,20 @@ def verify_proof_runtime(
     consume: bool = True,
 ) -> dict[str, Any]:
     """Fail-closed production verification using durable trust resolvers."""
+    from sc_trust_anchor import require_high_assurance_anchor
+
+    require_high_assurance_anchor()
     from sc_authority_trust import authority_public_key
-    from sc_seat_pipe import _open_pipe_receipt
+    from sc_seat_pipe import _open_pipe_observation
     from sc_seat_revocation import resolve_revoked_key_ids
 
-    proof, channel_evidence = _open_pipe_receipt(pipe_receipt, challenge)
+    proof, channel_evidence = _open_pipe_observation(pipe_receipt, challenge)
     authority_id = challenge.get("authority_key_id")
     receiver_id = channel_evidence.get("receiver_key_id")
     if not isinstance(authority_id, str) or not isinstance(receiver_id, str):
         raise ValueError("seat proof trust key IDs are required")
     authority_key = authority_public_key(authority_trust_store, authority_id)
-    receiver_key = trusted_receiver_public_key(receiver_id, receiver_trust_store)
+    receiver_key = trusted_local_receiver_public_key(receiver_id, receiver_trust_store)
     if authority_key == receiver_key:
         raise ValueError("seat response receiver key must differ from authority key")
     revoked = resolve_revoked_key_ids(revocation_store, authority_trust_store, now=now)

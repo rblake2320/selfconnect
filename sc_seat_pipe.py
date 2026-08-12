@@ -11,7 +11,6 @@ import ctypes
 import os
 import struct
 import time
-import weakref
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,52 +26,41 @@ from sc_seat_identity import (
     canonical_json_loads,
     create_challenge,
     key_id,
-    trusted_receiver_public_key,
+    trusted_local_receiver_public_key,
 )
 
 MAX_SEAT_RESPONSE_BYTES = 1024 * 1024
 
 
-def _receipt_capability():
-    records: weakref.WeakKeyDictionary[Any, tuple[str, dict[str, Any], dict[str, Any]]] = weakref.WeakKeyDictionary()
+@dataclass(frozen=True, slots=True)
+class PipeObservation:
+    """Non-authoritative transport container for signed pipe observations.
 
-    class PipeIssuedEvidence:
-        """Opaque evidence which only a connected receiver can issue."""
+    This object is not a Python capability and is intentionally safe to copy or
+    construct.  Authority comes from validating the receiver signature, the
+    challenge binding, and the replay store—not from an in-process constructor
+    hidden in a closure.  That removes the introspectable ``__kwdefaults__``
+    issuer which a caller could previously recover without opening the pipe.
+    """
 
-        __slots__ = ("__weakref__",)
+    challenge_sha256: str
+    proof: dict[str, Any]
+    evidence: dict[str, Any]
 
-        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
-            raise TypeError("pipe evidence can only be issued by SeatResponseReceiver")
-
-    def issue(
-        challenge_sha256: str,
-        proof: dict[str, Any],
-        evidence: dict[str, Any],
-    ) -> PipeIssuedEvidence:
-        receipt = object.__new__(PipeIssuedEvidence)
-        records[receipt] = (
-            challenge_sha256,
-            canonical_json_loads(_canonical(proof)),
-            canonical_json_loads(_canonical(evidence)),
-        )
-        return receipt
-
-    def open_receipt(receipt: Any, challenge: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-        if not isinstance(receipt, PipeIssuedEvidence) or receipt not in records:
-            raise TypeError("production seat verification requires pipe-issued evidence")
-        challenge_sha256, proof, evidence = records[receipt]
-        if challenge_sha256 != _sha256(_canonical(challenge)):
-            raise ValueError("pipe-issued evidence targets a different challenge")
-        return (
-            canonical_json_loads(_canonical(proof)),
-            canonical_json_loads(_canonical(evidence)),
-        )
-
-    return PipeIssuedEvidence, issue, open_receipt
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "proof", canonical_json_loads(_canonical(self.proof)))
+        object.__setattr__(self, "evidence", canonical_json_loads(_canonical(self.evidence)))
 
 
-PipeIssuedEvidence, _issue_pipe_receipt, _open_pipe_receipt = _receipt_capability()
-del _receipt_capability
+def _open_pipe_observation(receipt: Any, challenge: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    if not isinstance(receipt, PipeObservation):
+        raise TypeError("production seat verification requires pipe evidence")
+    if receipt.challenge_sha256 != _sha256(_canonical(challenge)):
+        raise ValueError("pipe evidence targets a different challenge")
+    return (
+        canonical_json_loads(_canonical(receipt.proof)),
+        canonical_json_loads(_canonical(receipt.evidence)),
+    )
 
 
 def _require_windows() -> None:
@@ -253,7 +241,7 @@ class SeatResponseReceiver:
         if challenge.get("authority_key_id") == key_id(receiver_identity.public_key_hex):
             raise ValueError("seat response receiver key must differ from authority key")
         receiver_id = key_id(receiver_identity.public_key_hex)
-        if trusted_receiver_public_key(receiver_id, receiver_trust_store) != receiver_identity.public_key_hex:
+        if trusted_local_receiver_public_key(receiver_id, receiver_trust_store) != receiver_identity.public_key_hex:
             raise ValueError("seat response receiver key is not independently pinned")
         self.endpoint = endpoint
         self.challenge = challenge
@@ -262,9 +250,7 @@ class SeatResponseReceiver:
     def serve_once(
         self,
         timeout: float = 15.0,
-        *,
-        _issue_receipt: Any = _issue_pipe_receipt,
-    ) -> PipeIssuedEvidence:
+    ) -> PipeObservation:
         from sc_guarded_submit import (
             _connect_pipe,
             _create_pipe,
@@ -312,6 +298,7 @@ class SeatResponseReceiver:
                 "client_pid": client_pid,
                 "client_process_start_100ns": client_start_hex,
                 "observed_at": _time_ms(),
+                "assurance": "same_user_observation",
             }
             signed = _signed(channel_body, self.__receiver_identity, "receiver_signature_b64")
             evidence = {
@@ -323,7 +310,7 @@ class SeatResponseReceiver:
             proof = payload.get("proof")
             if not isinstance(proof, dict):
                 raise ValueError("seat response proof is malformed")
-            return _issue_receipt(
+            return PipeObservation(
                 _sha256(_canonical(self.challenge)),
                 proof,
                 evidence,
@@ -332,10 +319,6 @@ class SeatResponseReceiver:
             ctypes.windll.kernel32.CancelIoEx(handle, None)
             ctypes.windll.kernel32.DisconnectNamedPipe(handle)
             ctypes.windll.kernel32.CloseHandle(handle)
-
-
-del _issue_pipe_receipt
-
 
 def send_seat_response(
     endpoint: SeatPipeEndpoint,

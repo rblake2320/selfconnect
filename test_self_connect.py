@@ -310,7 +310,6 @@ def test_wait_for_window():
 
 def test_layer4_continuity():
     """Layer 4 Continuity — Checkpoint, write_checkpoint, read_checkpoint, MigrationCoordinator."""
-    import hashlib
     import os
     import tempfile
     print("\n-- Layer 4 Continuity (v0.9.0) --")
@@ -380,15 +379,6 @@ def test_layer4_continuity():
         enroll_migration_signer,
         verify_migration_manifest,
     )
-    from sc_seat_identity import (
-        create_challenge,
-        create_enrollment,
-        create_proof,
-        deliver_challenge_postmessage,
-        enroll_receiver_key,
-        secure_channel_evidence,
-        tab_snapshot_digest,
-    )
     identity = AgentIdentity.generate(label="migration-test")
     trust_path = os.path.join(tempfile.gettempdir(), "sc_test_migration_trust.json")
     replay_path = os.path.join(tempfile.gettempdir(), "sc_test_migration_replay.sqlite3")
@@ -414,60 +404,16 @@ def test_layer4_continuity():
         path = briefing.split(marker, 1)[1].split(" --expected-hwnd", 1)[0]
         import json
         path = json.loads(path)
-        seat_identity = AgentIdentity.generate(label="migration-seat")
-        receiver_identity = AgentIdentity.generate(label="migration-receiver")
-        receiver_trust_path = path + ".receiver-trust.json"
-        enroll_receiver_key(receiver_identity, receiver_trust_path)
-        manifest = json.loads(open(path, encoding="utf-8").read())
-        operation_sha256 = hashlib.sha256(
-            json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        enrollment = create_enrollment(
-            seat_identity=seat_identity, authority_identity=identity,
-            birth_id="migration-seat-1", generation=1,
-        )
-        issue_path = path + ".seat-issued.sqlite3"
-        snapshot = {"ok": True, "tab_runtime_id": [1, 2],
-                    "term_control_runtime_id": [1, 3],
-                    "peer_birth_id": "migration-seat-1"}
-        challenge = create_challenge(
-            enrollment=enrollment, operation_sha256=operation_sha256,
-            tab_snapshot_sha256=tab_snapshot_digest(snapshot),
-            response_address_sha256="33" * 32, server_nonce="44" * 32,
-            authority_identity=identity, issue_store=issue_path,
-            expected_peer_sid="S-1-5-21-test", expected_pipe_instance="pipe-1",
-        )
-        delivery = deliver_challenge_postmessage(
-            challenge=challenge, target_hwnd=hwnd, authority_identity=identity,
-            sender=lambda target, text: {"ok": True, "transport": "postmessage_wm_char",
-                                         "chars_accepted": len(text), "target_hwnd": target},
-            tab_checkpoint=lambda stage: {**snapshot, "stage": stage},
-        )
-        seat_bundle = {
-            "enrollment": enrollment,
-            "challenge": challenge,
-            "delivery": delivery,
-            "proof": create_proof(
-                seat_identity=seat_identity, challenge=challenge, delivery=delivery,
-                authority_public_key_hex=identity.public_key_hex, issue_store=issue_path,
-            ),
-            "channel_evidence": secure_channel_evidence(
-                challenge, receiver_identity=receiver_identity,
-                peer_sid="S-1-5-21-test", pipe_instance="pipe-1",
-            ),
-            "receiver_public_key_hex": receiver_identity.public_key_hex,
-            "issue_store": issue_path,
-        }
-        verified = verify_migration_manifest(
-            path, expected_hwnd=hwnd, trust_store=trust_path,
-            replay_store=replay_path, consume=True,
-            target_resolver=lambda _hwnd: dict(target_binding),
-                seat_bundle=seat_bundle, seat_replay_store=seat_replay_path,
-                seat_issue_store=issue_path,
-                seat_tab_snapshot_resolver=lambda _hwnd, _birth_id: dict(snapshot),
-                seat_receiver_trust_store=receiver_trust_path,
+        try:
+            verify_migration_manifest(
+                path, expected_hwnd=hwnd, trust_store=trust_path,
+                replay_store=replay_path, consume=True,
+                target_resolver=lambda _hwnd: dict(target_binding),
             )
-        check("migration manifest accepted", verified["status"] == "ACCEPTED")
+        except ValueError as exc:
+            check("actionable migration refuses without seat authority", "per-seat channel proof is required" in str(exc))
+        else:
+            check("actionable migration refuses without seat authority", False)
 
     coord2 = MigrationCoordinator(
         own_hwnd=2820438, role="B", registry=reg,
@@ -481,22 +427,14 @@ def test_layer4_continuity():
     fired2 = []
     coord2.on_migrate(lambda cp, path: fired2.append((cp.role, path)))
     result2 = coord2.tick(current=75, pending={"status": "migrating"}, meta={"sess": 9})
-    check("tick at threshold returns True", result2 is True)
-    check("has_migrated True after trigger", coord2.has_migrated)
-    check("on_migrate fired once", len(fired2) == 1)
-    check("on_migrate got correct role", fired2[0][0] == "B")
-    cp_path = fired2[0][1]
-    check("checkpoint file written", os.path.exists(cp_path))
-    if os.path.exists(cp_path):
-        cp_read = read_checkpoint(cp_path)
-        check("checkpoint role correct", cp_read.role == "B")
-        check("checkpoint pending preserved", cp_read.pending == {"status": "migrating"})
-        os.unlink(cp_path)
+    check("tick at threshold refuses unauthenticated successor", result2 is False)
+    check("has_migrated remains False after refusal", not coord2.has_migrated)
+    check("on_migrate not called for refused successor", len(fired2) == 0)
 
     # Second tick after migration is idempotent
     result3 = coord2.tick(current=90)
-    check("second tick after migration returns False", result3 is False)
-    check("on_migrate not called twice", len(fired2) == 1)
+    check("second unauthenticated migration attempt returns False", result3 is False)
+    check("on_migrate remains uncalled", len(fired2) == 0)
 
     # Clean up mc.json if it exists
     mc1 = os.path.join(tempfile.gettempdir(), "sc_test_mc.json")

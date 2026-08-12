@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from sc_authority_trust import load_authority_trust, verify_authority_signatures
+from sc_authority_trust import load_local_authority_trust, verify_authority_signatures
 from sc_seat_identity import (
     _canonical,
     _duration_ms,
@@ -19,7 +19,11 @@ from sc_seat_identity import (
     canonical_json_loads,
     key_id,
 )
-from sc_trust_anchor import advance_monotonic_anchor, verify_monotonic_anchor
+from sc_trust_anchor import (
+    advance_local_integrity_anchor,
+    require_high_assurance_anchor,
+    verify_local_integrity_anchor,
+)
 
 SNAPSHOT_SCHEMA = "selfconnect-seat-revocations-v1"
 STORE_SCHEMA = "selfconnect-seat-revocation-store-v1"
@@ -37,7 +41,7 @@ def _load_store(path: Path) -> dict[str, Any] | None:
         raise ValueError("seat revocation store schema is invalid")
     if data["latest_sha256"] != _sha256(_canonical(data["snapshot"])):
         raise ValueError("seat revocation store digest is invalid")
-    verify_monotonic_anchor(
+    verify_local_integrity_anchor(
         path,
         "seat-revocation-store",
         data["snapshot"]["epoch"],
@@ -62,7 +66,7 @@ def create_revocation_snapshot(
     revoked = sorted({_hex(value, "revoked seat key ID") for value in revoked_key_ids})
     if len(revoked) > MAX_REVOCATION_KEYS:
         raise ValueError("seat revocation snapshot is too large")
-    trust = load_authority_trust(trust_path)
+    trust = load_local_authority_trust(trust_path)
     previous = _load_store(Path(store_path))
     if previous is None:
         version = 1
@@ -109,7 +113,7 @@ def _validate_snapshot(
     }
     if set(snapshot) != required or snapshot["schema"] != SNAPSHOT_SCHEMA:
         raise ValueError("seat revocation snapshot is malformed")
-    trust = load_authority_trust(trust_path)
+    trust = load_local_authority_trust(trust_path)
     if snapshot["epoch"] != trust["epoch"] or snapshot["trust_version"] != trust["version"]:
         raise ValueError("seat revocation snapshot does not use current authority trust")
     if type(snapshot["version"]) is not int or snapshot["version"] < 1:
@@ -170,7 +174,7 @@ def apply_revocation_snapshot(
         from sc_guarded_submit import _protect_evidence_path
 
         _protect_evidence_path(target)
-    advance_monotonic_anchor(
+    advance_local_integrity_anchor(
         target,
         "seat-revocation-store",
         snapshot["epoch"],
@@ -186,7 +190,18 @@ def resolve_revoked_key_ids(
     *,
     now: float | None = None,
 ) -> frozenset[str]:
-    """Production resolver: absence, bad signature, rollback, or staleness fails closed."""
+    """Production resolver; unavailable without a privileged monotonic anchor."""
+    require_high_assurance_anchor()
+    return _resolve_local_revoked_key_ids(store_path, trust_path, now=now)
+
+
+def _resolve_local_revoked_key_ids(
+    store_path: str | Path,
+    trust_path: str | Path,
+    *,
+    now: float | None = None,
+) -> frozenset[str]:
+    """Resolve a signed local fixture without asserting rollback resistance."""
     current = _time_ms(now)
     stored = _load_store(Path(store_path))
     if stored is None:

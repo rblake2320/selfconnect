@@ -1,8 +1,16 @@
-"""Separately persisted monotonic heads for trust and revocation state.
+"""Local integrity journals and the high-assurance trust-boundary gate.
 
-On Windows the head is DPAPI-protected for the current user. On other systems
-an append-only chained journal is used. Restoring only the mutable JSON state
-therefore cannot roll verification back across process restart.
+The journal in this module is deliberately *not* described as monotonic
+security.  Windows DPAPI with current-user scope protects confidentiality from
+other users, but a hostile process running as the same user can copy, delete,
+or restore both the state file and its DPAPI-protected journal.  The journal is
+therefore useful for corruption and accidental single-file rollback detection
+only.
+
+SelfConnect's high-assurance trust path requires a separately privileged
+anchor service.  This package does not silently substitute current-user DPAPI
+when that boundary has not been provisioned; high-assurance operations fail
+closed with :class:`HighAssuranceUnavailable`.
 """
 
 from __future__ import annotations
@@ -16,7 +24,26 @@ from ctypes import wintypes
 from pathlib import Path
 from typing import Any, ClassVar
 
-ANCHOR_SCHEMA = "selfconnect-monotonic-anchor-v1"
+ANCHOR_SCHEMA = "selfconnect-local-integrity-anchor-v1"
+
+
+class HighAssuranceUnavailable(RuntimeError):
+    """Raised when no separately privileged trust-anchor service is available."""
+
+
+def require_high_assurance_anchor() -> None:
+    """Fail closed until a separately privileged anchor service is provisioned.
+
+    A same-user file, ACL, environment variable, Python object, or DPAPI blob is
+    intentionally insufficient for this threat model.  A future implementation
+    must authenticate a service running under a distinct Windows principal (or
+    an equivalent hardware/remote boundary) and obtain the monotonic head from
+    that boundary.
+    """
+    raise HighAssuranceUnavailable(
+        "high-assurance trust is unavailable: provision a separately privileged "
+        "trust-anchor service; current-user DPAPI is local integrity only"
+    )
 
 
 class _DATA_BLOB(ctypes.Structure):
@@ -51,7 +78,7 @@ def _dpapi(data: bytes, *, protect: bool) -> bytes:
     if protect:
         ok = crypt32.CryptProtectData(
             ctypes.byref(source),
-            "SelfConnect monotonic trust anchor",
+            "SelfConnect local integrity journal",
             None,
             None,
             None,
@@ -78,14 +105,14 @@ def _dpapi(data: bytes, *, protect: bool) -> bytes:
 
 def _anchor_path(state_path: str | Path) -> Path:
     path = Path(state_path).resolve()
-    return path.with_suffix(path.suffix + ".monotonic-anchor")
+    return path.with_suffix(path.suffix + ".local-integrity-anchor")
 
 
 def _body(namespace: str, epoch: int, version: int, digest: str) -> dict[str, Any]:
     if not namespace or type(epoch) is not int or type(version) is not int:
-        raise ValueError("monotonic anchor identity is invalid")
+        raise ValueError("local integrity anchor identity is invalid")
     if epoch < 1 or version < 1 or len(digest) != 64:
-        raise ValueError("monotonic anchor counters or digest are invalid")
+        raise ValueError("local integrity anchor counters or digest are invalid")
     bytes.fromhex(digest)
     return {
         "schema": ANCHOR_SCHEMA,
@@ -105,15 +132,15 @@ def _decode_records(path: Path) -> list[dict[str, Any]]:
     document = json.loads(raw)
     records = document.get("records")
     if document.get("schema") != ANCHOR_SCHEMA or not isinstance(records, list) or not records:
-        raise ValueError("monotonic anchor is malformed")
+        raise ValueError("local integrity anchor is malformed")
     previous = "0" * 64
     for record in records:
         body = record.get("body")
         if not isinstance(body, dict) or record.get("previous_sha256") != previous:
-            raise ValueError("monotonic anchor chain is invalid")
+            raise ValueError("local integrity anchor chain is invalid")
         expected = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
         if record.get("record_sha256") != expected:
-            raise ValueError("monotonic anchor record digest is invalid")
+            raise ValueError("local integrity anchor record digest is invalid")
         previous = expected
     return records
 
@@ -137,7 +164,7 @@ def _write_records(path: Path, records: list[dict[str, Any]]) -> None:
         _protect_evidence_path(path)
 
 
-def advance_monotonic_anchor(
+def advance_local_integrity_anchor(
     state_path: str | Path,
     namespace: str,
     epoch: int,
@@ -150,11 +177,11 @@ def advance_monotonic_anchor(
     if records:
         prior = records[-1]["body"]
         if prior["namespace"] != namespace:
-            raise ValueError("monotonic anchor namespace changed")
+            raise ValueError("local integrity anchor namespace changed")
         if (epoch, version) <= (prior["epoch"], prior["version"]):
             if body == prior:
                 return
-            raise ValueError("monotonic anchor rollback or replay rejected")
+            raise ValueError("local integrity anchor rollback or replay rejected")
         previous = records[-1]["record_sha256"]
     else:
         previous = "0" * 64
@@ -163,7 +190,7 @@ def advance_monotonic_anchor(
     _write_records(path, records)
 
 
-def verify_monotonic_anchor(
+def verify_local_integrity_anchor(
     state_path: str | Path,
     namespace: str,
     epoch: int,
@@ -172,6 +199,6 @@ def verify_monotonic_anchor(
 ) -> None:
     records = _decode_records(_anchor_path(state_path))
     if not records:
-        raise ValueError("required monotonic anchor is absent")
+        raise ValueError("required local integrity anchor is absent")
     if records[-1]["body"] != _body(namespace, epoch, version, digest):
-        raise ValueError("state rollback detected by monotonic anchor")
+        raise ValueError("state rollback detected by local integrity anchor")

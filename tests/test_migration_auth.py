@@ -5,8 +5,11 @@ import json
 import time
 
 import pytest
+import sc_authority_trust
 import sc_seat_pipe
-from sc_authority_trust import bootstrap_authority_trust
+import sc_seat_revocation
+import sc_trust_anchor
+from sc_authority_trust import _bootstrap_local_authority_trust_for_test
 from sc_identity import AgentIdentity
 from sc_migration import (
     _authorized_cli_store,
@@ -18,13 +21,13 @@ from sc_migration import (
 )
 from sc_seat_identity import (
     CHANNEL_SCHEMA,
+    _enroll_local_receiver_key_for_test,
     _signed,
     _time_ms,
     create_challenge,
     create_enrollment,
     create_proof,
     deliver_challenge_postmessage,
-    enroll_receiver_key,
     key_id,
     tab_snapshot_digest,
 )
@@ -56,7 +59,13 @@ class _TestPipeReceipt:
 
 @pytest.fixture(autouse=True)
 def _test_pipe_receipt_adapter(monkeypatch):
-    production_open = sc_seat_pipe._open_pipe_receipt
+    # Protocol-only fixtures inject a stand-in for the separately privileged
+    # anchor boundary. Dedicated trust/pipe regressions assert the production
+    # path refuses when that boundary is absent.
+    monkeypatch.setattr(sc_trust_anchor, "require_high_assurance_anchor", lambda: None)
+    monkeypatch.setattr(sc_authority_trust, "require_high_assurance_anchor", lambda: None)
+    monkeypatch.setattr(sc_seat_revocation, "require_high_assurance_anchor", lambda: None)
+    production_open = sc_seat_pipe._open_pipe_observation
 
     def open_receipt(receipt, challenge):
         if not isinstance(receipt, _TestPipeReceipt):
@@ -65,7 +74,7 @@ def _test_pipe_receipt_adapter(monkeypatch):
             raise ValueError("test pipe receipt targets a different challenge")
         return receipt.proof, receipt.evidence
 
-    monkeypatch.setattr(sc_seat_pipe, "_open_pipe_receipt", open_receipt)
+    monkeypatch.setattr(sc_seat_pipe, "_open_pipe_observation", open_receipt)
 
 
 def _test_channel(challenge, receiver, *, peer_sid, pipe_instance, now=None):
@@ -77,6 +86,7 @@ def _test_channel(challenge, receiver, *, peer_sid, pipe_instance, now=None):
         "peer_sid": peer_sid,
         "pipe_instance": pipe_instance,
         "observed_at": _time_ms(now),
+        "assurance": "same_user_observation",
     }
     return {
         **_signed(body, receiver, "receiver_signature_b64"),
@@ -120,7 +130,7 @@ def _seat_bundle(identity, manifest, *, now=None):
     current = time.time() if now is None else now
     seat = AgentIdentity.generate("seat")
     receiver = AgentIdentity.generate("receiver")
-    receiver_trust = enroll_receiver_key(receiver, manifest.with_suffix(".receiver-trust.json"))
+    receiver_trust = _enroll_local_receiver_key_for_test(receiver, manifest.with_suffix(".receiver-trust.json"))
     enrollment = create_enrollment(
         seat_identity=seat,
         authority_identity=identity,
@@ -178,7 +188,7 @@ def _seat_bundle(identity, manifest, *, now=None):
     )
     authority_trust = manifest.with_suffix(".seat-authority.json")
     recovery = AgentIdentity.generate("seat-recovery")
-    bootstrap_authority_trust(
+    _bootstrap_local_authority_trust_for_test(
         authority_trust,
         root_public_keys=[identity.public_key_hex],
         quorum=1,
@@ -292,7 +302,9 @@ def test_migration_pins_separately_enrolled_receiver_key(tmp_path):
 def test_migration_rejects_authority_key_as_receiver_even_if_enrolled(tmp_path):
     identity, trust, _checkpoint, manifest = _manifest(tmp_path)
     bundle = _seat_bundle(identity, manifest)
-    authority_receiver_trust = enroll_receiver_key(identity, tmp_path / "authority-receiver-trust.json")
+    authority_receiver_trust = _enroll_local_receiver_key_for_test(
+        identity, tmp_path / "authority-receiver-trust.json"
+    )
     bundle["channel_evidence"] = _test_channel(
         bundle["challenge"],
         identity,

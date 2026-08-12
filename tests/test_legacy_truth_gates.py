@@ -25,6 +25,7 @@ def _test_channel(challenge, receiver, *, peer_sid, pipe_instance):
         "peer_sid": peer_sid,
         "pipe_instance": pipe_instance,
         "observed_at": _time_ms(),
+        "assurance": "same_user_observation",
     }
     return {
         **_signed(body, receiver, "receiver_signature_b64"),

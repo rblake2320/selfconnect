@@ -11,7 +11,11 @@ from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from sc_seat_identity import _canonical, _sha256, canonical_json_loads, key_id
-from sc_trust_anchor import advance_monotonic_anchor, verify_monotonic_anchor
+from sc_trust_anchor import (
+    advance_local_integrity_anchor,
+    require_high_assurance_anchor,
+    verify_local_integrity_anchor,
+)
 
 TRUST_SCHEMA = "selfconnect-seat-authority-trust-v1"
 TRANSITION_SCHEMA = "selfconnect-seat-authority-transition-v1"
@@ -55,7 +59,7 @@ def _atomic_write(path: Path, value: dict[str, Any]) -> None:
         _protect_evidence_path(path)
 
 
-def bootstrap_authority_trust(
+def _bootstrap_local_authority_trust_for_test(
     path: str | Path,
     *,
     root_public_keys: Iterable[str],
@@ -63,7 +67,12 @@ def bootstrap_authority_trust(
     recovery_public_keys: Iterable[str],
     recovery_quorum: int,
 ) -> Path:
-    """Create the sole unsigned trust event; never replaces existing trust."""
+    """Create non-authoritative local fixture state for tests and development.
+
+    This helper is intentionally private.  The production package exposes no
+    unsigned trust-root mint/reset API.  Files created here remain local
+    integrity fixtures and cannot satisfy the high-assurance runtime gate.
+    """
     target = Path(path)
     if target.exists():
         raise FileExistsError("authority trust is already bootstrapped")
@@ -84,7 +93,7 @@ def bootstrap_authority_trust(
         "history": [],
     }
     _atomic_write(target, state)
-    advance_monotonic_anchor(
+    advance_local_integrity_anchor(
         target,
         "seat-authority-trust",
         state["epoch"],
@@ -94,7 +103,8 @@ def bootstrap_authority_trust(
     return target.resolve()
 
 
-def load_authority_trust(path: str | Path) -> dict[str, Any]:
+def load_local_authority_trust(path: str | Path) -> dict[str, Any]:
+    """Validate signed structure plus the same-user local integrity journal."""
     state = canonical_json_loads(Path(path).read_bytes())
     required = {
         "schema",
@@ -166,7 +176,7 @@ def load_authority_trust(path: str | Path) -> dict[str, Any]:
     for field in ("epoch", "version", "roots", "quorum", "recovery", "recovery_quorum", "bootstrap"):
         if state[field] != current[field]:
             raise ValueError("authority trust current state does not match signed history")
-    verify_monotonic_anchor(
+    verify_local_integrity_anchor(
         path,
         "seat-authority-trust",
         state["epoch"],
@@ -177,7 +187,14 @@ def load_authority_trust(path: str | Path) -> dict[str, Any]:
 
 
 def authority_public_key(path: str | Path, authority_key_id: str) -> str:
-    state = load_authority_trust(path)
+    """Resolve an authority key only through the high-assurance boundary."""
+    require_high_assurance_anchor()
+    return _local_authority_public_key(path, authority_key_id)
+
+
+def _local_authority_public_key(path: str | Path, authority_key_id: str) -> str:
+    """Resolve fixture state without making an authority claim."""
+    state = load_local_authority_trust(path)
     try:
         return state["roots"][authority_key_id]
     except KeyError as exc:
@@ -191,7 +208,7 @@ def build_authority_transition(
     new_quorum: int,
     recovery: bool = False,
 ) -> dict[str, Any]:
-    state = load_authority_trust(path)
+    state = load_local_authority_trust(path)
     roots = _key_map(new_root_public_keys)
     threshold = _validate_quorum(new_quorum, roots, "new authority")
     if roots == state["roots"] and threshold == state["quorum"]:
@@ -243,7 +260,7 @@ def apply_authority_transition(
     signatures: Iterable[dict[str, str]],
 ) -> dict[str, Any]:
     target = Path(path)
-    state = load_authority_trust(target)
+    state = load_local_authority_trust(target)
     signatures = list(signatures)
     required = {
         "schema",
@@ -290,7 +307,7 @@ def apply_authority_transition(
         "history": [*state["history"], signed_record],
     }
     _atomic_write(target, next_state)
-    advance_monotonic_anchor(
+    advance_local_integrity_anchor(
         target,
         "seat-authority-trust",
         next_state["epoch"],
@@ -305,5 +322,5 @@ def verify_authority_signatures(
     signatures: Iterable[dict[str, str]],
     trust_path: str | Path,
 ) -> None:
-    state = load_authority_trust(trust_path)
+    state = load_local_authority_trust(trust_path)
     _verify_quorum(payload, signatures, state["roots"], state["quorum"])

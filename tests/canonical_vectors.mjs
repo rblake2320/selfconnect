@@ -37,6 +37,70 @@ function validateNumbers(raw) {
   }
 }
 
+function rejectDuplicateNames(raw) {
+  let index = 0;
+  const whitespace = () => {
+    while (/\s/.test(raw[index] ?? "")) index += 1;
+  };
+  const stringToken = () => {
+    const start = index;
+    if (raw[index++] !== '"') throw new Error("expected string");
+    while (index < raw.length) {
+      const char = raw[index++];
+      if (char === '"') return JSON.parse(raw.slice(start, index));
+      if (char === "\\") {
+        const escaped = raw[index++];
+        if (escaped === "u") {
+          if (!/^[0-9a-fA-F]{4}$/.test(raw.slice(index, index + 4))) throw new Error("invalid escape");
+          index += 4;
+        } else if (!'"\\/bfnrt'.includes(escaped)) throw new Error("invalid escape");
+      } else if (char.charCodeAt(0) < 0x20) throw new Error("invalid string control");
+    }
+    throw new Error("unterminated string");
+  };
+  const value = () => {
+    whitespace();
+    if (raw[index] === "{") {
+      index += 1;
+      whitespace();
+      const names = new Set();
+      if (raw[index] === "}") { index += 1; return; }
+      while (true) {
+        whitespace();
+        const name = stringToken();
+        if (names.has(name)) throw new Error(`duplicate JSON name: ${name}`);
+        names.add(name);
+        whitespace();
+        if (raw[index++] !== ":") throw new Error("expected colon");
+        value();
+        whitespace();
+        const delimiter = raw[index++];
+        if (delimiter === "}") return;
+        if (delimiter !== ",") throw new Error("expected object delimiter");
+      }
+    }
+    if (raw[index] === "[") {
+      index += 1;
+      whitespace();
+      if (raw[index] === "]") { index += 1; return; }
+      while (true) {
+        value();
+        whitespace();
+        const delimiter = raw[index++];
+        if (delimiter === "]") return;
+        if (delimiter !== ",") throw new Error("expected array delimiter");
+      }
+    }
+    if (raw[index] === '"') { stringToken(); return; }
+    const match = raw.slice(index).match(/^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/);
+    if (!match) throw new Error("invalid JSON value");
+    index += match[0].length;
+  };
+  value();
+  whitespace();
+  if (index !== raw.length) throw new Error("trailing JSON data");
+}
+
 function quote(value) {
   let output = '"';
   for (let i = 0; i < value.length; i += 1) {
@@ -71,6 +135,7 @@ function canonical(value) {
 }
 
 function parseCanonical(raw) {
+  rejectDuplicateNames(raw);
   validateNumbers(raw);
   return canonical(JSON.parse(raw));
 }
