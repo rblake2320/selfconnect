@@ -110,6 +110,9 @@ jobs:
           tests/test_assignment_runtime.py
           tests/test_terminal_tab_guard.py
           tests/test_assignment_runtime_adversarial.py
+          tests/test_authority_revocation.py
+          tests/test_seat_canonicalization.py
+          tests/test_seat_pipe.py
           -q
 
       - name: Release claim and package audit

@@ -203,11 +203,13 @@ class AssignmentWatchdog:
                         **verification,
                     )
                     self._guard_pair(assignment_source, expected_target, "after_receipt_verify")
+                    if self._receipt_acknowledger is not None:
+                        self._receipt_acknowledger(copy.deepcopy(raw))
+                    self._guard_pair(assignment_source, expected_target, "after_receipt_ack")
                     acknowledge = getattr(self._receipt_reader, "acknowledge", None)
                     if callable(acknowledge):
                         acknowledge(raw)
-                    if self._receipt_acknowledger is not None:
-                        self._receipt_acknowledger(copy.deepcopy(raw))
+                    self._guard_pair(assignment_source, expected_target, "after_cursor_advance")
                     if verified["state"] in {"completed", "blocked", "rejected"}:
                         break
                 sleep(min(interval, max(0.0, deadline - self._clock())))

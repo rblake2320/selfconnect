@@ -19,14 +19,19 @@ from sc_assignment_runtime import (
     DurableReceiptMailbox,
     GuardedSubmitConfig,
     ProductionAssignmentRuntime,
-    RevocationSnapshot,
+    ReceiverLaunchContext,
     SeatAssignmentBroker,
+    SeatRevocationResolver,
+    SelfConnectAssignmentReceiver,
+    SignedLaunchAnchor,
     parse_assignment_ingress,
 )
 from sc_assignment_watchdog import AssignmentWatchdog
+from sc_authority_trust import bootstrap_authority_trust
 from sc_guarded_submit import AckKeyRing, TargetIdentity
 from sc_identity import AgentIdentity
 from sc_seat_identity import create_enrollment, key_id
+from sc_seat_revocation import apply_revocation_snapshot, create_revocation_snapshot, sign_revocation_snapshot
 from sc_terminal_tab import RUNTIME_ID_SCOPE, TerminalTabGuard, TerminalTabIdentity
 
 NOW = 2_000_000_000.0
@@ -94,7 +99,6 @@ def _environment(tmp_path, monkeypatch, *, submit_result=None, submit_error=None
         response_receiver_public_key_hex=response_receiver.public_key_hex,
         response_channel=channel,
     )
-    revocations = [RevocationSnapshot(frozenset(), frozenset(), "r1", NOW)]
     wall = [NOW + 1]
     submitted = []
 
@@ -110,12 +114,38 @@ def _environment(tmp_path, monkeypatch, *, submit_result=None, submit_error=None
                 "delivery_verified": True,
                 "peer_acknowledged": True,
                 "decision": "accepted",
+                "ack": {"ack_sha256": "a" * 64},
             }
         )
 
     monkeypatch.setattr(runtime_module, "guarded_submit", submit)
-    mailbox = DurableReceiptMailbox(tmp_path / "mailbox.sqlite3", channel_binding=channel)
-    journal = DurableAssignmentJournal(tmp_path / "dispatch.sqlite3")
+    launch = AgentIdentity.generate("launch")
+    mailbox = DurableReceiptMailbox(
+        tmp_path / "mailbox.sqlite3",
+        channel_binding=channel,
+        launch_anchor=SignedLaunchAnchor(tmp_path / "mailbox.anchor", launch),
+    )
+    journal = DurableAssignmentJournal(
+        tmp_path / "dispatch.sqlite3",
+        launch_anchor=SignedLaunchAnchor(tmp_path / "dispatch.anchor", launch),
+    )
+    trust_path, revocation_path = tmp_path / "trust.json", tmp_path / "revocations.json"
+    bootstrap_authority_trust(
+        trust_path,
+        root_public_keys=[authority.public_key_hex],
+        quorum=1,
+        recovery_public_keys=[authority.public_key_hex],
+        recovery_quorum=1,
+    )
+    snapshot = create_revocation_snapshot(revocation_path, trust_path, [], now=NOW, ttl_seconds=300)
+    apply_revocation_snapshot(
+        revocation_path,
+        trust_path,
+        snapshot,
+        [sign_revocation_snapshot(snapshot, authority)],
+        now=NOW,
+    )
+    resolver = SeatRevocationResolver(revocation_path, trust_path, clock=lambda: wall[0])
     coordinator_store = AssignmentStateStore(tmp_path / "coordinator.sqlite3")
     runtime = ProductionAssignmentRuntime(
         coordinator_identity=coordinator,
@@ -124,7 +154,7 @@ def _environment(tmp_path, monkeypatch, *, submit_result=None, submit_error=None
         bindings=bindings,
         mailbox=mailbox,
         assignment_journal=journal,
-        revocation_resolver=lambda: revocations[0],
+        revocation_resolver=resolver,
         terminal_tab_guard=TerminalTabGuard(tab, None, None, None),
         submit_config=GuardedSubmitConfig(
             sender="coordinator-birth-1",
@@ -147,24 +177,32 @@ def _environment(tmp_path, monkeypatch, *, submit_result=None, submit_error=None
         "tab": tab,
         "channel": channel,
         "bindings": bindings,
-        "revocations": revocations,
+        "revocation_resolver": resolver,
+        "revocation_path": revocation_path,
+        "trust_path": trust_path,
         "wall": wall,
         "submitted": submitted,
         "mailbox": mailbox,
         "journal": journal,
         "coordinator_store": coordinator_store,
         "runtime": runtime,
+        "launch": launch,
     }
 
 
 def _broker(env, path):
+    store = AssignmentStateStore(path / "seat.sqlite3")
     return SeatAssignmentBroker(
-        store=AssignmentStateStore(path / "seat.sqlite3"),
+        launch_context=ReceiverLaunchContext(
+            store=store,
+            assignment_journal=env["journal"],
+            mailbox=env["mailbox"],
+            revocation_resolver=env["revocation_resolver"],
+            store_path=store.path,
+            store_anchor=SignedLaunchAnchor(path / "receiver-store.anchor", env["launch"]),
+        ),
         seat_identity=env["seat"],
         bindings=env["bindings"],
-        mailbox=env["mailbox"],
-        assignment_journal=env["journal"],
-        revocation_resolver=lambda: env["revocations"][0],
         current_target=lambda: env["target"],
         current_terminal_tab=lambda: env["tab"],
         current_response_receiver_public_key=lambda: env["response_receiver"].public_key_hex,
@@ -175,6 +213,19 @@ def _broker(env, path):
 
 def _dispatch(env):
     return env["runtime"].dispatch(PAYLOAD, now=NOW, ttl_seconds=60)
+
+
+def _update_revocations(env, revoked):
+    snapshot = create_revocation_snapshot(
+        env["revocation_path"], env["trust_path"], revoked, now=env["wall"][0], ttl_seconds=300
+    )
+    apply_revocation_snapshot(
+        env["revocation_path"],
+        env["trust_path"],
+        snapshot,
+        [sign_revocation_snapshot(snapshot, env["authority"])],
+        now=env["wall"][0],
+    )
 
 
 @pytest.mark.parametrize(
@@ -206,7 +257,7 @@ def test_guarded_submit_exception_quarantines_without_returning_assignment(tmp_p
 def test_live_revocation_snapshots_gate_issue_admit_emit_and_watchdog(tmp_path, monkeypatch):
     issue_env = _environment(tmp_path / "issue", monkeypatch)
     coordinator_id = key_id(issue_env["coordinator"].public_key_hex)
-    issue_env["revocations"][0] = RevocationSnapshot(frozenset({coordinator_id}), frozenset(), "r2", NOW + 1)
+    _update_revocations(issue_env, [coordinator_id])
     with pytest.raises(AssignmentVerificationError, match="revoked"):
         _dispatch(issue_env)
     assert not issue_env["submitted"]
@@ -216,14 +267,16 @@ def test_live_revocation_snapshots_gate_issue_admit_emit_and_watchdog(tmp_path, 
     raw = _canonical(dispatch.assignment)
     coordinator_id = key_id(env["coordinator"].public_key_hex)
     seat_id = key_id(env["seat"].public_key_hex)
-    env["revocations"][0] = RevocationSnapshot(frozenset(), frozenset({seat_id}), "r3", NOW + 1)
+    _update_revocations(env, [seat_id])
     with pytest.raises(AssignmentVerificationError, match="revoked"):
         _broker(env, tmp_path / "revoked-admit").admit_raw(raw)
 
-    env["revocations"][0] = RevocationSnapshot(frozenset(), frozenset(), "r4", NOW + 1)
+    env["wall"][0] = NOW + 2
+    _update_revocations(env, [])
     broker = _broker(env, tmp_path / "active")
     broker.admit_raw(raw)
-    env["revocations"][0] = RevocationSnapshot(frozenset({coordinator_id}), frozenset(), "r5", NOW + 2)
+    env["wall"][0] = NOW + 3
+    _update_revocations(env, [coordinator_id])
     with pytest.raises(AssignmentVerificationError, match="revoked"):
         broker.emit(
             dispatch.assignment,
@@ -270,7 +323,7 @@ def test_post_read_guard_failure_does_not_commit_or_advance_cursor(tmp_path, mon
         alert_coordinator=lambda _event: None,
         source_guard=lambda _source: checks.append(True) or len(checks) == 1,
         target_guard=lambda _target: True,
-        verification_resolver=lambda: env["bindings"].verification(env["revocations"][0], now=NOW + 2),
+        verification_resolver=lambda: env["bindings"].verification(frozenset(), now=NOW + 2),
         clock=lambda: 0.0,
     )
     result = watchdog.monitor(
@@ -350,7 +403,7 @@ def test_durable_cursor_restart_skips_already_committed_expired_receipt(tmp_path
         observed,
         assignment,
         store=env["coordinator_store"],
-        **env["bindings"].verification(env["revocations"][0], now=NOW + 2),
+        **env["bindings"].verification(frozenset(), now=NOW + 2),
     )
     reader.acknowledge(observed)
     assert observed == accepted
@@ -377,7 +430,7 @@ def test_durable_cursor_restart_skips_already_committed_expired_receipt(tmp_path
         alert_coordinator=lambda _event: None,
         source_guard=lambda _source: True,
         target_guard=lambda target: target == env["target"],
-        verification_resolver=lambda: env["bindings"].verification(env["revocations"][0], now=NOW + 52),
+        verification_resolver=lambda: env["bindings"].verification(frozenset(), now=NOW + 52),
         clock=lambda: ticks[0],
     )
     completed = watchdog.monitor(
@@ -439,7 +492,7 @@ def test_mailbox_read_is_an_immutable_toctou_snapshot(tmp_path, monkeypatch):
         snapshot,
         assignment,
         store=env["coordinator_store"],
-        **env["bindings"].verification(env["revocations"][0], now=NOW + 2),
+        **env["bindings"].verification(frozenset(), now=NOW + 2),
     )
     reader.acknowledge(snapshot)
     fresh = env["mailbox"].reader(assignment, channel=env["channel"], consumer_id="fresh")
@@ -456,7 +509,7 @@ def test_ack_loss_recovery_is_durable_and_idempotent(tmp_path, monkeypatch):
         receipt,
         assignment,
         store=env["coordinator_store"],
-        **env["bindings"].verification(env["revocations"][0], now=NOW + 2),
+        **env["bindings"].verification(frozenset(), now=NOW + 2),
     )
     original_publish = env["mailbox"].publish_ack
     calls = []
@@ -517,3 +570,178 @@ def test_unattested_transport_is_labeled_and_high_assurance_refuses_it(tmp_path,
             event_log_path=tmp_path / "events.jsonl",
             high_assurance=True,
         )
+
+
+def test_sqlite_mutation_cannot_promote_quarantined_dispatch(tmp_path, monkeypatch):
+    env = _environment(
+        tmp_path, monkeypatch, submit_result={"ok": False, "state": "refused", "delivery_verified": False}
+    )
+    with pytest.raises(AssignmentDispatchError):
+        _dispatch(env)
+    record = parse_assignment_ingress(env["submitted"][0][0])
+    with sqlite3.connect(env["journal"].path) as connection:
+        row = connection.execute(
+            "SELECT sequence,entry_json FROM assignment_dispatch_chain_v2 ORDER BY sequence DESC LIMIT 1"
+        ).fetchone()
+        forged = json.loads(bytes(row[1]))
+        forged["state"] = "delivered"
+        connection.execute(
+            "UPDATE assignment_dispatch_chain_v2 SET entry_json=? WHERE sequence=?",
+            (_canonical(forged), row[0]),
+        )
+    with pytest.raises(AssignmentVerificationError, match=r"integrity|signature"):
+        env["journal"].require_delivered(record)
+
+
+def test_mailbox_wholesale_replacement_fails_external_launch_anchor(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    assignment = _dispatch(env).assignment
+    _broker(env, tmp_path).admit_raw(_canonical(assignment))
+    env["mailbox"].path.unlink()
+    with pytest.raises(AssignmentVerificationError, match=r"replacement|rollback"):
+        DurableReceiptMailbox(
+            env["mailbox"].path,
+            channel_binding=env["channel"],
+            launch_anchor=SignedLaunchAnchor(tmp_path / "mailbox.anchor", env["launch"]),
+        )
+
+
+def test_selfconnect_receiver_hook_routes_raw_only_through_broker(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    assignment = _dispatch(env).assignment
+    broker = _broker(env, tmp_path)
+    receiver = SelfConnectAssignmentReceiver(broker, read_raw_assignment=lambda: _canonical(assignment))
+    admission = receiver.serve_once()
+    assert admission.assignment["assignment_id"] == assignment["assignment_id"]
+    assert receiver.transport_assurance == "third_party_tui_unintercepted"
+    with pytest.raises(ValueError, match="attestation verifier"):
+        SelfConnectAssignmentReceiver(
+            broker,
+            read_raw_assignment=lambda: _canonical(assignment),
+            high_assurance=True,
+        )
+
+
+def test_replay_store_is_launch_pinned_and_fresh_store_cannot_readmit(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    assignment = _dispatch(env).assignment
+    broker = _broker(env, tmp_path)
+    broker.admit_raw(_canonical(assignment))
+    with pytest.raises(Exception, match="replay"):
+        broker.admit_raw(_canonical(assignment))
+    assert "store" not in __import__("inspect").signature(broker.admit_raw).parameters
+    wrong = AssignmentStateStore(tmp_path / "fresh.sqlite3")
+    with pytest.raises(ValueError, match="differs"):
+        ReceiverLaunchContext(
+            store=wrong,
+            assignment_journal=env["journal"],
+            mailbox=env["mailbox"],
+            revocation_resolver=env["revocation_resolver"],
+            store_path=tmp_path / "trusted.sqlite3",
+            store_anchor=SignedLaunchAnchor(tmp_path / "fresh.anchor", env["launch"]),
+        )
+
+
+def test_ack_failure_keeps_cursor_for_restart_auto_recovery(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    assignment = _dispatch(env).assignment
+    _broker(env, tmp_path).admit_raw(_canonical(assignment))
+    original = env["runtime"].recover_receipt_ack
+    calls = []
+
+    def fail_once(receipt):
+        calls.append(True)
+        if len(calls) == 1:
+            raise OSError("ACK outbox unavailable")
+        return original(receipt)
+
+    monkeypatch.setattr(env["runtime"], "recover_receipt_ack", fail_once)
+    alerts = []
+    watchdog, source = env["runtime"].watchdog(
+        assignment,
+        read_uia=lambda _hwnd: "working",
+        read_ocr=lambda _hwnd: "",
+        capture=lambda _hwnd: None,
+        alert_coordinator=alerts.append,
+        source_guard=lambda _source: True,
+        target_guard=lambda _target: True,
+        assignment_source="source",
+        clock=lambda: 0.0,
+    )
+    first = watchdog.monitor(
+        hwnd=env["target"].hwnd,
+        assignment=assignment,
+        assignment_source=source,
+        timeout_seconds=1,
+        poll_seconds=0.1,
+        sleep=lambda _seconds: None,
+    )
+    assert first.state == "blocked"
+    restarted, source = env["runtime"].watchdog(
+        assignment,
+        read_uia=lambda _hwnd: "working",
+        read_ocr=lambda _hwnd: "",
+        capture=lambda _hwnd: None,
+        alert_coordinator=lambda _event: None,
+        source_guard=lambda _source: True,
+        target_guard=lambda _target: True,
+        assignment_source="source",
+        clock=lambda: 0.0,
+    )
+    ticks = [0.0]
+    restarted._clock = lambda: ticks[0]
+    second = restarted.monitor(
+        hwnd=env["target"].hwnd,
+        assignment=assignment,
+        assignment_source=source,
+        timeout_seconds=0.2,
+        poll_seconds=0.1,
+        sleep=lambda value: ticks.__setitem__(0, ticks[0] + value),
+    )
+    assert second.state == "blocked" and len(calls) >= 2
+
+
+def test_guard_after_ack_blocks_authenticated_return_and_preserves_cursor(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    assignment = _dispatch(env).assignment
+    _broker(env, tmp_path).admit_raw(_canonical(assignment))
+    checks = []
+    watchdog, source = env["runtime"].watchdog(
+        assignment,
+        read_uia=lambda _hwnd: "completed",
+        read_ocr=lambda _hwnd: "",
+        capture=lambda _hwnd: None,
+        alert_coordinator=lambda _event: None,
+        source_guard=lambda _source: checks.append(True) or len(checks) < 4,
+        target_guard=lambda _target: True,
+        assignment_source="source",
+        clock=lambda: 0.0,
+    )
+    result = watchdog.monitor(
+        hwnd=env["target"].hwnd,
+        assignment=assignment,
+        assignment_source=source,
+        timeout_seconds=1,
+        poll_seconds=0.1,
+        sleep=lambda _seconds: None,
+    )
+    assert result.state == "blocked" and result.authenticated is False
+    reader = env["mailbox"].reader(assignment, channel=env["channel"])
+    assert reader()["sequence"] == 1
+
+
+def test_signed_revocation_resolver_rejects_nan_stale_and_replay(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    old = env["revocation_path"].read_bytes()
+    env["wall"][0] = float("nan")
+    with pytest.raises(AssignmentVerificationError, match="time"):
+        env["revocation_resolver"]()
+    env["wall"][0] = NOW + 301
+    with pytest.raises(AssignmentVerificationError, match="stale"):
+        env["revocation_resolver"]()
+    env["wall"][0] = NOW + 2
+    _update_revocations(env, [])
+    env["revocation_resolver"]()
+    env["revocation_path"].write_bytes(old)
+    with pytest.raises(AssignmentVerificationError, match=r"replay|rollback"):
+        env["revocation_resolver"]()

@@ -17,12 +17,16 @@ from sc_assignment_runtime import (
     DurableReceiptMailbox,
     GuardedSubmitConfig,
     ProductionAssignmentRuntime,
-    RevocationSnapshot,
+    ReceiverLaunchContext,
     SeatAssignmentBroker,
+    SeatRevocationResolver,
+    SignedLaunchAnchor,
 )
+from sc_authority_trust import bootstrap_authority_trust
 from sc_guarded_submit import AckKeyRing, TargetIdentity
 from sc_identity import AgentIdentity
 from sc_seat_identity import create_enrollment
+from sc_seat_revocation import apply_revocation_snapshot, create_revocation_snapshot, sign_revocation_snapshot
 from sc_terminal_tab import RUNTIME_ID_SCOPE, TerminalTabGuard, TerminalTabIdentity
 
 NOW = 2_000_000_000.0
@@ -86,7 +90,12 @@ def _case(tmp_path, monkeypatch):
         response_receiver_public_key_hex=response_receiver.public_key_hex,
         response_channel=channel,
     )
-    mailbox = DurableReceiptMailbox(tmp_path / "receipts.sqlite3", channel_binding=channel)
+    launch = AgentIdentity.generate("launch")
+    mailbox = DurableReceiptMailbox(
+        tmp_path / "receipts.sqlite3",
+        channel_binding=channel,
+        launch_anchor=SignedLaunchAnchor(tmp_path / "mailbox.anchor", launch),
+    )
     submitted = []
 
     def fake_guarded_submit(text, **kwargs):
@@ -97,14 +106,33 @@ def _case(tmp_path, monkeypatch):
             "delivery_verified": True,
             "peer_acknowledged": True,
             "decision": "accepted",
+            "ack": {"ack_sha256": "a" * 64},
         }
 
     monkeypatch.setattr(runtime_module, "guarded_submit", fake_guarded_submit)
     guard = TerminalTabGuard(tab, None, None, None)
     coordinator_store = AssignmentStateStore(tmp_path / "coordinator.sqlite3")
-    assignment_journal = DurableAssignmentJournal(tmp_path / "dispatch.sqlite3")
-    revocations = RevocationSnapshot(frozenset(), frozenset(), "test-v1", NOW)
-    revocations_ref = [revocations]
+    assignment_journal = DurableAssignmentJournal(
+        tmp_path / "dispatch.sqlite3",
+        launch_anchor=SignedLaunchAnchor(tmp_path / "dispatch.anchor", launch),
+    )
+    trust_path, revocation_path = tmp_path / "trust.json", tmp_path / "revocations.json"
+    bootstrap_authority_trust(
+        trust_path,
+        root_public_keys=[authority.public_key_hex],
+        quorum=1,
+        recovery_public_keys=[authority.public_key_hex],
+        recovery_quorum=1,
+    )
+    snapshot = create_revocation_snapshot(revocation_path, trust_path, [], now=NOW, ttl_seconds=300)
+    apply_revocation_snapshot(
+        revocation_path,
+        trust_path,
+        snapshot,
+        [sign_revocation_snapshot(snapshot, authority)],
+        now=NOW,
+    )
+    revocation_resolver = SeatRevocationResolver(revocation_path, trust_path, clock=lambda: NOW + 4)
     coordinator_runtime = ProductionAssignmentRuntime(
         coordinator_identity=coordinator,
         coordinator_store=coordinator_store,
@@ -112,7 +140,7 @@ def _case(tmp_path, monkeypatch):
         bindings=bindings,
         mailbox=mailbox,
         assignment_journal=assignment_journal,
-        revocation_resolver=lambda: revocations_ref[0],
+        revocation_resolver=revocation_resolver,
         terminal_tab_guard=guard,
         submit_config=GuardedSubmitConfig(
             sender="codex-12-4abf6b40",
@@ -139,20 +167,25 @@ def _case(tmp_path, monkeypatch):
         "submitted": submitted,
         "coordinator_store": coordinator_store,
         "assignment_journal": assignment_journal,
-        "revocations": revocations,
-        "revocations_ref": revocations_ref,
+        "revocation_resolver": revocation_resolver,
+        "launch": launch,
         "runtime": coordinator_runtime,
     }
 
 
 def _broker(case, tmp_path, wall, **providers):
+    store = AssignmentStateStore(tmp_path / "seat.sqlite3")
     return SeatAssignmentBroker(
-        store=AssignmentStateStore(tmp_path / "seat.sqlite3"),
+        launch_context=ReceiverLaunchContext(
+            store=store,
+            assignment_journal=case["assignment_journal"],
+            mailbox=case["mailbox"],
+            revocation_resolver=case["revocation_resolver"],
+            store_path=store.path,
+            store_anchor=SignedLaunchAnchor(tmp_path / "receiver-store.anchor", case["launch"]),
+        ),
         seat_identity=case["seat"],
         bindings=case["bindings"],
-        mailbox=case["mailbox"],
-        assignment_journal=case["assignment_journal"],
-        revocation_resolver=lambda: case["revocations_ref"][0],
         current_target=providers.get("current_target", lambda: case["target"]),
         current_terminal_tab=providers.get("current_terminal_tab", lambda: case["tab"]),
         current_response_receiver_public_key=providers.get(
@@ -219,7 +252,7 @@ def test_signed_inline_dispatch_broker_and_dynamic_watchdog_end_to_end(tmp_path,
     )
     assert result.state == "completed" and result.authenticated is True
     assert result.receipt["result_sha256"] == RESULT_HASH
-    assert len(target_checks) == 9 and all(item == case["target"] for item in target_checks)
+    assert len(target_checks) == 15 and all(item == case["target"] for item in target_checks)
     ack = broker.consume_receipt_ack(dispatch.assignment, admission.accepted_receipt)
     assert ack is not None and ack["state"] == "accepted"
 
@@ -271,7 +304,11 @@ def test_mailbox_fork_and_forged_receipt_never_authenticate(tmp_path, monkeypatc
     with pytest.raises(AssignmentReplayError, match="fork"):
         case["mailbox"].publish(fork, channel=case["channel"])
 
-    forged_mailbox = DurableReceiptMailbox(tmp_path / "forged.sqlite3", channel_binding=case["channel"])
+    forged_mailbox = DurableReceiptMailbox(
+        tmp_path / "forged.sqlite3",
+        channel_binding=case["channel"],
+        launch_anchor=SignedLaunchAnchor(tmp_path / "forged.anchor", AgentIdentity.generate("forged-launch")),
+    )
     forged = copy.deepcopy(admission.accepted_receipt)
     forged["signature_b64"] = "Zm9yZ2Vk"
     forged_mailbox.publish(forged, channel=case["channel"])
@@ -285,7 +322,7 @@ def test_mailbox_fork_and_forged_receipt_never_authenticate(tmp_path, monkeypatc
         alert_coordinator=alerts.append,
         source_guard=lambda _source: True,
         target_guard=lambda target: target == case["target"],
-        verification_resolver=lambda: case["bindings"].verification(case["revocations"], now=NOW + 2),
+        verification_resolver=lambda: case["bindings"].verification(frozenset(), now=NOW + 2),
         clock=lambda: 0.0,
     )
     result = watchdog.monitor(
