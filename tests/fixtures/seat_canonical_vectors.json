@@ -1,0 +1,18 @@
+{
+  "valid": [
+    {"name": "zero", "input": "{\"n\":0}", "canonical": "{\"n\":0}"},
+    {"name": "max-safe-int", "input": "{\"n\":9007199254740991}", "canonical": "{\"n\":9007199254740991}"},
+    {"name": "min-safe-int", "input": "{\"n\":-9007199254740991}", "canonical": "{\"n\":-9007199254740991}"},
+    {"name": "nfc-normalization", "input": "{\"x\":\"e\\u0301\"}", "canonical": "{\"x\":\"\\u00e9\"}"},
+    {"name": "non-bmp", "input": "{\"x\":\"\\ud83e\\udd16\"}", "canonical": "{\"x\":\"\\ud83e\\udd16\"}"}
+  ],
+  "invalid": [
+    {"name": "negative-zero", "input": "{\"n\":-0}"},
+    {"name": "fraction", "input": "{\"n\":1.0}"},
+    {"name": "exponent", "input": "{\"n\":1e0}"},
+    {"name": "positive-huge-int", "input": "{\"n\":9007199254740992}"},
+    {"name": "negative-huge-int", "input": "{\"n\":-9007199254740992}"},
+    {"name": "lone-high-surrogate", "input": "{\"x\":\"\\ud800\"}"},
+    {"name": "lone-low-surrogate", "input": "{\"x\":\"\\udc00\"}"}
+  ]
+}

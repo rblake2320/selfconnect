@@ -11,7 +11,6 @@ import argparse
 import base64
 import hashlib
 import json
-import math
 import os
 import sqlite3
 import time
@@ -22,7 +21,7 @@ from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from sc_seat_identity import _canonical as _strict_canonical
-from sc_seat_identity import canonical_json_loads
+from sc_seat_identity import _duration_ms, _time_ms, canonical_json_loads
 
 MANIFEST_SCHEMA = "selfconnect-migration-manifest-v2"
 TRUST_SCHEMA = "selfconnect-migration-trust-v1"
@@ -36,6 +35,13 @@ def _canonical(value: Any) -> bytes:
 
 def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _canonical_binding(binding: dict[str, Any]) -> dict[str, Any]:
+    result = dict(binding)
+    if "process_started_at" in result:
+        result["process_started_at"] = _time_ms(result["process_started_at"])
+    return result
 
 
 def signer_key_id(public_key_hex: str) -> str:
@@ -158,9 +164,8 @@ def create_signed_manifest(
 ) -> Path:
     if not 1 <= int(ttl_seconds) <= MAX_TTL_SECONDS:
         raise ValueError("migration manifest TTL must be between 1 and 300 seconds")
-    issued_at = time.time() if now is None else float(now)
-    if not math.isfinite(issued_at):
-        raise ValueError("migration manifest time is invalid")
+    issued_at = _time_ms(now)
+    ttl_ms = _duration_ms(ttl_seconds, "migration manifest TTL")
     checkpoint = Path(checkpoint_path).resolve()
     checkpoint_bytes = checkpoint.read_bytes()
     public_key_hex = str(identity.public_key_hex)
@@ -170,11 +175,11 @@ def create_signed_manifest(
         "issuer_key_id": signer_key_id(public_key_hex),
         "role": str(role),
         "source_hwnd": int(source_hwnd),
-        "successor": dict(successor_binding),
+        "successor": _canonical_binding(successor_binding),
         "checkpoint_path": str(checkpoint),
         "checkpoint_sha256": _sha256_bytes(checkpoint_bytes),
         "issued_at": issued_at,
-        "expires_at": issued_at + int(ttl_seconds),
+        "expires_at": issued_at + ttl_ms,
         "nonce": uuid.uuid4().hex,
     }
     signed = {**body, "signature_b64": base64.b64encode(identity.sign(_canonical(body))).decode()}
@@ -262,6 +267,7 @@ def verify_migration_manifest(
     now: float | None = None,
     target_resolver: Callable[[int], dict[str, Any]] = resolve_window_binding,
     seat_bundle: dict[str, Any] | None = None,
+    seat_pipe_receipt: Any | None = None,
     seat_replay_store: str | Path | None = None,
     seat_issue_store: str | Path | None = None,
     seat_tab_snapshot_resolver: Callable[[int, str], dict[str, Any]] | None = None,
@@ -294,16 +300,14 @@ def verify_migration_manifest(
     except ValueError as exc:
         raise ValueError("migration manifest nonce is invalid") from exc
     for field in ("issued_at", "expires_at"):
-        if type(manifest.get(field)) not in (int, float) or not math.isfinite(float(manifest[field])):
+        if type(manifest.get(field)) is not int:
             raise ValueError("migration manifest time field is invalid")
-    check_time = time.time() if now is None else float(now)
-    if not math.isfinite(check_time):
-        raise ValueError("migration verification time is invalid")
+    check_time = _time_ms(now)
     if manifest["expires_at"] <= manifest["issued_at"]:
         raise ValueError("migration manifest validity window is inverted or empty")
-    if manifest["issued_at"] > check_time + 5 or check_time > manifest["expires_at"]:
+    if manifest["issued_at"] > check_time + 5000 or check_time > manifest["expires_at"]:
         raise ValueError("migration manifest is not currently valid")
-    if manifest["expires_at"] - manifest["issued_at"] > MAX_TTL_SECONDS:
+    if manifest["expires_at"] - manifest["issued_at"] > MAX_TTL_SECONDS * 1000:
         raise ValueError("migration manifest validity window is too broad")
     key_id = manifest.get("issuer_key_id")
     if not isinstance(key_id, str) or not isinstance(signature_text, str):
@@ -318,17 +322,17 @@ def verify_migration_manifest(
     successor = manifest.get("successor")
     if not isinstance(successor, dict) or successor.get("hwnd") != expected_hwnd:
         raise ValueError("migration manifest targets a different successor HWND")
-    live_binding = target_resolver(expected_hwnd)
+    live_binding = _canonical_binding(target_resolver(expected_hwnd))
     routing_binding_matches = live_binding == successor
     checkpoint_path = Path(str(manifest.get("checkpoint_path", ""))).resolve()
     checkpoint_bytes = checkpoint_path.read_bytes()
     if _sha256_bytes(checkpoint_bytes) != manifest.get("checkpoint_sha256"):
         raise ValueError("migration checkpoint bytes do not match the signed manifest")
-    checkpoint = canonical_json_loads(checkpoint_bytes)
+    checkpoint = json.loads(checkpoint_bytes)
     if checkpoint.get("schema") != "selfconnect-checkpoint-v1":
         raise ValueError("migration checkpoint schema is invalid")
     stable = {key: value for key, value in checkpoint.items() if key != "digest"}
-    if checkpoint.get("digest") != _sha256_bytes(_canonical(stable)):
+    if checkpoint.get("digest") != _sha256_bytes(json.dumps(stable, sort_keys=True, separators=(",", ":")).encode()):
         raise ValueError("migration checkpoint digest is invalid")
     if checkpoint.get("role") != manifest.get("role") or checkpoint.get("own_hwnd") != manifest["source_hwnd"]:
         raise ValueError("migration checkpoint role/source binding is invalid")
@@ -336,44 +340,46 @@ def verify_migration_manifest(
         if not isinstance(seat_bundle, dict):
             raise ValueError("authenticated per-seat channel proof is required")
         from sc_seat_identity import (
-            trusted_receiver_public_key,
             verify_enrollment,
-            verify_proof,
             verify_proof_runtime,
         )
 
         enrollment = seat_bundle.get("enrollment")
         challenge = seat_bundle.get("challenge")
         delivery = seat_bundle.get("delivery")
-        proof = seat_bundle.get("proof")
-        channel = seat_bundle.get("channel_evidence")
-        if not all(isinstance(item, dict) for item in (enrollment, challenge, delivery, proof, channel)):
+        if not all(isinstance(item, dict) for item in (enrollment, challenge, delivery)):
             raise ValueError("authenticated per-seat channel proof is malformed")
-        if seat_issue_store is None or seat_tab_snapshot_resolver is None or seat_receiver_trust_store is None:
-            raise ValueError("trusted seat issuance, receiver, and live tab configuration are required")
-        runtime_trust = seat_authority_trust_store is not None or seat_revocation_store is not None
-        if runtime_trust and (seat_authority_trust_store is None or seat_revocation_store is None):
-            raise ValueError("seat authority trust and revocation stores must be configured together")
-        if runtime_trust:
-            from sc_authority_trust import authority_public_key
+        if any(
+            item is None
+            for item in (
+                seat_pipe_receipt,
+                seat_issue_store,
+                seat_tab_snapshot_resolver,
+                seat_receiver_trust_store,
+                seat_authority_trust_store,
+                seat_revocation_store,
+            )
+        ):
+            raise ValueError(
+                "actionable migration requires pipe-issued evidence and authority, revocation, receiver, issuance, and live-tab resolvers"
+            )
+        from sc_authority_trust import authority_public_key
+        from sc_seat_revocation import resolve_revoked_key_ids
 
-            seat_authority_key = authority_public_key(seat_authority_trust_store, challenge.get("authority_key_id"))
-        else:
-            seat_authority_key = public_key_hex
-        verified_enrollment = verify_enrollment(enrollment, authority_public_key_hex=seat_authority_key, now=check_time)
-        receiver_key_id = channel.get("receiver_key_id")
-        if not isinstance(receiver_key_id, str):
-            raise ValueError("secure response receiver key ID is required")
-        receiver_public_key_hex = trusted_receiver_public_key(receiver_key_id, seat_receiver_trust_store)
-        if receiver_public_key_hex == seat_authority_key:
-            raise ValueError("seat response receiver key must be distinct from migration authority")
+        seat_authority_key = authority_public_key(seat_authority_trust_store, challenge.get("authority_key_id"))
+        revoked = resolve_revoked_key_ids(seat_revocation_store, seat_authority_trust_store, now=now)
+        verified_enrollment = verify_enrollment(
+            enrollment,
+            authority_public_key_hex=seat_authority_key,
+            revoked_key_ids=revoked,
+            now=now,
+        )
         if challenge.get("operation_sha256") != _sha256_bytes(_canonical(signed_manifest)):
             raise ValueError("seat challenge does not bind the signed migration operation")
         proof_args = {
             "challenge": challenge,
             "delivery": delivery,
             "enrollment": enrollment,
-            "channel_evidence": channel,
             "expected_operation_sha256": _sha256_bytes(_canonical(signed_manifest)),
             "expected_tab_snapshot_sha256": __import__("sc_seat_identity").tab_snapshot_digest(
                 seat_tab_snapshot_resolver(expected_hwnd, verified_enrollment["birth_id"])
@@ -381,24 +387,16 @@ def verify_migration_manifest(
             "expected_target_hwnd": expected_hwnd,
             "replay_store": seat_replay_store or replay_store or default_replay_store(),
             "issue_store": seat_issue_store,
-            "now": check_time,
+            "now": now,
             "consume": True,
         }
-        if runtime_trust:
-            verify_proof_runtime(
-                proof,
-                **proof_args,
-                authority_trust_store=seat_authority_trust_store,
-                revocation_store=seat_revocation_store,
-                receiver_trust_store=seat_receiver_trust_store,
-            )
-        else:
-            verify_proof(
-                proof,
-                **proof_args,
-                authority_public_key_hex=seat_authority_key,
-                receiver_public_key_hex=receiver_public_key_hex,
-            )
+        verify_proof_runtime(
+            seat_pipe_receipt,
+            **proof_args,
+            authority_trust_store=seat_authority_trust_store,
+            revocation_store=seat_revocation_store,
+            receiver_trust_store=seat_receiver_trust_store,
+        )
     receipt = {
         "schema": RECEIPT_SCHEMA,
         "manifest_id": manifest["manifest_id"],
@@ -421,6 +419,27 @@ def verify_migration_manifest(
         "receipt": receipt,
         "routing_binding_matches": routing_binding_matches,
     }
+
+
+def receive_and_verify_migration_manifest(
+    receiver: Any,
+    manifest_path: str | Path,
+    *,
+    pipe_timeout: float = 15.0,
+    **verification: Any,
+) -> dict[str, Any]:
+    """Actionable path: receive live pipe evidence before consuming migration."""
+    from sc_seat_pipe import SeatResponseReceiver
+
+    if not isinstance(receiver, SeatResponseReceiver):
+        raise TypeError("a live SeatResponseReceiver is required")
+    receipt = receiver.serve_once(timeout=pipe_timeout)
+    return verify_migration_manifest(
+        manifest_path,
+        consume=True,
+        seat_pipe_receipt=receipt,
+        **verification,
+    )
 
 
 def _authorized_cli_store(value: str | None, env_name: str, label: str) -> str | None:

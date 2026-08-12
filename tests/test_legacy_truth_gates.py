@@ -4,13 +4,32 @@ import pytest
 import self_connect
 from sc_identity import AgentIdentity
 from sc_seat_identity import (
+    CHANNEL_SCHEMA,
+    _signed,
+    _time_ms,
     create_challenge,
     create_enrollment,
     create_proof,
     deliver_challenge_postmessage,
-    secure_channel_evidence,
+    key_id,
     tab_snapshot_digest,
 )
+
+
+def _test_channel(challenge, receiver, *, peer_sid, pipe_instance):
+    body = {
+        "schema": CHANNEL_SCHEMA,
+        "transport": "private_named_pipe_v1",
+        "response_address_sha256": challenge["response_address_sha256"],
+        "server_nonce": challenge["server_nonce"],
+        "peer_sid": peer_sid,
+        "pipe_instance": pipe_instance,
+        "observed_at": _time_ms(),
+    }
+    return {
+        **_signed(body, receiver, "receiver_signature_b64"),
+        "receiver_key_id": key_id(receiver.public_key_hex),
+    }
 
 
 def _enrolled_registry() -> tuple[self_connect.AgentRegistry, self_connect.PeerRecord]:
@@ -32,9 +51,7 @@ def test_forged_visible_frame_is_advisory_and_cannot_transition_ready():
     events: list[dict] = []
     watchdog.on(events.append)
 
-    forged = self_connect.parse_frame(
-        self_connect.build_frame(200, 999, "PEER_READY", topic="legacy")
-    )
+    forged = self_connect.parse_frame(self_connect.build_frame(200, 999, "PEER_READY", topic="legacy"))
     assert forged is not None
     watchdog._on_inbound_frame(forged)
 
@@ -146,9 +163,9 @@ def test_crypto_seat_proof_is_bound_to_exact_hwnd_even_when_pid_matches(tmp_path
         authority_public_key_hex=authority.public_key_hex,
         issue_store=issue_store,
     )
-    channel = secure_channel_evidence(
+    channel = _test_channel(
         challenge,
-        receiver_identity=receiver,
+        receiver,
         peer_sid="S-1-5-21-test",
         pipe_instance="pipe-test",
     )

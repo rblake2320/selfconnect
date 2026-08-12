@@ -29,31 +29,45 @@ MAX_TTL_SECONDS = 60.0
 MAX_ENROLLMENT_TTL_SECONDS = 600.0
 MAX_CLOCK_SKEW_SECONDS = 5.0
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
-MAX_CANONICAL_INTEGER = (1 << 63) - 1
+MAX_CANONICAL_INTEGER = (1 << 53) - 1
+
+
+def _time_ms(value: float | None = None) -> int:
+    seconds = time.time() if value is None else float(value)
+    if not math.isfinite(seconds):
+        raise ValueError("time is invalid")
+    milliseconds = round(seconds * 1000)
+    return milliseconds
+
+
+def _duration_ms(value: float, label: str) -> int:
+    seconds = float(value)
+    if not math.isfinite(seconds):
+        raise ValueError(f"{label} is invalid")
+    milliseconds = round(seconds * 1000)
+    if abs(milliseconds / 1000 - seconds) > 1e-9:
+        raise ValueError(f"{label} must have at most millisecond precision")
+    return milliseconds
 
 
 def _validate_canonical_value(value: Any, path: str = "$") -> None:
     """Enforce the JSON domain signed by SelfConnect.
 
-    Strings must already be NFC.  This avoids silently changing an identifier
-    between parsing and signature verification while still allowing the full
-    Unicode range, including non-BMP code points.  Integers are intentionally
-    bounded to signed 64-bit values so other implementations cannot disagree
-    about arbitrary-precision JSON numbers.
+    Strings permit the full Unicode scalar range and are normalized to NFC
+    before signing. Integers are bounded to the exact IEEE-754 safe range so
+    Python and JavaScript implementations cannot disagree about precision.
     """
     if value is None or type(value) is bool:
         return
     if type(value) is int:
-        if not -MAX_CANONICAL_INTEGER - 1 <= value <= MAX_CANONICAL_INTEGER:
+        if not -MAX_CANONICAL_INTEGER <= value <= MAX_CANONICAL_INTEGER:
             raise ValueError(f"canonical JSON integer is out of range at {path}")
         return
     if type(value) is float:
-        if not math.isfinite(value):
-            raise ValueError(f"canonical JSON number is not finite at {path}")
-        return
+        raise ValueError(f"canonical JSON floats are forbidden at {path}")
     if isinstance(value, str):
-        if unicodedata.normalize("NFC", value) != value:
-            raise ValueError(f"canonical JSON string is not NFC at {path}")
+        if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+            raise ValueError(f"canonical JSON string contains a lone surrogate at {path}")
         return
     if isinstance(value, list):
         for index, item in enumerate(value):
@@ -63,10 +77,30 @@ def _validate_canonical_value(value: Any, path: str = "$") -> None:
         for key, item in value.items():
             if not isinstance(key, str):
                 raise ValueError(f"canonical JSON object key is not a string at {path}")
+            if any(ord(char) < 0x20 or ord(char) > 0x7E for char in key):
+                raise ValueError(f"canonical JSON object key is not ASCII at {path}")
             _validate_canonical_value(key, f"{path}.<key>")
             _validate_canonical_value(item, f"{path}.{key}")
         return
     raise ValueError(f"unsupported canonical JSON value at {path}")
+
+
+def _normalize_canonical_value(value: Any, path: str = "$") -> Any:
+    """Return the integer-only, Unicode-scalar, NFC JSON signing domain."""
+    _validate_canonical_value(value, path)
+    if isinstance(value, str):
+        return unicodedata.normalize("NFC", value)
+    if isinstance(value, list):
+        return [_normalize_canonical_value(item, f"{path}[{index}]") for index, item in enumerate(value)]
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized_key = unicodedata.normalize("NFC", key)
+            if normalized_key in normalized:
+                raise ValueError(f"duplicate canonical JSON key after NFC normalization: {normalized_key}")
+            normalized[normalized_key] = _normalize_canonical_value(item, f"{path}.{normalized_key}")
+        return normalized
+    return value
 
 
 def canonical_json_loads(raw: str | bytes) -> Any:
@@ -80,22 +114,34 @@ def canonical_json_loads(raw: str | bytes) -> Any:
             result[key] = value
         return result
 
+    def parse_integer(token: str) -> int:
+        if token == "-0":
+            raise ValueError("canonical JSON negative zero is forbidden")
+        value = int(token)
+        if not -MAX_CANONICAL_INTEGER <= value <= MAX_CANONICAL_INTEGER:
+            raise ValueError("canonical JSON integer is out of range")
+        return value
+
+    def reject_float(token: str) -> float:
+        raise ValueError(f"canonical JSON floats are forbidden: {token}")
+
     try:
         value = json.loads(
             raw,
             object_pairs_hook=unique_object,
+            parse_int=parse_integer,
+            parse_float=reject_float,
             parse_constant=lambda token: (_ for _ in ()).throw(ValueError(f"invalid JSON constant: {token}")),
         )
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise ValueError("canonical JSON is invalid") from exc
-    _validate_canonical_value(value)
-    return value
+    return _normalize_canonical_value(value)
 
 
 def _canonical(value: Any) -> bytes:
-    _validate_canonical_value(value)
+    normalized = _normalize_canonical_value(value)
     return json.dumps(
-        value,
+        normalized,
         sort_keys=True,
         separators=(",", ":"),
         allow_nan=False,
@@ -195,12 +241,17 @@ def trusted_receiver_public_key(receiver_id: str, path: str | Path) -> str:
 
 
 def _signed(body: dict[str, Any], identity: Any, field: str) -> dict[str, Any]:
-    return {**body, field: base64.b64encode(identity.sign(_canonical(body))).decode()}
+    normalized = _normalize_canonical_value(body)
+    return {
+        **normalized,
+        field: base64.b64encode(identity.sign(_canonical(normalized))).decode(),
+    }
 
 
 def _verify_signed(record: dict[str, Any], public_key_hex: str, field: str, label: str) -> dict[str, Any]:
     body = dict(record)
     signature = body.pop(field, None)
+    body = _normalize_canonical_value(body)
     try:
         Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex)).verify(
             base64.b64decode(signature, validate=True), _canonical(body)
@@ -223,7 +274,8 @@ def create_enrollment(
         raise ValueError("invalid seat birth identity")
     if not 0 < ttl_seconds <= MAX_ENROLLMENT_TTL_SECONDS:
         raise ValueError("seat enrollment TTL is invalid")
-    issued = time.time() if now is None else float(now)
+    issued = _time_ms(now)
+    ttl_ms = _duration_ms(ttl_seconds, "seat enrollment TTL")
     public_key = str(seat_identity.public_key_hex)
     body = {
         "schema": ENROLLMENT_SCHEMA,
@@ -234,7 +286,7 @@ def create_enrollment(
         "generation": generation,
         "seat_epoch": secrets.token_hex(32),
         "issued_at": issued,
-        "expires_at": issued + ttl_seconds,
+        "expires_at": issued + ttl_ms,
         "authority_key_id": key_id(str(authority_identity.public_key_hex)),
     }
     return _signed(body, authority_identity, "authority_signature_b64")
@@ -268,11 +320,15 @@ def verify_enrollment(
         raise ValueError("seat enrollment authority is not trusted")
     if data["seat_key_id"] in revoked_key_ids:
         raise ValueError("seat enrollment key is revoked")
-    current = time.time() if now is None else float(now)
-    issued, expires = float(data["issued_at"]), float(data["expires_at"])
-    if not all(math.isfinite(v) for v in (current, issued, expires)) or expires <= issued:
+    current = _time_ms(now)
+    issued, expires = data["issued_at"], data["expires_at"]
+    if type(issued) is not int or type(expires) is not int or expires <= issued:
         raise ValueError("seat enrollment time is invalid")
-    if expires - issued > MAX_ENROLLMENT_TTL_SECONDS or issued > current + MAX_CLOCK_SKEW_SECONDS or current > expires:
+    if (
+        expires - issued > MAX_ENROLLMENT_TTL_SECONDS * 1000
+        or issued > current + MAX_CLOCK_SKEW_SECONDS * 1000
+        or current > expires
+    ):
         raise ValueError("seat enrollment is not currently valid")
     return data
 
@@ -302,7 +358,8 @@ def create_challenge(
         (server_nonce, "server nonce"),
     ):
         _hex(value, name)
-    issued = time.time() if now is None else float(now)
+    issued = _time_ms(now)
+    ttl_ms = _duration_ms(ttl_seconds, "seat challenge TTL")
     body = {
         "schema": CHALLENGE_SCHEMA,
         "challenge": secrets.token_hex(32),
@@ -317,7 +374,7 @@ def create_challenge(
         "expected_peer_sid": expected_peer_sid,
         "expected_pipe_instance": expected_pipe_instance,
         "issued_at": issued,
-        "expires_at": issued + ttl_seconds,
+        "expires_at": issued + ttl_ms,
         "authority_key_id": key_id(str(authority_identity.public_key_hex)),
     }
     if expected_peer_pid is not None or expected_peer_process_start_100ns is not None:
@@ -329,7 +386,7 @@ def create_challenge(
         ):
             raise ValueError("seat challenge peer process binding is invalid")
         body["expected_peer_pid"] = expected_peer_pid
-        body["expected_peer_process_start_100ns"] = expected_peer_process_start_100ns
+        body["expected_peer_process_start_100ns"] = f"{expected_peer_process_start_100ns:016x}"
     challenge = _signed(body, authority_identity, "authority_signature_b64")
     _record_issue(challenge, issue_store)
     return challenge
@@ -368,7 +425,7 @@ def deliver_challenge_postmessage(
         "target_hwnd": int(target_hwnd),
         "transport": "postmessage_wm_char",
         "tab_snapshot_sha256": challenge["tab_snapshot_sha256"],
-        "delivered_at": time.time() if now is None else float(now),
+        "delivered_at": _time_ms(now),
     }
     return _signed(body, authority_identity, "authority_signature_b64")
 
@@ -407,39 +464,6 @@ def create_proof(
     return _signed(body, seat_identity, "signature_b64")
 
 
-def secure_channel_evidence(
-    challenge: dict[str, Any],
-    *,
-    receiver_identity: Any,
-    peer_sid: str,
-    pipe_instance: str,
-    client_pid: int | None = None,
-    client_process_start_100ns: int | None = None,
-    now: float | None = None,
-) -> dict[str, Any]:
-    body = {
-        "schema": CHANNEL_SCHEMA,
-        "transport": "private_named_pipe_v1",
-        "response_address_sha256": challenge["response_address_sha256"],
-        "server_nonce": challenge["server_nonce"],
-        "peer_sid": peer_sid,
-        "pipe_instance": pipe_instance,
-        "observed_at": time.time() if now is None else float(now),
-    }
-    if client_pid is not None or client_process_start_100ns is not None:
-        if (
-            type(client_pid) is not int
-            or client_pid <= 0
-            or type(client_process_start_100ns) is not int
-            or client_process_start_100ns <= 0
-        ):
-            raise ValueError("secure response client process binding is invalid")
-        body["client_pid"] = client_pid
-        body["client_process_start_100ns"] = client_process_start_100ns
-    signed = _signed(body, receiver_identity, "receiver_signature_b64")
-    return {**signed, "receiver_key_id": key_id(receiver_identity.public_key_hex)}
-
-
 def verify_proof(
     proof: dict[str, Any],
     *,
@@ -458,10 +482,10 @@ def verify_proof(
     now: float | None = None,
     consume: bool = True,
 ) -> dict[str, Any]:
-    current = time.time() if now is None else float(now)
+    current = _time_ms(now)
     _require_issued(challenge, issue_store)
     enrolled = verify_enrollment(
-        enrollment, authority_public_key_hex=authority_public_key_hex, revoked_key_ids=revoked_key_ids, now=current
+        enrollment, authority_public_key_hex=authority_public_key_hex, revoked_key_ids=revoked_key_ids, now=now
     )
     challenge_body = _verify_signed(challenge, authority_public_key_hex, "authority_signature_b64", "seat challenge")
     delivery_body = _verify_signed(delivery, authority_public_key_hex, "authority_signature_b64", "seat delivery")
@@ -480,11 +504,13 @@ def verify_proof(
         raise ValueError("seat challenge exact-HWND delivery proof is invalid")
     if delivery_body.get("target_hwnd") != expected_target_hwnd:
         raise ValueError("seat challenge delivery targets a different HWND")
-    issued, expires = float(challenge_body["issued_at"]), float(challenge_body["expires_at"])
+    issued, expires = challenge_body["issued_at"], challenge_body["expires_at"]
     if (
-        expires <= issued
-        or expires - issued > MAX_TTL_SECONDS
-        or issued > current + MAX_CLOCK_SKEW_SECONDS
+        type(issued) is not int
+        or type(expires) is not int
+        or expires <= issued
+        or expires - issued > MAX_TTL_SECONDS * 1000
+        or issued > current + MAX_CLOCK_SKEW_SECONDS * 1000
         or current > expires
     ):
         raise ValueError("seat challenge is not currently valid")
@@ -510,8 +536,8 @@ def verify_proof(
         or channel_body.get("client_process_start_100ns") != challenge_body["expected_peer_process_start_100ns"]
     ):
         raise ValueError("secure response channel process identity is invalid")
-    observed_at = float(channel_body.get("observed_at"))
-    if not math.isfinite(observed_at) or abs(observed_at - current) > MAX_CLOCK_SKEW_SECONDS:
+    observed_at = channel_body.get("observed_at")
+    if type(observed_at) is not int or abs(observed_at - current) > MAX_CLOCK_SKEW_SECONDS * 1000:
         raise ValueError("secure response channel evidence is stale")
     proof_body = _verify_signed(proof, enrolled["seat_public_key_hex"], "signature_b64", "seat proof")
     expected = {
@@ -552,12 +578,11 @@ def verify_proof(
 
 
 def verify_proof_runtime(
-    proof: dict[str, Any],
+    pipe_receipt: Any,
     *,
     challenge: dict[str, Any],
     delivery: dict[str, Any],
     enrollment: dict[str, Any],
-    channel_evidence: dict[str, Any],
     authority_trust_store: str | Path,
     revocation_store: str | Path,
     receiver_trust_store: str | Path,
@@ -571,8 +596,10 @@ def verify_proof_runtime(
 ) -> dict[str, Any]:
     """Fail-closed production verification using durable trust resolvers."""
     from sc_authority_trust import authority_public_key
+    from sc_seat_pipe import _open_pipe_receipt
     from sc_seat_revocation import resolve_revoked_key_ids
 
+    proof, channel_evidence = _open_pipe_receipt(pipe_receipt, challenge)
     authority_id = challenge.get("authority_key_id")
     receiver_id = channel_evidence.get("receiver_key_id")
     if not isinstance(authority_id, str) or not isinstance(receiver_id, str):

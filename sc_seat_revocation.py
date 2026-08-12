@@ -4,15 +4,22 @@ from __future__ import annotations
 
 import base64
 import json
-import math
 import os
-import time
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from sc_authority_trust import load_authority_trust, verify_authority_signatures
-from sc_seat_identity import _canonical, _hex, _sha256, canonical_json_loads, key_id
+from sc_seat_identity import (
+    _canonical,
+    _duration_ms,
+    _hex,
+    _sha256,
+    _time_ms,
+    canonical_json_loads,
+    key_id,
+)
+from sc_trust_anchor import advance_monotonic_anchor, verify_monotonic_anchor
 
 SNAPSHOT_SCHEMA = "selfconnect-seat-revocations-v1"
 STORE_SCHEMA = "selfconnect-seat-revocation-store-v1"
@@ -30,6 +37,13 @@ def _load_store(path: Path) -> dict[str, Any] | None:
         raise ValueError("seat revocation store schema is invalid")
     if data["latest_sha256"] != _sha256(_canonical(data["snapshot"])):
         raise ValueError("seat revocation store digest is invalid")
+    verify_monotonic_anchor(
+        path,
+        "seat-revocation-store",
+        data["snapshot"]["epoch"],
+        data["snapshot"]["version"],
+        _sha256(_canonical(data)),
+    )
     return data
 
 
@@ -43,9 +57,8 @@ def create_revocation_snapshot(
 ) -> dict[str, Any]:
     if not 0 < ttl_seconds <= MAX_REVOCATION_TTL_SECONDS:
         raise ValueError("seat revocation snapshot TTL is invalid")
-    issued = time.time() if now is None else float(now)
-    if not math.isfinite(issued):
-        raise ValueError("seat revocation snapshot time is invalid")
+    issued = _time_ms(now)
+    ttl_ms = _duration_ms(ttl_seconds, "seat revocation snapshot TTL")
     revoked = sorted({_hex(value, "revoked seat key ID") for value in revoked_key_ids})
     if len(revoked) > MAX_REVOCATION_KEYS:
         raise ValueError("seat revocation snapshot is too large")
@@ -64,7 +77,7 @@ def create_revocation_snapshot(
         "version": version,
         "trust_version": trust["version"],
         "issued_at": issued,
-        "expires_at": issued + ttl_seconds,
+        "expires_at": issued + ttl_ms,
         "previous_sha256": previous_sha256,
         "revoked_key_ids": revoked,
     }
@@ -101,12 +114,12 @@ def _validate_snapshot(
         raise ValueError("seat revocation snapshot does not use current authority trust")
     if type(snapshot["version"]) is not int or snapshot["version"] < 1:
         raise ValueError("seat revocation snapshot version is invalid")
-    issued, expires = float(snapshot["issued_at"]), float(snapshot["expires_at"])
-    if not all(math.isfinite(value) for value in (now, issued, expires)):
+    issued, expires = snapshot["issued_at"], snapshot["expires_at"]
+    if type(issued) is not int or type(expires) is not int or type(now) is not int:
         raise ValueError("seat revocation snapshot time is invalid")
-    if expires <= issued or expires - issued > MAX_REVOCATION_TTL_SECONDS:
+    if expires <= issued or expires - issued > MAX_REVOCATION_TTL_SECONDS * 1000:
         raise ValueError("seat revocation snapshot validity is invalid")
-    if issued > now + 5.0 or now > expires:
+    if issued > now + 5000 or now > expires:
         raise ValueError("seat revocation snapshot is stale")
     revoked = snapshot["revoked_key_ids"]
     if not isinstance(revoked, list) or len(revoked) > MAX_REVOCATION_KEYS:
@@ -126,7 +139,7 @@ def apply_revocation_snapshot(
     *,
     now: float | None = None,
 ) -> Path:
-    current = time.time() if now is None else float(now)
+    current = _time_ms(now)
     signed = list(signatures)
     _validate_snapshot(snapshot, signed, trust_path, now=current)
     target = Path(store_path)
@@ -157,6 +170,13 @@ def apply_revocation_snapshot(
         from sc_guarded_submit import _protect_evidence_path
 
         _protect_evidence_path(target)
+    advance_monotonic_anchor(
+        target,
+        "seat-revocation-store",
+        snapshot["epoch"],
+        snapshot["version"],
+        _sha256(_canonical(document)),
+    )
     return target.resolve()
 
 
@@ -167,7 +187,7 @@ def resolve_revoked_key_ids(
     now: float | None = None,
 ) -> frozenset[str]:
     """Production resolver: absence, bad signature, rollback, or staleness fails closed."""
-    current = time.time() if now is None else float(now)
+    current = _time_ms(now)
     stored = _load_store(Path(store_path))
     if stored is None:
         raise ValueError("required seat revocation snapshot is absent")

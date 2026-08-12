@@ -126,6 +126,7 @@ include = [
     "sc_seat_identity.py",
     "sc_seat_pipe.py",
     "sc_seat_revocation.py",
+    "sc_trust_anchor.py",
     "sc_authority_trust.py",
     "sc_terminal_tab.py",
     "sc_hook_emit.py",

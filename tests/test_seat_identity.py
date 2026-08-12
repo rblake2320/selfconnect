@@ -5,15 +5,33 @@ import copy
 import pytest
 from sc_identity import AgentIdentity
 from sc_seat_identity import (
+    CHANNEL_SCHEMA,
+    _signed,
+    _time_ms,
     create_challenge,
     create_enrollment,
     create_proof,
     deliver_challenge_postmessage,
     key_id,
-    secure_channel_evidence,
     tab_snapshot_digest,
     verify_proof,
 )
+
+
+def _test_channel(challenge, receiver, *, peer_sid, pipe_instance, now=None):
+    body = {
+        "schema": CHANNEL_SCHEMA,
+        "transport": "private_named_pipe_v1",
+        "response_address_sha256": challenge["response_address_sha256"],
+        "server_nonce": challenge["server_nonce"],
+        "peer_sid": peer_sid,
+        "pipe_instance": pipe_instance,
+        "observed_at": _time_ms(now),
+    }
+    return {
+        **_signed(body, receiver, "receiver_signature_b64"),
+        "receiver_key_id": key_id(receiver.public_key_hex),
+    }
 
 
 def _case(tmp_path, *, birth="seat-a", now=1000.0):
@@ -58,9 +76,7 @@ def _case(tmp_path, *, birth="seat-a", now=1000.0):
         authority_public_key_hex=authority.public_key_hex,
         issue_store=issue_store,
     )
-    channel = secure_channel_evidence(
-        challenge, receiver_identity=receiver, peer_sid="S-1-5-21-test", pipe_instance="pipe-1", now=now
-    )
+    channel = _test_channel(challenge, receiver, peer_sid="S-1-5-21-test", pipe_instance="pipe-1", now=now)
     kwargs = {
         "challenge": challenge,
         "delivery": delivery,

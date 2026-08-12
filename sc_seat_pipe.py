@@ -11,6 +11,7 @@ import ctypes
 import os
 import struct
 import time
+import weakref
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,15 +19,60 @@ from typing import Any
 
 from sc_identity import AgentIdentity
 from sc_seat_identity import (
+    CHANNEL_SCHEMA,
     _canonical,
     _sha256,
+    _signed,
+    _time_ms,
+    canonical_json_loads,
     create_challenge,
     key_id,
-    secure_channel_evidence,
     trusted_receiver_public_key,
 )
 
 MAX_SEAT_RESPONSE_BYTES = 1024 * 1024
+
+
+def _receipt_capability():
+    records: weakref.WeakKeyDictionary[Any, tuple[str, dict[str, Any], dict[str, Any]]] = weakref.WeakKeyDictionary()
+
+    class PipeIssuedEvidence:
+        """Opaque evidence which only a connected receiver can issue."""
+
+        __slots__ = ("__weakref__",)
+
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            raise TypeError("pipe evidence can only be issued by SeatResponseReceiver")
+
+    def issue(
+        challenge_sha256: str,
+        proof: dict[str, Any],
+        evidence: dict[str, Any],
+    ) -> PipeIssuedEvidence:
+        receipt = object.__new__(PipeIssuedEvidence)
+        records[receipt] = (
+            challenge_sha256,
+            canonical_json_loads(_canonical(proof)),
+            canonical_json_loads(_canonical(evidence)),
+        )
+        return receipt
+
+    def open_receipt(receipt: Any, challenge: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        if not isinstance(receipt, PipeIssuedEvidence) or receipt not in records:
+            raise TypeError("production seat verification requires pipe-issued evidence")
+        challenge_sha256, proof, evidence = records[receipt]
+        if challenge_sha256 != _sha256(_canonical(challenge)):
+            raise ValueError("pipe-issued evidence targets a different challenge")
+        return (
+            canonical_json_loads(_canonical(proof)),
+            canonical_json_loads(_canonical(evidence)),
+        )
+
+    return PipeIssuedEvidence, issue, open_receipt
+
+
+PipeIssuedEvidence, _issue_pipe_receipt, _open_pipe_receipt = _receipt_capability()
+del _receipt_capability
 
 
 def _require_windows() -> None:
@@ -47,8 +93,6 @@ def _unframe(raw: bytes) -> dict[str, Any]:
     length = struct.unpack("<I", raw[:4])[0]
     if length > MAX_SEAT_RESPONSE_BYTES or len(raw) != length + 4:
         raise ValueError("seat response frame length is invalid")
-    from sc_seat_identity import canonical_json_loads
-
     value = canonical_json_loads(raw[4:])
     if not isinstance(value, dict):
         raise ValueError("seat response frame must be an object")
@@ -213,9 +257,14 @@ class SeatResponseReceiver:
             raise ValueError("seat response receiver key is not independently pinned")
         self.endpoint = endpoint
         self.challenge = challenge
-        self.receiver_identity = receiver_identity
+        self.__receiver_identity = receiver_identity
 
-    def serve_once(self, timeout: float = 15.0) -> dict[str, Any]:
+    def serve_once(
+        self,
+        timeout: float = 15.0,
+        *,
+        _issue_receipt: Any = _issue_pipe_receipt,
+    ) -> PipeIssuedEvidence:
         from sc_guarded_submit import (
             _connect_pipe,
             _create_pipe,
@@ -245,28 +294,47 @@ class SeatResponseReceiver:
                 raise PermissionError("named-pipe client logon SID denied")
             if client_pid != self.challenge.get("expected_peer_pid"):
                 raise PermissionError("named-pipe client PID does not match the challenged seat")
-            if client_start != self.challenge.get("expected_peer_process_start_100ns"):
+            client_start_hex = f"{client_start:016x}"
+            if client_start_hex != self.challenge.get("expected_peer_process_start_100ns"):
                 raise PermissionError("named-pipe client process start does not match the challenged seat")
             payload = _unframe(raw_payload)
             if payload.get("challenge_sha256") != _sha256(_canonical(self.challenge)):
                 raise ValueError("seat response does not bind the issued challenge")
             if payload.get("server_nonce") != self.challenge.get("server_nonce"):
                 raise ValueError("seat response server nonce is invalid")
-            evidence = secure_channel_evidence(
-                self.challenge,
-                receiver_identity=self.receiver_identity,
-                peer_sid=client_sid,
-                pipe_instance=self.endpoint.instance_id,
-                client_pid=client_pid,
-                client_process_start_100ns=client_start,
-            )
+            channel_body = {
+                "schema": CHANNEL_SCHEMA,
+                "transport": "private_named_pipe_v1",
+                "response_address_sha256": self.challenge["response_address_sha256"],
+                "server_nonce": self.challenge["server_nonce"],
+                "peer_sid": client_sid,
+                "pipe_instance": self.endpoint.instance_id,
+                "client_pid": client_pid,
+                "client_process_start_100ns": client_start_hex,
+                "observed_at": _time_ms(),
+            }
+            signed = _signed(channel_body, self.__receiver_identity, "receiver_signature_b64")
+            evidence = {
+                **signed,
+                "receiver_key_id": key_id(self.__receiver_identity.public_key_hex),
+            }
             _write_all(handle, _frame(evidence), deadline)
             _read_pipe_confirmation(handle, deadline)
-            return {"payload": payload, "channel_evidence": evidence}
+            proof = payload.get("proof")
+            if not isinstance(proof, dict):
+                raise ValueError("seat response proof is malformed")
+            return _issue_receipt(
+                _sha256(_canonical(self.challenge)),
+                proof,
+                evidence,
+            )
         finally:
             ctypes.windll.kernel32.CancelIoEx(handle, None)
             ctypes.windll.kernel32.DisconnectNamedPipe(handle)
             ctypes.windll.kernel32.CloseHandle(handle)
+
+
+del _issue_pipe_receipt
 
 
 def send_seat_response(
@@ -297,3 +365,22 @@ def send_seat_response(
         return evidence
     finally:
         ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def receive_and_verify_proof_runtime(
+    receiver: SeatResponseReceiver,
+    *,
+    timeout: float = 15.0,
+    **verification: Any,
+) -> dict[str, Any]:
+    """Production call path: receive OS evidence, then resolve trust and consume."""
+    if not isinstance(receiver, SeatResponseReceiver):
+        raise TypeError("a SeatResponseReceiver is required")
+    from sc_seat_identity import verify_proof_runtime
+
+    receipt = receiver.serve_once(timeout=timeout)
+    return verify_proof_runtime(
+        receipt,
+        challenge=receiver.challenge,
+        **verification,
+    )

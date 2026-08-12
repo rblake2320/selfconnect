@@ -90,6 +90,17 @@ def test_signed_history_detects_direct_root_replacement(tmp_path):
         load_authority_trust(path)
 
 
+def test_authority_raw_file_restore_is_rejected_across_restart(tmp_path):
+    path, roots, _recovery = _trust(tmp_path)
+    old_bytes = path.read_bytes()
+    replacement = AgentIdentity.generate("replacement")
+    transition = build_authority_transition(path, new_root_public_keys=[replacement.public_key_hex], new_quorum=1)
+    apply_authority_transition(path, transition, [sign_authority_transition(transition, item) for item in roots])
+    path.write_bytes(old_bytes)
+    with pytest.raises(ValueError, match="rollback detected"):
+        load_authority_trust(path)
+
+
 def test_revocation_snapshot_is_signed_fresh_and_monotonic(tmp_path):
     trust, roots, _recovery = _trust(tmp_path)
     store = tmp_path / "revocations.json"
@@ -102,6 +113,31 @@ def test_revocation_snapshot_is_signed_fresh_and_monotonic(tmp_path):
         apply_revocation_snapshot(store, trust, snapshot, signatures, now=1002.0)
     with pytest.raises(ValueError, match="stale"):
         resolve_revoked_key_ids(store, trust, now=1031.0)
+
+
+def test_revocation_raw_file_restore_is_rejected_across_restart(tmp_path):
+    trust, roots, _recovery = _trust(tmp_path)
+    store = tmp_path / "revocations.json"
+    first = create_revocation_snapshot(store, trust, [], now=1000.0)
+    apply_revocation_snapshot(
+        store,
+        trust,
+        first,
+        [sign_revocation_snapshot(first, item) for item in roots],
+        now=1000.0,
+    )
+    old_bytes = store.read_bytes()
+    second = create_revocation_snapshot(store, trust, [], now=1001.0)
+    apply_revocation_snapshot(
+        store,
+        trust,
+        second,
+        [sign_revocation_snapshot(second, item) for item in roots],
+        now=1001.0,
+    )
+    store.write_bytes(old_bytes)
+    with pytest.raises(ValueError, match="rollback detected"):
+        resolve_revoked_key_ids(store, trust, now=1002.0)
 
 
 def test_revocation_snapshot_rejects_partial_ids_and_missing_quorum(tmp_path):

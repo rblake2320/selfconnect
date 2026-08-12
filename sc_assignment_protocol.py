@@ -686,7 +686,7 @@ def issue_assignment(
     if coordinator_id == enrolled["seat_key_id"]:
         raise AssignmentVerificationError("coordinator and receiver keys must be distinct")
     expires = issued + ttl
-    if expires > _finite(enrolled["expires_at"], "enrollment expires_at"):
+    if expires * 1000 > _finite(enrolled["expires_at"], "enrollment expires_at"):
         raise AssignmentVerificationError("assignment outlives the receiver enrollment")
     target_hash, tab_hash, tab = _identity_bindings(
         target_identity, terminal_tab_identity
@@ -816,7 +816,7 @@ def _verify_assignment(
     expires = _finite(body["expires_at"], "assignment expires_at")
     if expires <= issued or expires - issued > MAX_ASSIGNMENT_TTL_SECONDS:
         raise AssignmentVerificationError("assignment validity interval is invalid")
-    if expires > _finite(enrolled["expires_at"], "enrollment expires_at"):
+    if expires * 1000 > _finite(enrolled["expires_at"], "enrollment expires_at"):
         raise AssignmentVerificationError("assignment outlives receiver enrollment")
     if enforce_assignment_freshness and (
         issued > current + MAX_CLOCK_SKEW_SECONDS or current > expires

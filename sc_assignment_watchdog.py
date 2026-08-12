@@ -133,7 +133,7 @@ class AssignmentWatchdog:
 
         try:
             verified = poll_state_receipts(
-                copy.deepcopy(assignment), payload, receipt_source=receipt_source,
+                copy.deepcopy(assignment), receipt_source=receipt_source,
                 source_guard=guarded_source, target_guard=guarded_target,
                 until_states={"completed", "blocked", "rejected"},
                 timeout_seconds=timeout_seconds, poll_seconds=poll_seconds,

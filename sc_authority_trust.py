@@ -11,6 +11,7 @@ from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from sc_seat_identity import _canonical, _sha256, canonical_json_loads, key_id
+from sc_trust_anchor import advance_monotonic_anchor, verify_monotonic_anchor
 
 TRUST_SCHEMA = "selfconnect-seat-authority-trust-v1"
 TRANSITION_SCHEMA = "selfconnect-seat-authority-transition-v1"
@@ -83,6 +84,13 @@ def bootstrap_authority_trust(
         "history": [],
     }
     _atomic_write(target, state)
+    advance_monotonic_anchor(
+        target,
+        "seat-authority-trust",
+        state["epoch"],
+        state["version"],
+        _sha256(_canonical(state)),
+    )
     return target.resolve()
 
 
@@ -158,6 +166,13 @@ def load_authority_trust(path: str | Path) -> dict[str, Any]:
     for field in ("epoch", "version", "roots", "quorum", "recovery", "recovery_quorum", "bootstrap"):
         if state[field] != current[field]:
             raise ValueError("authority trust current state does not match signed history")
+    verify_monotonic_anchor(
+        path,
+        "seat-authority-trust",
+        state["epoch"],
+        state["version"],
+        _sha256(_canonical(state)),
+    )
     return state
 
 
@@ -275,6 +290,13 @@ def apply_authority_transition(
         "history": [*state["history"], signed_record],
     }
     _atomic_write(target, next_state)
+    advance_monotonic_anchor(
+        target,
+        "seat-authority-trust",
+        next_state["epoch"],
+        next_state["version"],
+        _sha256(_canonical(next_state)),
+    )
     return next_state
 
 

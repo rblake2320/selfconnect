@@ -3726,6 +3726,7 @@ class MigrationCoordinator:
             return None
 
         from sc_migration import (
+            _canonical_binding,
             create_signed_manifest,
             default_replay_store,
             manifest_consumed,
@@ -3744,7 +3745,7 @@ class MigrationCoordinator:
         signed_binding = signed_manifest["successor"]
 
         def require_exact_live_binding() -> None:
-            if resolver(new_hwnd) != signed_binding:
+            if _canonical_binding(resolver(new_hwnd)) != signed_binding:
                 raise RuntimeError(
                     "successor window binding changed before migration send"
                 )
