@@ -5,13 +5,16 @@ must be bound to the reviewed runtime, seat-pipe/trust, and failover APIs.  It
 never reads terminal text and refuses to run until every component worktree is
 clean and pinned to an exact reviewed commit.
 """
+
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
 import subprocess
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +22,11 @@ from typing import Any
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+_REQUIRED_COMPONENTS = {
+    "runtime": "sc_assignment_runtime.py",
+    "trust_pipe": "sc_seat_pipe.py",
+    "failover": "sc_assignment_failover.py",
+}
 _TRIGGERS = ("blocked", "rejected")
 _NEGATIVE_PROBES = (
     "wrong_seat",
@@ -37,13 +45,13 @@ class CeremonyError(RuntimeError):
 
 @dataclass(frozen=True)
 class ReviewedCheckout:
-    name: str
+    component: str
     worktree: Path
     commit_sha: str
 
     def __post_init__(self) -> None:
-        if not self.name.strip() or _SHA.fullmatch(self.commit_sha) is None:
-            raise ValueError("reviewed checkout requires a name and full lowercase commit SHA")
+        if self.component not in _REQUIRED_COMPONENTS or _SHA.fullmatch(self.commit_sha) is None:
+            raise ValueError("reviewed checkout requires a canonical component and full lowercase commit SHA")
         object.__setattr__(self, "worktree", Path(self.worktree).resolve())
 
 
@@ -90,17 +98,30 @@ class CeremonyPorts:
     failover: Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]
     replacement_transition: Callable[[Mapping[str, Any], str], Mapping[str, Any]]
     negative_probe: Callable[[str], None]
+    protocol_errors: tuple[type[Exception], ...]
 
     def __post_init__(self) -> None:
-        if any(not callable(value) for value in self.__dict__.values()):
+        callables = tuple(value for name, value in self.__dict__.items() if name != "protocol_errors")
+        if any(not callable(value) for value in callables):
             raise TypeError("every ceremony port must be callable")
+        if (
+            type(self.protocol_errors) is not tuple
+            or not self.protocol_errors
+            or any(
+                not isinstance(error, type)
+                or not issubclass(error, Exception)
+                or error in {Exception, RuntimeError, NotImplementedError, AttributeError}
+                for error in self.protocol_errors
+            )
+        ):
+            raise TypeError("specific protocol verification error classes are required")
 
 
 def _canonical(value: Any) -> bytes:
     try:
-        return json.dumps(
-            value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
-        ).encode("ascii")
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode(
+            "ascii"
+        )
     except (TypeError, ValueError) as exc:
         raise CeremonyError("ceremony evidence is not canonical JSON") from exc
 
@@ -122,22 +143,57 @@ def _git(worktree: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _load_reviewed_module(checkout: ReviewedCheckout) -> tuple[Any, Path]:
+    module_path = (checkout.worktree / _REQUIRED_COMPONENTS[checkout.component]).resolve()
+    try:
+        module_path.relative_to(checkout.worktree)
+    except ValueError as exc:
+        raise CeremonyError(f"reviewed module escapes worktree: {checkout.component}") from exc
+    if not module_path.is_file():
+        raise CeremonyError(f"reviewed module is missing: {checkout.component}")
+    import_name = f"_selfconnect_ceremony_{checkout.component}_{checkout.commit_sha}"
+    spec = importlib.util.spec_from_file_location(import_name, module_path)
+    if spec is None or spec.loader is None:
+        raise CeremonyError(f"cannot load reviewed module: {checkout.component}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[import_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        sys.modules.pop(import_name, None)
+        raise CeremonyError(f"reviewed module import failed: {checkout.component}:{type(exc).__name__}") from exc
+    actual = Path(str(getattr(module, "__file__", ""))).resolve()
+    if actual != module_path:
+        raise CeremonyError(f"reviewed module origin mismatch: {checkout.component}")
+    return module, actual
+
+
 def verify_reviewed_checkouts(checkouts: Sequence[ReviewedCheckout]) -> list[dict[str, str]]:
-    """Require Windows and clean exact-SHA worktrees before any live boundary."""
+    """Require Windows, canonical components, clean SHAs, and imported origins."""
     if os.name != "nt":
         raise CeremonyError("live ceremony is Windows-only")
-    if len(checkouts) < 3 or len({item.name for item in checkouts}) != len(checkouts):
+    by_component = {item.component: item for item in checkouts}
+    if len(checkouts) != len(_REQUIRED_COMPONENTS) or set(by_component) != set(_REQUIRED_COMPONENTS):
         raise CeremonyError("runtime, pipe/trust, and failover reviewed checkouts are required")
     evidence = []
-    for checkout in checkouts:
+    for component in _REQUIRED_COMPONENTS:
+        checkout = by_component[component]
         if not checkout.worktree.is_dir():
-            raise CeremonyError(f"reviewed worktree is missing: {checkout.name}")
+            raise CeremonyError(f"reviewed worktree is missing: {component}")
         actual = _git(checkout.worktree, "rev-parse", "HEAD")
         if actual != checkout.commit_sha:
-            raise CeremonyError(f"reviewed checkout SHA mismatch: {checkout.name}")
+            raise CeremonyError(f"reviewed checkout SHA mismatch: {component}")
         if _git(checkout.worktree, "status", "--porcelain"):
-            raise CeremonyError(f"reviewed checkout is dirty: {checkout.name}")
-        evidence.append({"name": checkout.name, "worktree": str(checkout.worktree), "commit_sha": actual})
+            raise CeremonyError(f"reviewed checkout is dirty: {component}")
+        _module, module_file = _load_reviewed_module(checkout)
+        evidence.append(
+            {
+                "component": component,
+                "worktree": str(checkout.worktree),
+                "commit_sha": actual,
+                "module_file": str(module_file),
+            }
+        )
     return evidence
 
 
@@ -237,9 +293,7 @@ def _run_trigger_case(ports: CeremonyPorts, route: ExactRoute, trigger: str) -> 
     acks: list[dict[str, Any]] = []
     for sequence, state in enumerate(("accepted", "working", trigger), 1):
         receipt = _mapping(ports.seat_transition(assignment, state), "seat transition")
-        _verified, ack = _verified_transition(
-            ports, assignment, receipt, state=state, sequence=sequence
-        )
+        _verified, ack = _verified_transition(ports, assignment, receipt, state=state, sequence=sequence)
         receipts.append(receipt)
         acks.append(ack)
     failover = _mapping(ports.failover(assignment, receipts[-1]), "assignment failover")
@@ -251,9 +305,7 @@ def _run_trigger_case(ports: CeremonyPorts, route: ExactRoute, trigger: str) -> 
             ports.replacement_transition(replacement_assignment, state),
             "replacement transition",
         )
-        _verified, ack = _verified_transition(
-            ports, replacement_assignment, receipt, state=state, sequence=sequence
-        )
+        _verified, ack = _verified_transition(ports, replacement_assignment, receipt, state=state, sequence=sequence)
         replacement_receipts.append(receipt)
         replacement_acks.append(ack)
     return {
@@ -289,8 +341,10 @@ def run_live_ceremony(
     for probe in _NEGATIVE_PROBES:
         try:
             ports.negative_probe(probe)
-        except Exception as exc:
+        except ports.protocol_errors as exc:
             rejected.append({"probe": probe, "exception": type(exc).__name__})
+        except Exception as exc:
+            raise CeremonyError(f"negative probe raised unrelated error: {probe}:{type(exc).__name__}") from exc
         else:
             raise CeremonyError(f"negative probe did not fail closed: {probe}")
     evidence = {

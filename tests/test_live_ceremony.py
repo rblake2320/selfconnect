@@ -8,6 +8,10 @@ import pytest
 import sc_live_ceremony as ceremony
 
 
+class ProtocolRejected(ValueError):
+    pass
+
+
 def _canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("ascii")
 
@@ -93,7 +97,7 @@ class Driver:
         }
 
     def negative(self, probe):
-        raise ValueError(f"{probe} rejected")
+        raise ProtocolRejected(f"{probe} rejected")
 
     def ports(self):
         return ceremony.CeremonyPorts(
@@ -104,6 +108,7 @@ class Driver:
             failover=self.failover,
             replacement_transition=self.transition,
             negative_probe=self.negative,
+            protocol_errors=(ProtocolRejected,),
         )
 
 
@@ -122,10 +127,15 @@ def route():
 @pytest.fixture
 def pins(tmp_path, monkeypatch):
     items = []
-    for name, char in (("runtime", "a"), ("pipe-trust", "b"), ("failover", "c")):
-        path = tmp_path / name
+    for component, filename, char in (
+        ("runtime", "sc_assignment_runtime.py", "a"),
+        ("trust_pipe", "sc_seat_pipe.py", "b"),
+        ("failover", "sc_assignment_failover.py", "c"),
+    ):
+        path = tmp_path / component
         path.mkdir()
-        items.append(ceremony.ReviewedCheckout(name, path, char * 40))
+        (path / filename).write_text(f"COMPONENT = {component!r}\n", encoding="utf-8")
+        items.append(ceremony.ReviewedCheckout(component, path, char * 40))
 
     monkeypatch.setattr(ceremony.os, "name", "nt")
 
@@ -147,6 +157,17 @@ def test_two_trigger_live_plan_and_all_negatives(route, pins):
     assert len(result["negative_rejections"]) == 7
     assert len(result["evidence_sha256"]) == 64
     assert "non-authoritative" in result["claim"]
+    assert [item["component"] for item in result["reviewed_checkouts"]] == [
+        "runtime",
+        "trust_pipe",
+        "failover",
+    ]
+    for checkout, evidence in zip(pins, result["reviewed_checkouts"], strict=True):
+        assert (
+            Path(evidence["module_file"])
+            == (checkout.worktree / ceremony._REQUIRED_COMPONENTS[checkout.component]).resolve()
+        )
+        assert evidence["commit_sha"] == checkout.commit_sha
 
 
 def test_non_windows_and_missing_or_dirty_pins_fail_closed(route, pins, monkeypatch):
@@ -169,15 +190,27 @@ def test_wrong_sha_fails_before_dispatch(route, pins, monkeypatch):
     calls = []
     driver = Driver()
     ports = driver.ports()
-    ports = ceremony.CeremonyPorts(
-        **{**ports.__dict__, "dispatch": lambda *_args: calls.append(True)}
-    )
+    ports = ceremony.CeremonyPorts(**{**ports.__dict__, "dispatch": lambda *_args: calls.append(True)})
     monkeypatch.setattr(
         ceremony,
         "_git",
         lambda _path, *args: "d" * 40 if args == ("rev-parse", "HEAD") else "",
     )
     with pytest.raises(ceremony.CeremonyError, match="SHA mismatch"):
+        ceremony.run_live_ceremony(checkouts=pins, route=route, ports=ports)
+    assert calls == []
+
+
+def test_arbitrary_checkout_label_cannot_satisfy_component_gate(tmp_path):
+    with pytest.raises(ValueError, match="canonical component"):
+        ceremony.ReviewedCheckout("arbitrary", tmp_path, "a" * 40)
+
+
+def test_missing_reviewed_module_fails_before_dispatch(route, pins):
+    calls = []
+    pins[0].worktree.joinpath("sc_assignment_runtime.py").unlink()
+    ports = ceremony.CeremonyPorts(**{**Driver().ports().__dict__, "dispatch": lambda *_args: calls.append(True)})
+    with pytest.raises(ceremony.CeremonyError, match="reviewed module is missing"):
         ceremony.run_live_ceremony(checkouts=pins, route=route, ports=ports)
     assert calls == []
 
@@ -198,6 +231,7 @@ def test_guarded_submit_shape_cannot_be_weakened(route, pins):
     original = driver.dispatch
 
     for missing in ("delivery_verified", "peer_acknowledged", "decision", "state"):
+
         def dispatch(case, trigger, missing=missing):
             result = original(case, trigger)
             result["submit_result"].pop(missing)
@@ -278,6 +312,7 @@ def test_process_kill_and_missing_delivery_receipt_reject(route, pins):
         lambda result: result.update(process_action="terminate"),
         lambda result: result.pop("delivery_receipt"),
     ):
+
         def failover(assignment, receipt, mutation=mutation):
             result = original(assignment, receipt)
             mutation(result)
@@ -291,14 +326,32 @@ def test_process_kill_and_missing_delivery_receipt_reject(route, pins):
 def test_every_negative_probe_must_raise(route, pins):
     for allowed in ceremony._NEGATIVE_PROBES:
         driver = Driver()
+
         def negative(probe, allowed=allowed):
             if probe == allowed:
                 return None
-            raise ValueError("rejected")
+            raise ProtocolRejected("rejected")
 
         ports = ceremony.CeremonyPorts(**{**driver.ports().__dict__, "negative_probe": negative})
         with pytest.raises(ceremony.CeremonyError, match=allowed):
             ceremony.run_live_ceremony(checkouts=pins, route=route, ports=ports)
+
+
+@pytest.mark.parametrize("error", (NotImplementedError, AttributeError, RuntimeError, ValueError))
+def test_unrelated_negative_probe_errors_are_harness_failures(error, route, pins):
+    def negative(_probe):
+        raise error("not protocol verification")
+
+    ports = ceremony.CeremonyPorts(**{**Driver().ports().__dict__, "negative_probe": negative})
+    with pytest.raises(ceremony.CeremonyError, match=f"unrelated error: wrong_seat:{error.__name__}"):
+        ceremony.run_live_ceremony(checkouts=pins, route=route, ports=ports)
+
+
+@pytest.mark.parametrize("error", (Exception, RuntimeError, NotImplementedError, AttributeError))
+def test_broad_or_harness_errors_cannot_be_declared_protocol_errors(error):
+    values = Driver().ports().__dict__
+    with pytest.raises(TypeError, match="specific protocol verification"):
+        ceremony.CeremonyPorts(**{**values, "protocol_errors": (error,)})
 
 
 def test_authority_surface_has_no_screen_or_postmessage_inputs():
