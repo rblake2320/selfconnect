@@ -1,4 +1,5 @@
 """Per-seat cryptographic identity; Windows Terminal handles are routing only."""
+
 from __future__ import annotations
 
 import base64
@@ -10,6 +11,7 @@ import re
 import secrets
 import sqlite3
 import time
+import unicodedata
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -27,10 +29,78 @@ MAX_TTL_SECONDS = 60.0
 MAX_ENROLLMENT_TTL_SECONDS = 600.0
 MAX_CLOCK_SKEW_SECONDS = 5.0
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+MAX_CANONICAL_INTEGER = (1 << 63) - 1
+
+
+def _validate_canonical_value(value: Any, path: str = "$") -> None:
+    """Enforce the JSON domain signed by SelfConnect.
+
+    Strings must already be NFC.  This avoids silently changing an identifier
+    between parsing and signature verification while still allowing the full
+    Unicode range, including non-BMP code points.  Integers are intentionally
+    bounded to signed 64-bit values so other implementations cannot disagree
+    about arbitrary-precision JSON numbers.
+    """
+    if value is None or type(value) is bool:
+        return
+    if type(value) is int:
+        if not -MAX_CANONICAL_INTEGER - 1 <= value <= MAX_CANONICAL_INTEGER:
+            raise ValueError(f"canonical JSON integer is out of range at {path}")
+        return
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError(f"canonical JSON number is not finite at {path}")
+        return
+    if isinstance(value, str):
+        if unicodedata.normalize("NFC", value) != value:
+            raise ValueError(f"canonical JSON string is not NFC at {path}")
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_canonical_value(item, f"{path}[{index}]")
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError(f"canonical JSON object key is not a string at {path}")
+            _validate_canonical_value(key, f"{path}.<key>")
+            _validate_canonical_value(item, f"{path}.{key}")
+        return
+    raise ValueError(f"unsupported canonical JSON value at {path}")
+
+
+def canonical_json_loads(raw: str | bytes) -> Any:
+    """Parse signed JSON while rejecting duplicate keys and domain drift."""
+
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate canonical JSON key: {key}")
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(
+            raw,
+            object_pairs_hook=unique_object,
+            parse_constant=lambda token: (_ for _ in ()).throw(ValueError(f"invalid JSON constant: {token}")),
+        )
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError("canonical JSON is invalid") from exc
+    _validate_canonical_value(value)
+    return value
 
 
 def _canonical(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    _validate_canonical_value(value)
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+        ensure_ascii=True,
+    ).encode("utf-8")
 
 
 def _sha256(value: bytes) -> str:
@@ -49,8 +119,13 @@ def _record_issue(challenge: dict[str, Any], issue_store: str | Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path)
     try:
-        db.execute("CREATE TABLE IF NOT EXISTS issued(challenge TEXT PRIMARY KEY, record_sha256 TEXT UNIQUE NOT NULL, issued_at REAL NOT NULL)")
-        db.execute("INSERT INTO issued VALUES(?,?,?)", (challenge["challenge"], _sha256(_canonical(challenge)), challenge["issued_at"]))
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS issued(challenge TEXT PRIMARY KEY, record_sha256 TEXT UNIQUE NOT NULL, issued_at REAL NOT NULL)"
+        )
+        db.execute(
+            "INSERT INTO issued VALUES(?,?,?)",
+            (challenge["challenge"], _sha256(_canonical(challenge)), challenge["issued_at"]),
+        )
         db.commit()
     finally:
         db.close()
@@ -90,7 +165,7 @@ def enroll_receiver_key(identity: Any, path: str | Path) -> Path:
     receiver_id = key_id(public_key_hex)
     data = {"schema": RECEIVER_TRUST_SCHEMA, "receivers": []}
     if target.exists():
-        data = json.loads(target.read_text(encoding="utf-8"))
+        data = canonical_json_loads(target.read_bytes())
         if data.get("schema") != RECEIVER_TRUST_SCHEMA or not isinstance(data.get("receivers"), list):
             raise ValueError("seat receiver trust store is malformed")
     matches = [item for item in data["receivers"] if item.get("key_id") == receiver_id]
@@ -105,12 +180,16 @@ def enroll_receiver_key(identity: Any, path: str | Path) -> Path:
 
 
 def trusted_receiver_public_key(receiver_id: str, path: str | Path) -> str:
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    data = canonical_json_loads(Path(path).read_bytes())
     if data.get("schema") != RECEIVER_TRUST_SCHEMA or not isinstance(data.get("receivers"), list):
         raise ValueError("seat receiver trust store is malformed")
     for item in data["receivers"]:
         public_key_hex = item.get("public_key_hex")
-        if item.get("key_id") == receiver_id and isinstance(public_key_hex, str) and key_id(public_key_hex) == receiver_id:
+        if (
+            item.get("key_id") == receiver_id
+            and isinstance(public_key_hex, str)
+            and key_id(public_key_hex) == receiver_id
+        ):
             return public_key_hex
     raise ValueError("seat response receiver is not independently trusted")
 
@@ -131,29 +210,56 @@ def _verify_signed(record: dict[str, Any], public_key_hex: str, field: str, labe
     return body
 
 
-def create_enrollment(*, seat_identity: Any, authority_identity: Any, birth_id: str,
-                      generation: int, now: float | None = None,
-                      ttl_seconds: float = 300.0) -> dict[str, Any]:
+def create_enrollment(
+    *,
+    seat_identity: Any,
+    authority_identity: Any,
+    birth_id: str,
+    generation: int,
+    now: float | None = None,
+    ttl_seconds: float = 300.0,
+) -> dict[str, Any]:
     if not _SAFE_ID.fullmatch(birth_id) or type(generation) is not int or generation <= 0:
         raise ValueError("invalid seat birth identity")
     if not 0 < ttl_seconds <= MAX_ENROLLMENT_TTL_SECONDS:
         raise ValueError("seat enrollment TTL is invalid")
     issued = time.time() if now is None else float(now)
     public_key = str(seat_identity.public_key_hex)
-    body = {"schema": ENROLLMENT_SCHEMA, "enrollment_id": str(uuid.uuid4()),
-            "seat_key_id": key_id(public_key), "seat_public_key_hex": public_key,
-            "birth_id": birth_id, "generation": generation, "seat_epoch": secrets.token_hex(32),
-            "issued_at": issued, "expires_at": issued + ttl_seconds,
-            "authority_key_id": key_id(str(authority_identity.public_key_hex))}
+    body = {
+        "schema": ENROLLMENT_SCHEMA,
+        "enrollment_id": str(uuid.uuid4()),
+        "seat_key_id": key_id(public_key),
+        "seat_public_key_hex": public_key,
+        "birth_id": birth_id,
+        "generation": generation,
+        "seat_epoch": secrets.token_hex(32),
+        "issued_at": issued,
+        "expires_at": issued + ttl_seconds,
+        "authority_key_id": key_id(str(authority_identity.public_key_hex)),
+    }
     return _signed(body, authority_identity, "authority_signature_b64")
 
 
-def verify_enrollment(enrollment: dict[str, Any], *, authority_public_key_hex: str,
-                      revoked_key_ids: frozenset[str] = frozenset(),
-                      now: float | None = None) -> dict[str, Any]:
+def verify_enrollment(
+    enrollment: dict[str, Any],
+    *,
+    authority_public_key_hex: str,
+    revoked_key_ids: frozenset[str] = frozenset(),
+    now: float | None = None,
+) -> dict[str, Any]:
     data = _verify_signed(enrollment, authority_public_key_hex, "authority_signature_b64", "seat enrollment")
-    required = {"schema", "enrollment_id", "seat_key_id", "seat_public_key_hex", "birth_id",
-                "generation", "seat_epoch", "issued_at", "expires_at", "authority_key_id"}
+    required = {
+        "schema",
+        "enrollment_id",
+        "seat_key_id",
+        "seat_public_key_hex",
+        "birth_id",
+        "generation",
+        "seat_epoch",
+        "issued_at",
+        "expires_at",
+        "authority_key_id",
+    }
     if set(data) != required or data["schema"] != ENROLLMENT_SCHEMA:
         raise ValueError("seat enrollment fields are invalid")
     if data["seat_key_id"] != key_id(data["seat_public_key_hex"]):
@@ -171,35 +277,73 @@ def verify_enrollment(enrollment: dict[str, Any], *, authority_public_key_hex: s
     return data
 
 
-def create_challenge(*, enrollment: dict[str, Any], operation_sha256: str,
-                     tab_snapshot_sha256: str, response_address_sha256: str,
-                     server_nonce: str, authority_identity: Any,
-                     expected_peer_sid: str, expected_pipe_instance: str,
-                     issue_store: str | Path, now: float | None = None,
-                     ttl_seconds: float = 15.0) -> dict[str, Any]:
+def create_challenge(
+    *,
+    enrollment: dict[str, Any],
+    operation_sha256: str,
+    tab_snapshot_sha256: str,
+    response_address_sha256: str,
+    server_nonce: str,
+    authority_identity: Any,
+    expected_peer_sid: str,
+    expected_pipe_instance: str,
+    expected_peer_pid: int | None = None,
+    expected_peer_process_start_100ns: int | None = None,
+    issue_store: str | Path,
+    now: float | None = None,
+    ttl_seconds: float = 15.0,
+) -> dict[str, Any]:
     if not 0 < ttl_seconds <= MAX_TTL_SECONDS:
         raise ValueError("seat challenge TTL is invalid")
-    for value, name in ((operation_sha256, "operation"), (tab_snapshot_sha256, "tab snapshot"),
-                        (response_address_sha256, "response address"), (server_nonce, "server nonce")):
+    for value, name in (
+        (operation_sha256, "operation"),
+        (tab_snapshot_sha256, "tab snapshot"),
+        (response_address_sha256, "response address"),
+        (server_nonce, "server nonce"),
+    ):
         _hex(value, name)
     issued = time.time() if now is None else float(now)
-    body = {"schema": CHALLENGE_SCHEMA, "challenge": secrets.token_hex(32),
-            "operation_sha256": operation_sha256, "seat_key_id": enrollment["seat_key_id"],
-            "birth_id": enrollment["birth_id"], "generation": enrollment["generation"],
-            "seat_epoch": enrollment["seat_epoch"], "tab_snapshot_sha256": tab_snapshot_sha256,
-            "response_address_sha256": response_address_sha256, "server_nonce": server_nonce,
-            "expected_peer_sid": expected_peer_sid, "expected_pipe_instance": expected_pipe_instance,
-            "issued_at": issued, "expires_at": issued + ttl_seconds,
-            "authority_key_id": key_id(str(authority_identity.public_key_hex))}
+    body = {
+        "schema": CHALLENGE_SCHEMA,
+        "challenge": secrets.token_hex(32),
+        "operation_sha256": operation_sha256,
+        "seat_key_id": enrollment["seat_key_id"],
+        "birth_id": enrollment["birth_id"],
+        "generation": enrollment["generation"],
+        "seat_epoch": enrollment["seat_epoch"],
+        "tab_snapshot_sha256": tab_snapshot_sha256,
+        "response_address_sha256": response_address_sha256,
+        "server_nonce": server_nonce,
+        "expected_peer_sid": expected_peer_sid,
+        "expected_pipe_instance": expected_pipe_instance,
+        "issued_at": issued,
+        "expires_at": issued + ttl_seconds,
+        "authority_key_id": key_id(str(authority_identity.public_key_hex)),
+    }
+    if expected_peer_pid is not None or expected_peer_process_start_100ns is not None:
+        if (
+            type(expected_peer_pid) is not int
+            or expected_peer_pid <= 0
+            or type(expected_peer_process_start_100ns) is not int
+            or expected_peer_process_start_100ns <= 0
+        ):
+            raise ValueError("seat challenge peer process binding is invalid")
+        body["expected_peer_pid"] = expected_peer_pid
+        body["expected_peer_process_start_100ns"] = expected_peer_process_start_100ns
     challenge = _signed(body, authority_identity, "authority_signature_b64")
     _record_issue(challenge, issue_store)
     return challenge
 
 
-def deliver_challenge_postmessage(*, challenge: dict[str, Any], target_hwnd: int,
-                                  authority_identity: Any, sender: Callable[[int, str], dict[str, Any]],
-                                  tab_checkpoint: Callable[[str], dict[str, Any]],
-                                  now: float | None = None) -> dict[str, Any]:
+def deliver_challenge_postmessage(
+    *,
+    challenge: dict[str, Any],
+    target_hwnd: int,
+    authority_identity: Any,
+    sender: Callable[[int, str], dict[str, Any]],
+    tab_checkpoint: Callable[[str], dict[str, Any]],
+    now: float | None = None,
+) -> dict[str, Any]:
     """Send the authority-issued nonce through exact H and sign the observed delivery."""
     before = tab_checkpoint("before_seat_challenge")
     before_digest = tab_snapshot_digest(before)
@@ -212,87 +356,175 @@ def deliver_challenge_postmessage(*, challenge: dict[str, Any], target_hwnd: int
         raise ValueError("exact tab challenge checkpoint failed")
     if tab_snapshot_digest(after) != before_digest:
         raise ValueError("live tab snapshot changed during challenge delivery")
-    if result.get("ok") is not True or result.get("transport") != "postmessage_wm_char" or result.get("chars_accepted") != len(wire):
+    if (
+        result.get("ok") is not True
+        or result.get("transport") != "postmessage_wm_char"
+        or result.get("chars_accepted") != len(wire)
+    ):
         raise ValueError("exact HWND PostMessage challenge delivery failed")
-    body = {"schema": DELIVERY_SCHEMA, "challenge_sha256": _sha256(_canonical(challenge)),
-            "target_hwnd": int(target_hwnd), "transport": "postmessage_wm_char",
-            "tab_snapshot_sha256": challenge["tab_snapshot_sha256"],
-            "delivered_at": time.time() if now is None else float(now)}
+    body = {
+        "schema": DELIVERY_SCHEMA,
+        "challenge_sha256": _sha256(_canonical(challenge)),
+        "target_hwnd": int(target_hwnd),
+        "transport": "postmessage_wm_char",
+        "tab_snapshot_sha256": challenge["tab_snapshot_sha256"],
+        "delivered_at": time.time() if now is None else float(now),
+    }
     return _signed(body, authority_identity, "authority_signature_b64")
 
 
-def create_proof(*, seat_identity: Any, challenge: dict[str, Any], delivery: dict[str, Any],
-                 authority_public_key_hex: str, issue_store: str | Path) -> dict[str, Any]:
+def create_proof(
+    *,
+    seat_identity: Any,
+    challenge: dict[str, Any],
+    delivery: dict[str, Any],
+    authority_public_key_hex: str,
+    issue_store: str | Path,
+) -> dict[str, Any]:
     _require_issued(challenge, issue_store)
     challenge_body = _verify_signed(challenge, authority_public_key_hex, "authority_signature_b64", "seat challenge")
     delivery_body = _verify_signed(delivery, authority_public_key_hex, "authority_signature_b64", "seat delivery")
-    if delivery_body.get("challenge_sha256") != _sha256(_canonical(challenge)) or delivery_body.get("transport") != "postmessage_wm_char":
+    if (
+        delivery_body.get("challenge_sha256") != _sha256(_canonical(challenge))
+        or delivery_body.get("transport") != "postmessage_wm_char"
+    ):
         raise ValueError("seat challenge was not delivered through the authorized tab channel")
     if key_id(str(seat_identity.public_key_hex)) != challenge_body.get("seat_key_id"):
         raise ValueError("seat broker key does not match challenge")
-    body = {"schema": PROOF_SCHEMA, "challenge_sha256": _sha256(_canonical(challenge)),
-            "delivery_sha256": _sha256(_canonical(delivery)), "challenge": challenge_body["challenge"],
-            "operation_sha256": challenge_body["operation_sha256"],
-            "tab_snapshot_sha256": challenge_body["tab_snapshot_sha256"],
-            "seat_key_id": challenge_body["seat_key_id"], "birth_id": challenge_body["birth_id"],
-            "generation": challenge_body["generation"], "seat_epoch": challenge_body["seat_epoch"],
-            "proof_nonce": secrets.token_hex(32)}
+    body = {
+        "schema": PROOF_SCHEMA,
+        "challenge_sha256": _sha256(_canonical(challenge)),
+        "delivery_sha256": _sha256(_canonical(delivery)),
+        "challenge": challenge_body["challenge"],
+        "operation_sha256": challenge_body["operation_sha256"],
+        "tab_snapshot_sha256": challenge_body["tab_snapshot_sha256"],
+        "seat_key_id": challenge_body["seat_key_id"],
+        "birth_id": challenge_body["birth_id"],
+        "generation": challenge_body["generation"],
+        "seat_epoch": challenge_body["seat_epoch"],
+        "proof_nonce": secrets.token_hex(32),
+    }
     return _signed(body, seat_identity, "signature_b64")
 
 
-def secure_channel_evidence(challenge: dict[str, Any], *, receiver_identity: Any,
-                            peer_sid: str, pipe_instance: str,
-                            now: float | None = None) -> dict[str, Any]:
-    body = {"schema": CHANNEL_SCHEMA, "transport": "private_named_pipe_v1",
-            "response_address_sha256": challenge["response_address_sha256"],
-            "server_nonce": challenge["server_nonce"], "peer_sid": peer_sid,
-            "pipe_instance": pipe_instance, "observed_at": time.time() if now is None else float(now)}
+def secure_channel_evidence(
+    challenge: dict[str, Any],
+    *,
+    receiver_identity: Any,
+    peer_sid: str,
+    pipe_instance: str,
+    client_pid: int | None = None,
+    client_process_start_100ns: int | None = None,
+    now: float | None = None,
+) -> dict[str, Any]:
+    body = {
+        "schema": CHANNEL_SCHEMA,
+        "transport": "private_named_pipe_v1",
+        "response_address_sha256": challenge["response_address_sha256"],
+        "server_nonce": challenge["server_nonce"],
+        "peer_sid": peer_sid,
+        "pipe_instance": pipe_instance,
+        "observed_at": time.time() if now is None else float(now),
+    }
+    if client_pid is not None or client_process_start_100ns is not None:
+        if (
+            type(client_pid) is not int
+            or client_pid <= 0
+            or type(client_process_start_100ns) is not int
+            or client_process_start_100ns <= 0
+        ):
+            raise ValueError("secure response client process binding is invalid")
+        body["client_pid"] = client_pid
+        body["client_process_start_100ns"] = client_process_start_100ns
     signed = _signed(body, receiver_identity, "receiver_signature_b64")
     return {**signed, "receiver_key_id": key_id(receiver_identity.public_key_hex)}
 
 
-def verify_proof(proof: dict[str, Any], *, challenge: dict[str, Any], delivery: dict[str, Any],
-                 enrollment: dict[str, Any], channel_evidence: dict[str, Any] | None,
-                 authority_public_key_hex: str, receiver_public_key_hex: str,
-                 expected_operation_sha256: str, expected_tab_snapshot_sha256: str,
-                 expected_target_hwnd: int,
-                 replay_store: str | Path, issue_store: str | Path,
-                 revoked_key_ids: frozenset[str] = frozenset(),
-                 now: float | None = None, consume: bool = True) -> dict[str, Any]:
+def verify_proof(
+    proof: dict[str, Any],
+    *,
+    challenge: dict[str, Any],
+    delivery: dict[str, Any],
+    enrollment: dict[str, Any],
+    channel_evidence: dict[str, Any] | None,
+    authority_public_key_hex: str,
+    receiver_public_key_hex: str,
+    expected_operation_sha256: str,
+    expected_tab_snapshot_sha256: str,
+    expected_target_hwnd: int,
+    replay_store: str | Path,
+    issue_store: str | Path,
+    revoked_key_ids: frozenset[str] = frozenset(),
+    now: float | None = None,
+    consume: bool = True,
+) -> dict[str, Any]:
     current = time.time() if now is None else float(now)
     _require_issued(challenge, issue_store)
-    enrolled = verify_enrollment(enrollment, authority_public_key_hex=authority_public_key_hex,
-                                 revoked_key_ids=revoked_key_ids, now=current)
+    enrolled = verify_enrollment(
+        enrollment, authority_public_key_hex=authority_public_key_hex, revoked_key_ids=revoked_key_ids, now=current
+    )
     challenge_body = _verify_signed(challenge, authority_public_key_hex, "authority_signature_b64", "seat challenge")
     delivery_body = _verify_signed(delivery, authority_public_key_hex, "authority_signature_b64", "seat delivery")
     if challenge_body["authority_key_id"] != key_id(authority_public_key_hex):
         raise ValueError("seat challenge authority is not trusted")
-    if challenge_body["operation_sha256"] != expected_operation_sha256 or challenge_body["tab_snapshot_sha256"] != expected_tab_snapshot_sha256:
+    if (
+        challenge_body["operation_sha256"] != expected_operation_sha256
+        or challenge_body["tab_snapshot_sha256"] != expected_tab_snapshot_sha256
+    ):
         raise ValueError("seat challenge expected digest binding is invalid")
-    if delivery_body.get("challenge_sha256") != _sha256(_canonical(challenge)) or delivery_body.get("transport") != "postmessage_wm_char" or delivery_body.get("tab_snapshot_sha256") != expected_tab_snapshot_sha256:
+    if (
+        delivery_body.get("challenge_sha256") != _sha256(_canonical(challenge))
+        or delivery_body.get("transport") != "postmessage_wm_char"
+        or delivery_body.get("tab_snapshot_sha256") != expected_tab_snapshot_sha256
+    ):
         raise ValueError("seat challenge exact-HWND delivery proof is invalid")
     if delivery_body.get("target_hwnd") != expected_target_hwnd:
         raise ValueError("seat challenge delivery targets a different HWND")
     issued, expires = float(challenge_body["issued_at"]), float(challenge_body["expires_at"])
-    if expires <= issued or expires - issued > MAX_TTL_SECONDS or issued > current + MAX_CLOCK_SKEW_SECONDS or current > expires:
+    if (
+        expires <= issued
+        or expires - issued > MAX_TTL_SECONDS
+        or issued > current + MAX_CLOCK_SKEW_SECONDS
+        or current > expires
+    ):
         raise ValueError("seat challenge is not currently valid")
     if channel_evidence is None:
         raise ValueError("secure response channel proof is required")
     channel = dict(channel_evidence)
     receiver_id = channel.pop("receiver_key_id", None)
     channel_body = _verify_signed(channel, receiver_public_key_hex, "receiver_signature_b64", "secure response channel")
-    if receiver_id != key_id(receiver_public_key_hex) or channel_body.get("transport") != "private_named_pipe_v1" or channel_body.get("response_address_sha256") != challenge_body["response_address_sha256"] or channel_body.get("server_nonce") != challenge_body["server_nonce"]:
+    if (
+        receiver_id != key_id(receiver_public_key_hex)
+        or channel_body.get("transport") != "private_named_pipe_v1"
+        or channel_body.get("response_address_sha256") != challenge_body["response_address_sha256"]
+        or channel_body.get("server_nonce") != challenge_body["server_nonce"]
+    ):
         raise ValueError("secure response channel proof is invalid")
-    if channel_body.get("peer_sid") != challenge_body["expected_peer_sid"] or channel_body.get("pipe_instance") != challenge_body["expected_pipe_instance"]:
+    if (
+        channel_body.get("peer_sid") != challenge_body["expected_peer_sid"]
+        or channel_body.get("pipe_instance") != challenge_body["expected_pipe_instance"]
+    ):
         raise ValueError("secure response channel identity is invalid")
+    if "expected_peer_pid" in challenge_body and (
+        channel_body.get("client_pid") != challenge_body["expected_peer_pid"]
+        or channel_body.get("client_process_start_100ns") != challenge_body["expected_peer_process_start_100ns"]
+    ):
+        raise ValueError("secure response channel process identity is invalid")
     observed_at = float(channel_body.get("observed_at"))
     if not math.isfinite(observed_at) or abs(observed_at - current) > MAX_CLOCK_SKEW_SECONDS:
         raise ValueError("secure response channel evidence is stale")
     proof_body = _verify_signed(proof, enrolled["seat_public_key_hex"], "signature_b64", "seat proof")
-    expected = {"challenge_sha256": _sha256(_canonical(challenge)), "delivery_sha256": _sha256(_canonical(delivery)),
-                "challenge": challenge_body["challenge"], "operation_sha256": expected_operation_sha256,
-                "tab_snapshot_sha256": expected_tab_snapshot_sha256, "seat_key_id": enrolled["seat_key_id"],
-                "birth_id": enrolled["birth_id"], "generation": enrolled["generation"], "seat_epoch": enrolled["seat_epoch"]}
+    expected = {
+        "challenge_sha256": _sha256(_canonical(challenge)),
+        "delivery_sha256": _sha256(_canonical(delivery)),
+        "challenge": challenge_body["challenge"],
+        "operation_sha256": expected_operation_sha256,
+        "tab_snapshot_sha256": expected_tab_snapshot_sha256,
+        "seat_key_id": enrolled["seat_key_id"],
+        "birth_id": enrolled["birth_id"],
+        "generation": enrolled["generation"],
+        "seat_epoch": enrolled["seat_epoch"],
+    }
     if proof_body.get("schema") != PROOF_SCHEMA or any(proof_body.get(k) != v for k, v in expected.items()):
         raise ValueError("seat proof operation binding is invalid")
     proof_nonce = _hex(proof_body.get("proof_nonce"), "proof nonce")
@@ -301,7 +533,9 @@ def verify_proof(proof: dict[str, Any], *, challenge: dict[str, Any], delivery: 
         path.parent.mkdir(parents=True, exist_ok=True)
         db = sqlite3.connect(path)
         try:
-            db.execute("CREATE TABLE IF NOT EXISTS consumed(challenge TEXT PRIMARY KEY, proof_nonce TEXT UNIQUE NOT NULL, consumed_at REAL NOT NULL)")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS consumed(challenge TEXT PRIMARY KEY, proof_nonce TEXT UNIQUE NOT NULL, consumed_at REAL NOT NULL)"
+            )
             try:
                 db.execute("INSERT INTO consumed VALUES(?,?,?)", (challenge_body["challenge"], proof_nonce, current))
                 db.commit()
@@ -309,5 +543,59 @@ def verify_proof(proof: dict[str, Any], *, challenge: dict[str, Any], delivery: 
                 raise ValueError("seat challenge or proof has already been consumed") from exc
         finally:
             db.close()
-    return {"ok": True, "status": "ACCEPTED" if consume else "VERIFIED",
-            "seat_key_id": enrolled["seat_key_id"], "challenge": challenge_body["challenge"]}
+    return {
+        "ok": True,
+        "status": "ACCEPTED" if consume else "VERIFIED",
+        "seat_key_id": enrolled["seat_key_id"],
+        "challenge": challenge_body["challenge"],
+    }
+
+
+def verify_proof_runtime(
+    proof: dict[str, Any],
+    *,
+    challenge: dict[str, Any],
+    delivery: dict[str, Any],
+    enrollment: dict[str, Any],
+    channel_evidence: dict[str, Any],
+    authority_trust_store: str | Path,
+    revocation_store: str | Path,
+    receiver_trust_store: str | Path,
+    expected_operation_sha256: str,
+    expected_tab_snapshot_sha256: str,
+    expected_target_hwnd: int,
+    replay_store: str | Path,
+    issue_store: str | Path,
+    now: float | None = None,
+    consume: bool = True,
+) -> dict[str, Any]:
+    """Fail-closed production verification using durable trust resolvers."""
+    from sc_authority_trust import authority_public_key
+    from sc_seat_revocation import resolve_revoked_key_ids
+
+    authority_id = challenge.get("authority_key_id")
+    receiver_id = channel_evidence.get("receiver_key_id")
+    if not isinstance(authority_id, str) or not isinstance(receiver_id, str):
+        raise ValueError("seat proof trust key IDs are required")
+    authority_key = authority_public_key(authority_trust_store, authority_id)
+    receiver_key = trusted_receiver_public_key(receiver_id, receiver_trust_store)
+    if authority_key == receiver_key:
+        raise ValueError("seat response receiver key must differ from authority key")
+    revoked = resolve_revoked_key_ids(revocation_store, authority_trust_store, now=now)
+    return verify_proof(
+        proof,
+        challenge=challenge,
+        delivery=delivery,
+        enrollment=enrollment,
+        channel_evidence=channel_evidence,
+        authority_public_key_hex=authority_key,
+        receiver_public_key_hex=receiver_key,
+        expected_operation_sha256=expected_operation_sha256,
+        expected_tab_snapshot_sha256=expected_tab_snapshot_sha256,
+        expected_target_hwnd=expected_target_hwnd,
+        replay_store=replay_store,
+        issue_store=issue_store,
+        revoked_key_ids=revoked,
+        now=now,
+        consume=consume,
+    )

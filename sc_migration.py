@@ -4,6 +4,7 @@ Terminal text is only a notification channel.  A successor accepts a role only
 after this module verifies an independently enrolled Ed25519 signer, the exact
 checkpoint bytes, the live successor window binding, freshness, and replay.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -20,6 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from sc_seat_identity import _canonical as _strict_canonical
+from sc_seat_identity import canonical_json_loads
 
 MANIFEST_SCHEMA = "selfconnect-migration-manifest-v2"
 TRUST_SCHEMA = "selfconnect-migration-trust-v1"
@@ -28,7 +31,7 @@ MAX_TTL_SECONDS = 300
 
 
 def _canonical(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return _strict_canonical(value)
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -69,11 +72,13 @@ def enroll_migration_signer(identity: Any, path: str | Path | None = None) -> Pa
     if matches and matches[0].get("public_key_hex") != public_key_hex:
         raise ValueError("migration signer key-id collision")
     if not matches:
-        data["signers"].append({
-            "key_id": key_id,
-            "public_key_hex": public_key_hex,
-            "label": str(getattr(identity, "label", "")),
-        })
+        data["signers"].append(
+            {
+                "key_id": key_id,
+                "public_key_hex": public_key_hex,
+                "label": str(getattr(identity, "label", "")),
+            }
+        )
     staged = target.with_suffix(target.suffix + ".tmp")
     staged.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     os.replace(staged, target)
@@ -186,8 +191,7 @@ def _consume_once(receipt: dict[str, Any], replay_store: str | Path) -> None:
     try:
         db.execute("CREATE TABLE IF NOT EXISTS accepted (manifest_id TEXT PRIMARY KEY, accepted_at REAL NOT NULL)")
         db.execute(
-            "CREATE TABLE IF NOT EXISTS accepted_receipts "
-            "(manifest_id TEXT PRIMARY KEY, receipt_json TEXT NOT NULL)"
+            "CREATE TABLE IF NOT EXISTS accepted_receipts (manifest_id TEXT PRIMARY KEY, receipt_json TEXT NOT NULL)"
         )
         try:
             manifest_id = str(receipt["manifest_id"])
@@ -221,9 +225,7 @@ def manifest_consumed(
     db = sqlite3.connect(target)
     try:
         if manifest_path is None:
-            row = db.execute(
-                "SELECT 1 FROM accepted WHERE manifest_id = ?", (manifest_id,)
-            ).fetchone()
+            row = db.execute("SELECT 1 FROM accepted WHERE manifest_id = ?", (manifest_id,)).fetchone()
             return row is not None
         row = db.execute(
             "SELECT receipt_json FROM accepted_receipts WHERE manifest_id = ?",
@@ -264,8 +266,10 @@ def verify_migration_manifest(
     seat_issue_store: str | Path | None = None,
     seat_tab_snapshot_resolver: Callable[[int, str], dict[str, Any]] | None = None,
     seat_receiver_trust_store: str | Path | None = None,
+    seat_authority_trust_store: str | Path | None = None,
+    seat_revocation_store: str | Path | None = None,
 ) -> dict[str, Any]:
-    manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    manifest = canonical_json_loads(Path(manifest_path).read_bytes())
     if not isinstance(manifest, dict) or manifest.get("schema") != MANIFEST_SCHEMA:
         raise ValueError("migration manifest schema is invalid")
     signed_manifest = dict(manifest)
@@ -320,7 +324,7 @@ def verify_migration_manifest(
     checkpoint_bytes = checkpoint_path.read_bytes()
     if _sha256_bytes(checkpoint_bytes) != manifest.get("checkpoint_sha256"):
         raise ValueError("migration checkpoint bytes do not match the signed manifest")
-    checkpoint = json.loads(checkpoint_bytes)
+    checkpoint = canonical_json_loads(checkpoint_bytes)
     if checkpoint.get("schema") != "selfconnect-checkpoint-v1":
         raise ValueError("migration checkpoint schema is invalid")
     stable = {key: value for key, value in checkpoint.items() if key != "digest"}
@@ -335,7 +339,9 @@ def verify_migration_manifest(
             trusted_receiver_public_key,
             verify_enrollment,
             verify_proof,
+            verify_proof_runtime,
         )
+
         enrollment = seat_bundle.get("enrollment")
         challenge = seat_bundle.get("challenge")
         delivery = seat_bundle.get("delivery")
@@ -345,33 +351,54 @@ def verify_migration_manifest(
             raise ValueError("authenticated per-seat channel proof is malformed")
         if seat_issue_store is None or seat_tab_snapshot_resolver is None or seat_receiver_trust_store is None:
             raise ValueError("trusted seat issuance, receiver, and live tab configuration are required")
-        verified_enrollment = verify_enrollment(
-            enrollment, authority_public_key_hex=public_key_hex, now=check_time
-        )
+        runtime_trust = seat_authority_trust_store is not None or seat_revocation_store is not None
+        if runtime_trust and (seat_authority_trust_store is None or seat_revocation_store is None):
+            raise ValueError("seat authority trust and revocation stores must be configured together")
+        if runtime_trust:
+            from sc_authority_trust import authority_public_key
+
+            seat_authority_key = authority_public_key(seat_authority_trust_store, challenge.get("authority_key_id"))
+        else:
+            seat_authority_key = public_key_hex
+        verified_enrollment = verify_enrollment(enrollment, authority_public_key_hex=seat_authority_key, now=check_time)
         receiver_key_id = channel.get("receiver_key_id")
         if not isinstance(receiver_key_id, str):
             raise ValueError("secure response receiver key ID is required")
-        receiver_public_key_hex = trusted_receiver_public_key(
-            receiver_key_id, seat_receiver_trust_store
-        )
-        if receiver_public_key_hex == public_key_hex:
+        receiver_public_key_hex = trusted_receiver_public_key(receiver_key_id, seat_receiver_trust_store)
+        if receiver_public_key_hex == seat_authority_key:
             raise ValueError("seat response receiver key must be distinct from migration authority")
         if challenge.get("operation_sha256") != _sha256_bytes(_canonical(signed_manifest)):
             raise ValueError("seat challenge does not bind the signed migration operation")
-        verify_proof(
-            proof, challenge=challenge, delivery=delivery, enrollment=enrollment,
-            channel_evidence=channel,
-            authority_public_key_hex=public_key_hex,
-            receiver_public_key_hex=receiver_public_key_hex,
-            expected_operation_sha256=_sha256_bytes(_canonical(signed_manifest)),
-            expected_tab_snapshot_sha256=__import__("sc_seat_identity").tab_snapshot_digest(
+        proof_args = {
+            "challenge": challenge,
+            "delivery": delivery,
+            "enrollment": enrollment,
+            "channel_evidence": channel,
+            "expected_operation_sha256": _sha256_bytes(_canonical(signed_manifest)),
+            "expected_tab_snapshot_sha256": __import__("sc_seat_identity").tab_snapshot_digest(
                 seat_tab_snapshot_resolver(expected_hwnd, verified_enrollment["birth_id"])
             ),
-            expected_target_hwnd=expected_hwnd,
-            replay_store=seat_replay_store or replay_store or default_replay_store(),
-            issue_store=seat_issue_store,
-            now=check_time, consume=True,
-        )
+            "expected_target_hwnd": expected_hwnd,
+            "replay_store": seat_replay_store or replay_store or default_replay_store(),
+            "issue_store": seat_issue_store,
+            "now": check_time,
+            "consume": True,
+        }
+        if runtime_trust:
+            verify_proof_runtime(
+                proof,
+                **proof_args,
+                authority_trust_store=seat_authority_trust_store,
+                revocation_store=seat_revocation_store,
+                receiver_trust_store=seat_receiver_trust_store,
+            )
+        else:
+            verify_proof(
+                proof,
+                **proof_args,
+                authority_public_key_hex=seat_authority_key,
+                receiver_public_key_hex=receiver_public_key_hex,
+            )
     receipt = {
         "schema": RECEIPT_SCHEMA,
         "manifest_id": manifest["manifest_id"],
@@ -418,6 +445,8 @@ def main() -> int:
     verify.add_argument("--seat-replay-store")
     verify.add_argument("--seat-issue-store")
     verify.add_argument("--seat-receiver-trust-store")
+    verify.add_argument("--seat-authority-trust-store")
+    verify.add_argument("--seat-revocation-store")
     verify.add_argument("--consume", action="store_true")
     args = parser.parse_args()
     try:
@@ -425,23 +454,15 @@ def main() -> int:
         try:
             own_hwnd = int(inherited_hwnd)
         except ValueError as exc:
-            raise ValueError(
-                "trusted successor launch binding is absent; do not accept this migration"
-            ) from exc
+            raise ValueError("trusted successor launch binding is absent; do not accept this migration") from exc
         if own_hwnd != args.expected_hwnd:
             raise ValueError(
                 f"verification command targets hwnd={args.expected_hwnd}, "
                 f"but this successor was launched for hwnd={own_hwnd}"
             )
-        trust_store = _authorized_cli_store(
-            args.trust_store, "SELFCONNECT_MIGRATION_TRUST_STORE", "trust store"
-        )
-        replay_store = _authorized_cli_store(
-            args.replay_store, "SELFCONNECT_MIGRATION_REPLAY_STORE", "replay store"
-        )
-        seat_bundle_path = _authorized_cli_store(
-            args.seat_bundle, "SELFCONNECT_MIGRATION_SEAT_BUNDLE", "seat bundle"
-        )
+        trust_store = _authorized_cli_store(args.trust_store, "SELFCONNECT_MIGRATION_TRUST_STORE", "trust store")
+        replay_store = _authorized_cli_store(args.replay_store, "SELFCONNECT_MIGRATION_REPLAY_STORE", "replay store")
+        seat_bundle_path = _authorized_cli_store(args.seat_bundle, "SELFCONNECT_MIGRATION_SEAT_BUNDLE", "seat bundle")
         seat_replay_store = _authorized_cli_store(
             args.seat_replay_store, "SELFCONNECT_MIGRATION_SEAT_REPLAY_STORE", "seat replay store"
         )
@@ -453,9 +474,21 @@ def main() -> int:
             "SELFCONNECT_MIGRATION_SEAT_RECEIVER_TRUST_STORE",
             "seat receiver trust store",
         )
+        seat_authority_trust_store = _authorized_cli_store(
+            args.seat_authority_trust_store,
+            "SELFCONNECT_MIGRATION_SEAT_AUTHORITY_TRUST_STORE",
+            "seat authority trust store",
+        )
+        seat_revocation_store = _authorized_cli_store(
+            args.seat_revocation_store,
+            "SELFCONNECT_MIGRATION_SEAT_REVOCATION_STORE",
+            "seat revocation store",
+        )
+        if args.consume and (seat_authority_trust_store is None or seat_revocation_store is None):
+            raise ValueError("consuming migration verification requires authority lifecycle and revocation stores")
         seat_bundle = None
         if seat_bundle_path:
-            seat_bundle = json.loads(Path(seat_bundle_path).read_text(encoding="utf-8"))
+            seat_bundle = canonical_json_loads(Path(seat_bundle_path).read_bytes())
         result = verify_migration_manifest(
             args.manifest,
             expected_hwnd=args.expected_hwnd,
@@ -467,6 +500,8 @@ def main() -> int:
             seat_issue_store=seat_issue_store,
             seat_tab_snapshot_resolver=resolve_live_tab_snapshot if seat_bundle else None,
             seat_receiver_trust_store=seat_receiver_trust_store,
+            seat_authority_trust_store=seat_authority_trust_store,
+            seat_revocation_store=seat_revocation_store,
         )
     except Exception as exc:
         print(json.dumps({"ok": False, "status": "REJECTED", "reason": str(exc)}))

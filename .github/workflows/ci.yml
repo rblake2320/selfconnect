@@ -36,12 +36,21 @@ jobs:
           antigravity_controller.py
           approval_partner.py
           approval_telegram.py
+          sc_authority_trust.py
+          sc_seat_identity.py
+          sc_seat_pipe.py
+          sc_seat_revocation.py
           claudego/
           tools/release_gate.py
+          tests/test_authority_revocation.py
           tests/test_release_gate.py
+          tests/test_seat_canonicalization.py
+          tests/test_seat_pipe.py
 
       - name: Syntax check
-        run: python -m py_compile self_connect.py
+        run: >
+          python -m py_compile self_connect.py sc_authority_trust.py
+          sc_seat_identity.py sc_seat_pipe.py sc_seat_revocation.py
 
       - name: Import check (no Win32 display needed)
         run: |
