@@ -16,7 +16,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
+import sqlite3
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -29,10 +31,48 @@ DEFAULT_KEY_PATH = Path.home() / ".selfconnect" / "mesh.key"
 DEFAULT_CREDENTIAL_TARGET = "SelfConnect/mesh/envelope-default"
 SIG_ALG = "hmac-sha256"
 ENVELOPE_MAX_AGE_S = 300.0  # replayed signed messages older than this are rejected
+AGENT_CARD_MAX_AGE_S = 300.0
+MAX_CLOCK_SKEW_S = 5.0
+DEFAULT_REPLAY_PATH = Path(
+    os.environ.get("LOCALAPPDATA", str(Path.home()))
+) / "SelfConnect" / "envelope_replay.sqlite3"
 
 
 class EnvelopeError(RuntimeError):
     pass
+
+
+class EnvelopeReplayStore:
+    """Durably consume each signed envelope ID exactly once."""
+
+    def __init__(self, path: Path | str = DEFAULT_REPLAY_PATH) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS consumed_envelopes ("
+                "env_id TEXT PRIMARY KEY, sender TEXT NOT NULL, "
+                "signature TEXT NOT NULL, consumed_at REAL NOT NULL)"
+            )
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.path, timeout=5.0)
+        conn.execute("PRAGMA busy_timeout=5000")
+        return conn
+
+    def consume(self, *, env_id: str, sender: str, signature: str, now: float) -> bool:
+        try:
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute(
+                    "INSERT INTO consumed_envelopes(env_id,sender,signature,consumed_at) "
+                    "VALUES(?,?,?,?)",
+                    (env_id, sender, signature, now),
+                )
+                conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
 
 
 def load_or_create_mesh_key(
@@ -96,7 +136,7 @@ class Envelope:
     kind: str  # e.g. "task.dispatch", "task.result", "doorbell", "ping"
     payload: dict = field(default_factory=dict)
     correlation_id: str = ""
-    env_id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
+    env_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     ts: float = field(default_factory=time.time)
     sig_alg: str = SIG_ALG
     sig: str = ""
@@ -110,16 +150,49 @@ class Envelope:
         self.sig = _signature(key, self._body())
         return self
 
-    def verify(self, key: bytes, max_age_s: float = 0.0) -> bool:
-        """Constant-time signature check; optional replay window."""
+    def verify(
+        self,
+        key: bytes,
+        max_age_s: float = ENVELOPE_MAX_AGE_S,
+        *,
+        replay_store: EnvelopeReplayStore | None = None,
+        now: float | None = None,
+    ) -> bool:
+        """Verify freshness and atomically consume this envelope exactly once."""
         if not self.sig:
             return False
         expected = _signature(key, self._body())
         if not hmac.compare_digest(expected, self.sig):
             return False
-        if max_age_s > 0 and (time.time() - self.ts) > max_age_s:
+        if (
+            type(self.env_id) is not str
+            or len(self.env_id) != 32
+            or any(ch not in "0123456789abcdef" for ch in self.env_id)
+            or isinstance(self.ts, bool)
+            or not isinstance(self.ts, (int, float))
+            or not math.isfinite(float(self.ts))
+            or isinstance(max_age_s, bool)
+            or not isinstance(max_age_s, (int, float))
+            or not math.isfinite(float(max_age_s))
+            or float(max_age_s) <= 0
+        ):
             return False
-        return True
+        checked_at = time.time() if now is None else now
+        if (
+            isinstance(checked_at, bool)
+            or not isinstance(checked_at, (int, float))
+            or not math.isfinite(float(checked_at))
+            or float(self.ts) > float(checked_at) + MAX_CLOCK_SKEW_S
+            or float(checked_at) - float(self.ts) > float(max_age_s)
+        ):
+            return False
+        store = replay_store or EnvelopeReplayStore()
+        return store.consume(
+            env_id=self.env_id,
+            sender=self.sender,
+            signature=self.sig,
+            now=float(checked_at),
+        )
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), sort_keys=True)
@@ -155,10 +228,29 @@ class AgentCard:
         self.sig = _signature(key, self._body())
         return self
 
-    def verify(self, key: bytes) -> bool:
+    def verify(
+        self,
+        key: bytes,
+        max_age_s: float = AGENT_CARD_MAX_AGE_S,
+        *,
+        now: float | None = None,
+    ) -> bool:
         if not self.sig:
             return False
-        return hmac.compare_digest(_signature(key, self._body()), self.sig)
+        if not hmac.compare_digest(_signature(key, self._body()), self.sig):
+            return False
+        checked_at = time.time() if now is None else now
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in (self.issued_at, checked_at, max_age_s)
+        ) or float(max_age_s) <= 0:
+            return False
+        return (
+            float(self.issued_at) <= float(checked_at) + MAX_CLOCK_SKEW_S
+            and float(checked_at) - float(self.issued_at) <= float(max_age_s)
+        )
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -193,12 +285,15 @@ def load_cards(directory: Path | str, key: Optional[bytes] = None,
 
 
 __all__ = [
+    "AGENT_CARD_MAX_AGE_S",
     "DEFAULT_KEY_PATH",
+    "DEFAULT_REPLAY_PATH",
     "ENVELOPE_MAX_AGE_S",
     "SIG_ALG",
     "AgentCard",
     "Envelope",
     "EnvelopeError",
+    "EnvelopeReplayStore",
     "load_cards",
     "load_or_create_mesh_key",
     "publish_card",

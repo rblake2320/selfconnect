@@ -9,6 +9,7 @@ from sc_envelope import (
     AgentCard,
     Envelope,
     EnvelopeError,
+    EnvelopeReplayStore,
     load_cards,
     load_or_create_mesh_key,
     publish_card,
@@ -46,14 +47,15 @@ def test_invalid_length_legacy_key_is_preserved_during_credential_migration(tmp_
     assert writes == []
 
 
-def test_sign_and_verify_roundtrip(key):
+def test_sign_and_verify_roundtrip(key, tmp_path):
+    store = EnvelopeReplayStore(tmp_path / "replay.sqlite3")
     env = Envelope(sender="windows-a", recipient="spark-1", kind="task.dispatch",
                    payload={"prompt": "do it"}, correlation_id="abc123")
     env.sign(key)
-    assert env.verify(key)
+    assert env.verify(key, replay_store=store)
 
     parsed = Envelope.from_json(env.to_json())
-    assert parsed.verify(key)
+    assert not parsed.verify(key, replay_store=store)
     assert parsed.correlation_id == "abc123"
     assert parsed.payload == {"prompt": "do it"}
 
@@ -71,12 +73,30 @@ def test_unsigned_and_wrong_key_fail(key):
     assert not env.verify(b"\x00" * 32)
 
 
-def test_replay_window(key):
-    env = Envelope(sender="a", recipient="b", kind="ping")
-    env.ts = time.time() - 120
-    env.sign(key)
-    assert env.verify(key)  # no window: fine
-    assert not env.verify(key, max_age_s=60)  # too old inside window
+def test_freshness_and_durable_replay_are_mandatory(key, tmp_path):
+    replay_path = tmp_path / "replay.sqlite3"
+    now = time.time()
+    stale = Envelope(sender="a", recipient="b", kind="ping", ts=now - 301).sign(key)
+    assert not stale.verify(key, replay_store=EnvelopeReplayStore(replay_path), now=now)
+
+    future = Envelope(sender="a", recipient="b", kind="ping", ts=now + 6).sign(key)
+    assert not future.verify(key, replay_store=EnvelopeReplayStore(replay_path), now=now)
+
+    fresh = Envelope(sender="a", recipient="b", kind="ping", ts=now).sign(key)
+    assert fresh.verify(key, replay_store=EnvelopeReplayStore(replay_path), now=now)
+    assert not Envelope.from_json(fresh.to_json()).verify(
+        key, replay_store=EnvelopeReplayStore(replay_path), now=now + 1
+    )
+
+
+@pytest.mark.parametrize("max_age", [0, -1, float("nan"), float("inf"), True])
+def test_replay_window_cannot_be_disabled(key, tmp_path, max_age):
+    env = Envelope(sender="a", recipient="b", kind="ping").sign(key)
+    assert not env.verify(
+        key,
+        max_age_s=max_age,
+        replay_store=EnvelopeReplayStore(tmp_path / "replay.sqlite3"),
+    )
 
 
 def test_malformed_json_raises(key):
@@ -109,3 +129,14 @@ def test_card_tamper_detected(key):
     assert card.verify(key)
     card.capabilities.append("terminal.inject.shell")
     assert not card.verify(key)
+
+
+def test_agent_card_freshness_is_mandatory(key):
+    now = time.time()
+    stale = AgentCard(name="stale", node="n", issued_at=now - 301).sign(key)
+    future = AgentCard(name="future", node="n", issued_at=now + 6).sign(key)
+    assert not stale.verify(key, now=now)
+    assert not future.verify(key, now=now)
+    assert not AgentCard(name="disabled", node="n", issued_at=now).sign(key).verify(
+        key, max_age_s=0, now=now
+    )
