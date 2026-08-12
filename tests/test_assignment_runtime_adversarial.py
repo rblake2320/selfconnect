@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import hashlib
 import json
 import sqlite3
 
@@ -42,6 +43,24 @@ RESULT_HASH = "a" * 64
 
 def _canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+
+
+def _local_root_material(env):
+    import win32crypt
+
+    config = json.loads(env["root_config_path"].read_bytes())
+    config.pop("signature_b64")
+    entropy = hashlib.sha256(_canonical(config)).digest()
+    protected = env["root_state_path"].read_bytes()
+    state = json.loads(win32crypt.CryptUnprotectData(protected, entropy, None, None, 0)[1])
+    return entropy, state
+
+
+def _write_local_root_state(env, entropy, state):
+    import win32crypt
+
+    protected = win32crypt.CryptProtectData(_canonical(state), "hostile same-user rewrite", entropy, None, None, 0)
+    env["root_state_path"].write_bytes(protected)
 
 
 def _target():
@@ -582,6 +601,11 @@ def test_unattested_transport_is_labeled_and_high_assurance_refuses_it(tmp_path,
     env = _environment(tmp_path, monkeypatch)
     dispatch = _dispatch(env)
     assert dispatch.submit_result["transport_assurance"] == "transport_unattested"
+    assert dispatch.submit_result["state_authority_assurance"] == {
+        "mode": "local_dpapi_integrity_only",
+        "same_user_threat": "excluded",
+        "external_monotonic_anchor": False,
+    }
     with pytest.raises(ValueError, match="transport_unattested"):
         GuardedSubmitConfig(
             sender="sender",
@@ -591,6 +615,36 @@ def test_unattested_transport_is_labeled_and_high_assurance_refuses_it(tmp_path,
             ack_pipe=r"\\.\pipe\unattested",
             replay_path=tmp_path / "replay.sqlite3",
             event_log_path=tmp_path / "events.jsonl",
+            high_assurance=True,
+        )
+
+    with pytest.raises(AssignmentVerificationError, match="monotonic anchor service"):
+        RuntimeTrustRoot(
+            env["root_config_path"],
+            pinned_public_key_hex=env["root_key"],
+            high_assurance=True,
+        )
+    with pytest.raises(AssignmentVerificationError, match="same-user monotonic"):
+        ReceiverLaunchContext(
+            trust_root=env["trust_root"],
+            assignment_journal=env["journal"],
+            mailbox=env["mailbox"],
+            revocation_resolver=env["revocation_resolver"],
+            high_assurance=True,
+        )
+    with pytest.raises(AssignmentVerificationError, match="same-user monotonic"):
+        ProductionAssignmentRuntime(
+            coordinator_identity=env["coordinator"],
+            coordinator_store=env["coordinator_store"],
+            receiver_enrollment=env["enrollment"],
+            bindings=env["bindings"],
+            trust_root=env["trust_root"],
+            mailbox=env["mailbox"],
+            assignment_journal=env["journal"],
+            revocation_resolver=env["revocation_resolver"],
+            terminal_tab_guard=env["runtime"]._terminal_tab_guard,
+            submit_config=env["runtime"]._submit_config,
+            wall_clock=lambda: env["wall"][0],
             high_assurance=True,
         )
 
@@ -857,3 +911,102 @@ def test_mailbox_and_protected_root_reset_cannot_reinitialize(tmp_path, monkeypa
     env["root_state_path"].unlink()
     with pytest.raises(AssignmentVerificationError, match="state is absent"):
         RuntimeTrustRoot(env["root_config_path"], pinned_public_key_hex=env["root_key"])
+
+
+def test_same_user_snapshot_restore_can_readmit_and_is_explicitly_out_of_scope(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    assignment = _dispatch(env).assignment
+    broker = _broker(env, tmp_path)
+    snapshots = {
+        "root": env["root_state_path"].read_bytes(),
+        "mailbox": env["mailbox"].path.read_bytes(),
+        "seat": env["trust_root"].path("receiver_store").read_bytes(),
+    }
+    broker.admit_raw(_canonical(assignment))
+    with pytest.raises(Exception, match="replay"):
+        broker.admit_raw(_canonical(assignment))
+
+    env["root_state_path"].write_bytes(snapshots["root"])
+    env["mailbox"].path.write_bytes(snapshots["mailbox"])
+    env["trust_root"].path("receiver_store").write_bytes(snapshots["seat"])
+    env["mailbox"] = DurableReceiptMailbox(channel_binding=env["channel"], trust_root=env["trust_root"])
+    env["journal"] = DurableAssignmentJournal(trust_root=env["trust_root"])
+    env["revocation_resolver"] = SeatRevocationResolver(env["trust_root"], clock=lambda: env["wall"][0])
+    replayed = _broker(env, tmp_path).admit_raw(_canonical(assignment))
+    assert replayed.assignment["assignment_id"] == assignment["assignment_id"]
+    assert env["trust_root"].assurance["same_user_threat"] == "excluded"
+
+
+def test_same_user_restore_reactivates_revoked_seat_and_high_assurance_refuses(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    assignment = _dispatch(env).assignment
+    old_revocations = env["revocation_path"].read_bytes()
+    old_root_state = env["root_state_path"].read_bytes()
+    _update_revocations(env, [key_id(env["seat"].public_key_hex)])
+    assert key_id(env["seat"].public_key_hex) in env["revocation_resolver"]()
+
+    env["revocation_path"].write_bytes(old_revocations)
+    env["root_state_path"].write_bytes(old_root_state)
+    env["revocation_resolver"] = SeatRevocationResolver(env["trust_root"], clock=lambda: env["wall"][0])
+    assert key_id(env["seat"].public_key_hex) not in env["revocation_resolver"]()
+    admission = _broker(env, tmp_path).admit_raw(_canonical(assignment))
+    assert admission.assignment["assignment_id"] == assignment["assignment_id"]
+    with pytest.raises(AssignmentVerificationError, match="monotonic anchor service"):
+        RuntimeTrustRoot(
+            env["root_config_path"],
+            pinned_public_key_hex=env["root_key"],
+            high_assurance=True,
+        )
+
+
+def test_same_user_can_unprotect_rewrite_and_reprotect_revocation_high_water(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    old_revocations = env["revocation_path"].read_bytes()
+    old_snapshot = json.loads(old_revocations)["snapshot"]
+    old_digest = hashlib.sha256(_canonical(old_snapshot)).hexdigest()
+    _update_revocations(env, [key_id(env["seat"].public_key_hex)])
+    env["revocation_resolver"]()
+
+    env["revocation_path"].write_bytes(old_revocations)
+    entropy, state = _local_root_material(env)
+    state["revocation_high_water"] = {"version": old_snapshot["version"], "digest": old_digest}
+    _write_local_root_state(env, entropy, state)
+    restarted = SeatRevocationResolver(env["trust_root"], clock=lambda: env["wall"][0])
+    assert restarted() == frozenset()
+    assert env["trust_root"].assurance["external_monotonic_anchor"] is False
+
+
+def test_same_user_can_rewrite_quarantine_and_local_anchor_so_high_assurance_refuses(tmp_path, monkeypatch):
+    env = _environment(
+        tmp_path,
+        monkeypatch,
+        submit_result={"ok": False, "state": "refused", "delivery_verified": False},
+    )
+    with pytest.raises(AssignmentDispatchError):
+        _dispatch(env)
+    assignment = parse_assignment_ingress(env["submitted"][0][0])
+    with sqlite3.connect(env["journal"].path) as connection:
+        sequence, raw = connection.execute(
+            "SELECT sequence,entry_json FROM assignment_dispatch_chain_v2 ORDER BY sequence DESC LIMIT 1"
+        ).fetchone()
+        forged = json.loads(bytes(raw))
+        forged["state"] = "delivered"
+        forged_raw = _canonical(forged)
+        forged_digest = hashlib.sha256(forged_raw).hexdigest()
+        connection.execute(
+            "UPDATE assignment_dispatch_chain_v2 SET entry_sha256=?,entry_json=? WHERE sequence=?",
+            (forged_digest, forged_raw, sequence),
+        )
+    entropy, state = _local_root_material(env)
+    state["anchors"]["dispatch"] = {
+        "database_id": env["trust_root"].database_id("dispatch"),
+        "sequence": sequence,
+        "head_sha256": forged_digest,
+    }
+    _write_local_root_state(env, entropy, state)
+
+    env["journal"].require_delivered(assignment)
+    admission = _broker(env, tmp_path).admit_raw(_canonical(assignment))
+    assert admission.assignment["assignment_id"] == assignment["assignment_id"]
+    with pytest.raises(AssignmentVerificationError, match="same-user monotonic"):
+        env["trust_root"].require_high_assurance()

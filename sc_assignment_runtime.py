@@ -343,9 +343,29 @@ def provision_runtime_trust_root(
 
 
 class RuntimeTrustRoot:
-    """Read-only signed config verifier plus DPAPI-protected mutable high-water state."""
+    """Local integrity root whose same-user rollback threat is explicitly excluded.
 
-    def __init__(self, config_path: str | Path, *, pinned_public_key_hex: str) -> None:
+    DPAPI protects the mutable state from other OS identities and accidental
+    corruption.  It is not a monotonic authority against the same Windows user,
+    who can decrypt, restore, or replace every local database and this state.
+    High assurance therefore refuses until a separately administered monotonic
+    anchor service is integrated.
+    """
+
+    def __init__(
+        self,
+        config_path: str | Path,
+        *,
+        pinned_public_key_hex: str,
+        high_assurance: bool = False,
+    ) -> None:
+        if type(high_assurance) is not bool:
+            raise TypeError("high_assurance must be an exact boolean")
+        if high_assurance:
+            raise AssignmentVerificationError(
+                "high-assurance state authority refuses: a separately administered "
+                "monotonic anchor service is not integrated"
+            )
         record = _snapshot(Path(config_path).resolve().read_bytes(), "runtime trust config")
         signature_b64 = record.pop("signature_b64", None)
         if record.get("schema") != "selfconnect-assignment-runtime-root-v1":
@@ -366,6 +386,19 @@ class RuntimeTrustRoot:
         if not self._state_path.exists():
             raise AssignmentVerificationError("provisioned runtime trust state is absent")
         self._read_state()
+
+    @property
+    def assurance(self) -> dict[str, Any]:
+        return {
+            "mode": "local_dpapi_integrity_only",
+            "same_user_threat": "excluded",
+            "external_monotonic_anchor": False,
+        }
+
+    def require_high_assurance(self) -> None:
+        raise AssignmentVerificationError(
+            "high-assurance state authority refuses: local DPAPI is not a same-user monotonic authority"
+        )
 
     def path(self, name: str) -> Path:
         return Path(self._config[f"{name}_path"]).resolve()
@@ -861,9 +894,14 @@ class ReceiverLaunchContext:
         assignment_journal: DurableAssignmentJournal,
         mailbox: DurableReceiptMailbox,
         revocation_resolver: SeatRevocationResolver,
+        high_assurance: bool = False,
     ) -> None:
         if type(trust_root) is not RuntimeTrustRoot:
             raise TypeError("receiver context requires the provisioned runtime trust root")
+        if type(high_assurance) is not bool:
+            raise TypeError("high_assurance must be an exact boolean")
+        if high_assurance:
+            trust_root.require_high_assurance()
         if (
             assignment_journal._trust_root is not trust_root
             or mailbox._trust_root is not trust_root
@@ -871,6 +909,7 @@ class ReceiverLaunchContext:
         ):
             raise AssignmentVerificationError("receiver authorities do not share the provisioned trust root")
         self._trust_root = trust_root
+        self.assurance = trust_root.assurance
         self.store_path = trust_root.path("receiver_store")
         self.store = AssignmentStateStore(self.store_path)
         self.assignment_journal = assignment_journal
@@ -1081,11 +1120,16 @@ class ProductionAssignmentRuntime:
         terminal_tab_guard: TerminalTabGuard,
         submit_config: GuardedSubmitConfig,
         wall_clock: Callable[[], float] = time.time,
+        high_assurance: bool = False,
     ) -> None:
         if type(terminal_tab_guard) is not TerminalTabGuard:
             raise TypeError("production runtime requires an exact TerminalTabGuard")
         if type(trust_root) is not RuntimeTrustRoot:
             raise TypeError("production runtime requires the provisioned read-only trust root")
+        if type(high_assurance) is not bool:
+            raise TypeError("high_assurance must be an exact boolean")
+        if high_assurance:
+            trust_root.require_high_assurance()
         if (
             mailbox._trust_root is not trust_root
             or assignment_journal._trust_root is not trust_root
@@ -1109,6 +1153,7 @@ class ProductionAssignmentRuntime:
         self._terminal_tab_guard = terminal_tab_guard
         self._submit_config = submit_config
         self._wall_clock = wall_clock
+        self.assurance = trust_root.assurance
 
     def dispatch(
         self,
@@ -1207,7 +1252,11 @@ class ProductionAssignmentRuntime:
         )
         return AssignmentDispatch(
             copy.deepcopy(assignment),
-            {**copy.deepcopy(result), "transport_assurance": "transport_unattested"},
+            {
+                **copy.deepcopy(result),
+                "transport_assurance": "transport_unattested",
+                "state_authority_assurance": self._trust_root.assurance,
+            },
         )
 
     def watchdog(
