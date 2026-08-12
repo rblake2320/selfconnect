@@ -3,12 +3,22 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import tomllib
+from pathlib import Path
 
 import pytest
 import sc_mesh_registry
-from sc_assignment_failover import AssignmentFailoverError, failover_assignment
+from sc_assignment_failover import (
+    AssignmentFailoverError,
+    FailoverConflictError,
+    FailoverSagaStore,
+    create_delivery_receipt,
+    failover_assignment,
+    list_pending_failovers,
+)
 from sc_assignment_protocol import (
     AssignmentStateStore,
+    AssignmentVerificationError,
     emit_state_receipt,
     issue_assignment,
     verify_consume_assignment,
@@ -20,6 +30,7 @@ from sc_seat_identity import create_enrollment
 from sc_terminal_tab import RUNTIME_ID_SCOPE, TerminalTabIdentity
 
 NOW = 2_100_000_000.0
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _canonical(value):
@@ -52,13 +63,11 @@ def _tab(hwnd, pid, started, birth, runtime):
     )
 
 
-def _case(
-    tmp_path, *, replacement_generation=4, replacement_seat=None, receipt_state="blocked"
-):
+def _case(tmp_path, *, receipt_state="blocked"):
     authority = AgentIdentity.generate("authority")
     coordinator = AgentIdentity.generate("coordinator")
     old_seat = AgentIdentity.generate("old-seat")
-    new_seat = replacement_seat or AgentIdentity.generate("new-seat")
+    new_seat = AgentIdentity.generate("new-seat")
     old_response = AgentIdentity.generate("old-response")
     new_response = AgentIdentity.generate("new-response")
     old_enrollment = create_enrollment(
@@ -72,7 +81,7 @@ def _case(
         seat_identity=new_seat,
         authority_identity=authority,
         birth_id="seat-new-birth",
-        generation=replacement_generation,
+        generation=4,
         now=NOW,
     )
     old_target = _target(101, 201, 301, "old seat")
@@ -97,9 +106,8 @@ def _case(
         store=coordinator_store,
         now=NOW,
     )
-    old_verification = {
+    verification = {
         "pinned_coordinator_public_key_hex": coordinator.public_key_hex,
-        "authority_public_key_hex": authority.public_key_hex,
         "expected_coordinator_birth_id": "coordinator-birth",
         "expected_coordinator_generation": 7,
         "expected_receiver_birth_id": "seat-old-birth",
@@ -110,7 +118,11 @@ def _case(
         "expected_response_channel": old_channel,
     }
     verify_consume_assignment(
-        assignment, store=seat_store, now=NOW + 1, **old_verification
+        assignment,
+        store=seat_store,
+        authority_public_key_hex=authority.public_key_hex,
+        now=NOW + 1,
+        **verification,
     )
     accepted = emit_state_receipt(
         assignment,
@@ -131,10 +143,11 @@ def _case(
         accepted,
         assignment,
         store=coordinator_store,
+        authority_public_key_hex=authority.public_key_hex,
         now=NOW + 2,
-        **old_verification,
+        **verification,
     )
-    blocked = emit_state_receipt(
+    receipt = emit_state_receipt(
         assignment,
         seat_identity=old_seat,
         authority_public_key_hex=authority.public_key_hex,
@@ -145,20 +158,19 @@ def _case(
         state=receipt_state,
         detail={"reason": f"authenticated worker {receipt_state}"},
         result_sha256=None,
-        idempotency_key="blocked-2",
+        idempotency_key=f"{receipt_state}-2",
         store=seat_store,
         now=NOW + 3,
     )
     registry_path = tmp_path / "mesh_registry.json"
-    registered = sc_mesh_registry.register_virtual_agent(
+    assert sc_mesh_registry.register_virtual_agent(
         "worker",
         mesh="test",
         status="active",
         birth_id="seat-old-birth",
         generation=3,
         registry_path=registry_path,
-    )
-    assert registered["ok"] is True
+    )["ok"]
     return {
         "authority": authority,
         "coordinator": coordinator,
@@ -170,48 +182,43 @@ def _case(
         "new_tab": new_tab,
         "new_channel": new_channel,
         "assignment": assignment,
-        "blocked": blocked,
+        "receipt": receipt,
         "store": coordinator_store,
+        "saga_path": tmp_path / "failover.sqlite3",
         "registry_path": registry_path,
-        "verification": old_verification,
+        "verification": verification,
     }
 
 
-def _delivery_receipt(assignment):
-    return {
-        "ok": True,
-        "state": "delivered",
-        **{
-            field: assignment[field]
-            for field in (
-                "assignment_id",
-                "receiver_birth_id",
-                "receiver_generation",
-                "receiver_key_id",
-                "receiver_seat_epoch",
-                "target_identity_sha256",
-                "terminal_tab_identity_sha256",
-                "response_channel_sha256",
-            )
-        },
+def _run(case, *, shared=None, receipt=None, **overrides):
+    delivery_now = overrides.get("now", NOW + 3)
+    shared = shared if shared is not None else {
+        "audit": [],
+        "guard": [],
+        "delivery": [],
+        "delivery_receipts": {},
     }
-
-
-def _run(case, **overrides):
-    calls = overrides.pop("calls", {"audit": [], "guard": [], "delivery": []})
-    receipt = overrides.pop("receipt", case["blocked"])
 
     def audit(event_type, **kwargs):
-        calls["audit"].append((event_type, kwargs))
+        shared["audit"].append((event_type, kwargs))
         return {"ok": True, "event": {"event_type": event_type}}
 
     def guard(**kwargs):
-        calls["guard"].append(kwargs)
+        shared["guard"].append(kwargs)
         return True
 
     def deliver(**kwargs):
-        calls["delivery"].append(kwargs)
-        return _delivery_receipt(kwargs["assignment"])
+        shared["delivery"].append(kwargs)
+        operation_id = kwargs["operation_id"]
+        if operation_id not in shared["delivery_receipts"]:
+            shared["delivery_receipts"][operation_id] = create_delivery_receipt(
+                operation_id=operation_id,
+                continuity=kwargs["continuity"],
+                replacement_assignment=kwargs["assignment"],
+                seat_identity=case["new_seat"],
+                delivered_at=delivery_now,
+            )
+        return shared["delivery_receipts"][operation_id]
 
     args = {
         "role": "worker",
@@ -224,189 +231,322 @@ def _run(case, **overrides):
         "replacement_response_receiver_public_key_hex": case["new_response"].public_key_hex,
         "replacement_response_channel": case["new_channel"],
         "store": case["store"],
+        "saga_path": case["saga_path"],
         "registry_path": case["registry_path"],
-        "exact_target_guard": guard,
+        "high_assurance_target_resolver": guard,
         "guarded_delivery": deliver,
         "audit_append": audit,
         "now": NOW + 3,
         **case["verification"],
         **overrides,
     }
-    return failover_assignment(case["assignment"], receipt, **args), calls
+    return failover_assignment(
+        case["assignment"], receipt or case["receipt"], **args
+    ), shared
 
 
-def test_authenticated_blocked_receipt_transitions_exact_old_seat_and_delivers_fresh_assignment(tmp_path):
+def test_saga_delivers_only_after_cas_final_audit_and_signed_seat_receipt(tmp_path):
     case = _case(tmp_path)
-    result, calls = _run(case)
+    result, shared = _run(case)
 
     assert result["ok"] is True
+    assert result["stage"] == "delivered"
     assert result["process_action"] == "none"
-    assert result["old_seat"]["birth_id"] == "seat-old-birth"
-    assert result["replacement_seat"]["birth_id"] == "seat-new-birth"
-    assert result["replacement_assignment"]["receiver_generation"] == 4
-    assert [item["stage"] for item in calls["guard"]] == [
-        "before_authorization",
-        "before_delivery",
+    assert [item[0] for item in shared["audit"]] == [
+        "assignment_failover_intent",
+        "assignment_failover_off_rails",
     ]
-    assert len(calls["delivery"]) == 1
-    event_type, audit = calls["audit"][0]
-    assert event_type == "blocked"
-    assert audit["strict"] is True
-    assert audit["birth_id"] == "seat-old-birth"
-    assert audit["generation"] == 3
-    assert audit["data"]["old_seat_key_id"] == case["blocked"]["receiver_key_id"]
-    assert audit["data"]["process_action"] == "none"
-    registry = sc_mesh_registry.load_registry_strict(case["registry_path"])
-    row = registry["agents"][0]
+    assert shared["audit"][0][1]["status"] == "pending"
+    assert shared["audit"][1][1]["status"] == "off_rails"
+    row = sc_mesh_registry.load_registry_strict(case["registry_path"])["agents"][0]
     assert row["status"] == "off_rails"
-    assert row["off_rails_identity"] == result["old_seat"]
+    assert result["delivery_receipt"]["receiver_key_id"] == result["replacement_seat"]["seat_key_id"]
 
 
-def test_authenticated_rejected_receipt_uses_real_strict_audit_log(tmp_path):
+def test_real_strict_audit_finalizes_off_rails_only_after_registry_cas(tmp_path):
     case = _case(tmp_path, receipt_state="rejected")
-    result, _calls = _run(case, audit_append=sc_mesh_registry.append_event)
 
+    def audit(event_type, **kwargs):
+        row = sc_mesh_registry.load_registry_strict(case["registry_path"])["agents"][0]
+        if event_type == "assignment_failover_intent":
+            assert row["status"] == "active"
+        else:
+            assert event_type == "assignment_failover_off_rails"
+            assert row["status"] == "off_rails"
+        return sc_mesh_registry.append_event(event_type, **kwargs)
+
+    result, _shared = _run(case, audit_append=audit)
     assert result["ok"] is True
-    verification = sc_mesh_registry.verify_events(registry_path=case["registry_path"])
-    assert verification["ok"] is True
-    events = sc_mesh_registry.load_events(
-        event_type="blocked", registry_path=case["registry_path"]
-    )["events"]
-    assert len(events) == 1
-    assert events[0]["data"]["receipt_state"] == "rejected"
-    assert events[0]["data"]["process_action"] == "none"
+    verified = sc_mesh_registry.verify_events(registry_path=case["registry_path"])
+    assert verified["ok"] is True
+    events = sc_mesh_registry.load_events(registry_path=case["registry_path"], limit=10)["events"]
+    assert [item["event_type"] for item in events] == [
+        "virtual_role_registered",
+        "assignment_failover_intent",
+        "assignment_failover_off_rails",
+    ]
 
 
-def test_forged_noncanonical_stale_replayed_and_wrong_seat_receipts_fail_before_audit(tmp_path):
+def test_package_manifest_and_ci_include_failover_module():
+    package = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    modules = package["tool"]["hatch"]["build"]["targets"]["wheel"]["include"]
+    assert "sc_assignment_failover.py" in modules
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "ruff check\n" in workflow
+    assert "python -m py_compile self_connect.py sc_assignment_failover.py" in workflow
+
+
+def test_continuity_artifact_binds_predecessor_and_authorizing_receipt(tmp_path):
+    case = _case(tmp_path)
+    result, _shared = _run(case)
+    continuity = result["continuity"]
+    payload = json.loads(result["replacement_assignment"]["payload"])
+
+    assert continuity["predecessor_assignment_sha256"] == __import__("hashlib").sha256(
+        _canonical(case["assignment"])
+    ).hexdigest()
+    assert continuity["authorizing_receipt_sha256"] == __import__("hashlib").sha256(
+        _canonical(case["receipt"])
+    ).hexdigest()
+    assert payload["continuity"] == continuity
+    assert payload["predecessor_payload"] == case["assignment"]["payload"]
+    operation = FailoverSagaStore(case["saga_path"]).load(result["operation_id"])
+    assert operation["spec"]["predecessor_assignment"] == case["assignment"]
+    assert operation["spec"]["authorizing_receipt"] == case["receipt"]
+    assert operation["spec"]["replacement_enrollment"] == case["new_enrollment"]
+
+
+@pytest.mark.parametrize(
+    "checkpoint",
+        [
+            "after_saga_prepare",
+            "after_intent_audit",
+        "after_registry_cas",
+        "after_off_rails_audit",
+        "after_assignment_build",
+        "after_assignment_issue",
+        "after_delivery",
+    ],
+)
+def test_every_crash_boundary_resumes_exact_outbox(checkpoint, tmp_path):
+    case = _case(tmp_path)
+    shared = {"audit": [], "guard": [], "delivery": [], "delivery_receipts": {}}
+    crashed = {"done": False}
+
+    def crash_once(name, _operation):
+        if name == checkpoint and not crashed["done"]:
+            crashed["done"] = True
+            raise RuntimeError("simulated crash")
+
+    with pytest.raises(AssignmentFailoverError, match="simulated crash"):
+        _run(case, shared=shared, stage_hook=crash_once)
+    if checkpoint == "after_delivery":
+        assert list_pending_failovers(case["saga_path"]) == []
+    else:
+        assert list_pending_failovers(case["saga_path"])
+
+    result, _shared = _run(case, shared=shared)
+    assert result["ok"] is True
+    assert result["resumed"] is True
+    assert FailoverSagaStore(case["saga_path"]).pending() == []
+    if checkpoint == "after_delivery":
+        assert len(shared["delivery"]) == 1
+
+
+def test_prepared_saga_recovers_unconsumed_receipt_after_freshness_window(tmp_path):
+    case = _case(tmp_path)
+
+    def crash_after_prepare(name, _operation):
+        if name == "after_saga_prepare":
+            raise RuntimeError("crash before receipt consumption")
+
+    with pytest.raises(AssignmentFailoverError, match="before receipt consumption"):
+        _run(case, stage_hook=crash_after_prepare)
+    operation = list_pending_failovers(case["saga_path"])[0]
+    assert operation["stage"] == "prepared"
+    with pytest.raises(AssignmentVerificationError, match="durably consumed"):
+        case["store"].require_receipt("consumed", case["receipt"])
+
+    result, _shared = _run(case, now=NOW + 100)
+    assert result["ok"] is True
+    assert result["resumed"] is True
+
+
+def test_exact_reentry_is_idempotent_but_conflicting_receipt_reuse_rejects(tmp_path):
+    case = _case(tmp_path)
+    first, shared = _run(case)
+    second, _shared = _run(case, shared=shared)
+    assert second["operation_id"] == first["operation_id"]
+    assert second["resumed"] is True
+    assert len(shared["delivery"]) == 1
+
+    wrong_target = _target(999, 202, 302, "conflicting target")
+    with pytest.raises(FailoverConflictError):
+        _run(case, shared=shared, replacement_target_identity=wrong_target)
+
+
+def test_receipt_consumed_outside_saga_cannot_authorize_new_failover(tmp_path):
+    case = _case(tmp_path)
+    verify_consume_state_receipt(
+        case["receipt"],
+        case["assignment"],
+        store=case["store"],
+        authority_public_key_hex=case["authority"].public_key_hex,
+        now=NOW + 3,
+        **case["verification"],
+    )
+    with pytest.raises(FailoverConflictError, match="outside a durable failover saga"):
+        _run(case)
+    assert list_pending_failovers(case["saga_path"]) == []
+
+
+def test_unsigned_echo_zero_and_wrong_signed_delivery_never_go(tmp_path):
+    variants = (
+        lambda **_kwargs: None,
+        lambda **_kwargs: {},
+        lambda **kwargs: {
+            "ok": True,
+            "assignment_id": kwargs["assignment"]["assignment_id"],
+        },
+    )
+    for index, boundary in enumerate(variants):
+        case = _case(tmp_path / f"unsigned-{index}")
+        with pytest.raises(AssignmentFailoverError, match="delivery receipt"):
+            _run(case, guarded_delivery=boundary)
+        assert FailoverSagaStore(case["saga_path"]).load(
+            list_pending_failovers(case["saga_path"])[0]["operation_id"]
+        )["stage"] == "assignment_issued"
+
+    case = _case(tmp_path / "wrong-signer")
+    wrong = AgentIdentity.generate("wrong")
+
+    def wrong_delivery(**kwargs):
+        assignment = copy.deepcopy(kwargs["assignment"])
+        assignment["receiver_key_id"] = __import__("hashlib").sha256(
+            bytes.fromhex(wrong.public_key_hex)
+        ).hexdigest()
+        return create_delivery_receipt(
+            operation_id=kwargs["operation_id"],
+            continuity=kwargs["continuity"],
+            replacement_assignment=assignment,
+            seat_identity=wrong,
+            delivered_at=NOW + 3,
+        )
+
+    with pytest.raises(AssignmentFailoverError, match="signature"):
+        _run(case, guarded_delivery=wrong_delivery)
+
+
+def test_cas_drift_has_intent_only_and_restart_reconciles_after_restore(tmp_path):
+    case = _case(tmp_path)
+    registry = json.loads(case["registry_path"].read_text(encoding="utf-8"))
+    registry["agents"][0]["birth_id"] = "drifted-birth"
+    case["registry_path"].write_text(json.dumps(registry), encoding="utf-8")
+    shared = {"audit": [], "guard": [], "delivery": [], "delivery_receipts": {}}
+
+    with pytest.raises(AssignmentFailoverError, match="registry birth drift"):
+        _run(case, shared=shared)
+    assert [item[0] for item in shared["audit"]] == ["assignment_failover_intent"]
+    assert list_pending_failovers(case["saga_path"])[0]["stage"] == "intent_audited"
+
+    registry["agents"][0]["birth_id"] = "seat-old-birth"
+    case["registry_path"].write_text(json.dumps(registry), encoding="utf-8")
+    result, _shared = _run(case, shared=shared)
+    assert result["ok"] is True
+    assert [item[0] for item in shared["audit"]] == [
+        "assignment_failover_intent",
+        "assignment_failover_off_rails",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("failed_event", "expected_stage"),
+    [
+        ("assignment_failover_intent", "authorized"),
+        ("assignment_failover_off_rails", "off_rails"),
+    ],
+)
+def test_audit_failure_is_durable_and_exact_retry_resumes(
+    failed_event, expected_stage, tmp_path
+):
+    case = _case(tmp_path)
+    failed = {"done": False}
+
+    def flaky_audit(event_type, **_kwargs):
+        if event_type == failed_event and not failed["done"]:
+            failed["done"] = True
+            raise OSError("audit unavailable")
+        return {"ok": True}
+
+    with pytest.raises(AssignmentFailoverError, match="audit unavailable"):
+        _run(case, audit_append=flaky_audit)
+    assert list_pending_failovers(case["saga_path"])[0]["stage"] == expected_stage
+    if failed_event == "assignment_failover_intent":
+        assert sc_mesh_registry.load_registry_strict(case["registry_path"])["agents"][0]["status"] == "active"
+
+    result, _shared = _run(case, audit_append=flaky_audit)
+    assert result["ok"] is True
+
+
+def test_wrong_target_channel_guard_and_revocation_fail_closed(tmp_path):
+    guard_case = _case(tmp_path / "guard")
+    with pytest.raises(AssignmentFailoverError, match="resolver refused"):
+        _run(guard_case, high_assurance_target_resolver=lambda **_kwargs: False)
+    assert list_pending_failovers(guard_case["saga_path"])[0]["stage"] == "assignment_issued"
+
+    channel_case = _case(tmp_path / "channel")
+
+    def wrong_channel_delivery(**kwargs):
+        receipt = create_delivery_receipt(
+            operation_id=kwargs["operation_id"],
+            continuity=kwargs["continuity"],
+            replacement_assignment=kwargs["assignment"],
+            seat_identity=channel_case["new_seat"],
+            delivered_at=NOW + 3,
+        )
+        body = dict(receipt)
+        body.pop("signature_b64")
+        body["response_channel_sha256"] = "f" * 64
+        return {
+            **body,
+            "signature_b64": base64.b64encode(
+                channel_case["new_seat"].sign(_canonical(body))
+            ).decode(),
+        }
+
+    with pytest.raises(AssignmentFailoverError, match="exact binding"):
+        _run(channel_case, guarded_delivery=wrong_channel_delivery)
+
+    revoked_case = _case(tmp_path / "revoked")
+    with pytest.raises(AssignmentFailoverError, match="revoked"):
+        _run(
+            revoked_case,
+            revoked_seat_key_ids=frozenset(
+                {revoked_case["new_enrollment"]["seat_key_id"]}
+            ),
+        )
+    assert not revoked_case["saga_path"].exists()
+
+
+def test_forged_stale_wrong_seat_and_noncanonical_receipt_never_create_saga(tmp_path):
     variants = []
-
     forged_case = _case(tmp_path / "forged")
-    forged = copy.deepcopy(forged_case["blocked"])
+    forged = copy.deepcopy(forged_case["receipt"])
     forged["state"] = "rejected"
     variants.append((forged_case, forged, NOW + 3))
 
-    noncanonical_case = _case(tmp_path / "noncanonical")
-    noncanonical = json.dumps(noncanonical_case["blocked"], indent=2)
-    variants.append((noncanonical_case, noncanonical, NOW + 3))
-
     stale_case = _case(tmp_path / "stale")
-    variants.append((stale_case, stale_case["blocked"], NOW + 100))
+    variants.append((stale_case, stale_case["receipt"], NOW + 100))
 
     wrong_case = _case(tmp_path / "wrong")
-    wrong_identity = AgentIdentity.generate("wrong-seat")
-    wrong = copy.deepcopy(wrong_case["blocked"])
-    body = dict(wrong)
-    body.pop("signature_b64")
-    body["receiver_key_id"] = "f" * 64
-    wrong = {
-        **body,
-        "signature_b64": base64.b64encode(wrong_identity.sign(_canonical(body))).decode(),
-    }
+    wrong = copy.deepcopy(wrong_case["receipt"])
+    wrong["receiver_key_id"] = "f" * 64
     variants.append((wrong_case, wrong, NOW + 3))
 
+    canonical_case = _case(tmp_path / "canonical")
+    variants.append((canonical_case, json.dumps(canonical_case["receipt"], indent=2), NOW + 3))
+
     for case, receipt, verification_time in variants:
-        audits = []
         with pytest.raises(AssignmentFailoverError):
-            _run(
-                case,
-                receipt=receipt,
-                audit_append=lambda *args, sink=audits, **kwargs: sink.append((args, kwargs)),
-                now=verification_time,
-            )
-        assert audits == []
-        assert sc_mesh_registry.load_registry_strict(case["registry_path"])["agents"][0]["status"] == "active"
-
-    replay_case = _case(tmp_path / "replay")
-    _run(replay_case)
-    with pytest.raises(AssignmentFailoverError, match="replay"):
-        _run(replay_case)
-
-
-@pytest.mark.parametrize("failure", ["birth", "generation", "key", "epoch"])
-def test_replacement_must_have_fresh_birth_higher_generation_and_distinct_key(tmp_path, failure):
-    case = _case(tmp_path)
-    enrollment = copy.deepcopy(case["new_enrollment"])
-    body = dict(enrollment)
-    body.pop("authority_signature_b64")
-    if failure == "birth":
-        body["birth_id"] = "seat-old-birth"
-    elif failure == "generation":
-        body["generation"] = 3
-    elif failure == "key":
-        body["seat_public_key_hex"] = case["old_seat"].public_key_hex
-        body["seat_key_id"] = case["blocked"]["receiver_key_id"]
-    else:
-        body["seat_epoch"] = case["blocked"]["receiver_seat_epoch"]
-    enrollment = {
-        **body,
-        "authority_signature_b64": base64.b64encode(
-            case["authority"].sign(_canonical(body))
-        ).decode(),
-    }
-    audits = []
-    with pytest.raises(AssignmentFailoverError):
-        _run(case, replacement_enrollment=enrollment, audit_append=lambda *args, **kwargs: audits.append((args, kwargs)))
-    assert audits == []
-
-
-def test_registry_birth_drift_audit_failure_and_target_guard_failure_fail_closed(tmp_path):
-    guard_case = _case(tmp_path / "guard")
-    audits = []
-    with pytest.raises(AssignmentFailoverError, match="guard refused"):
-        _run(
-            guard_case,
-            exact_target_guard=lambda **kwargs: False,
-            audit_append=lambda *args, **kwargs: audits.append((args, kwargs)),
-        )
-    assert audits == []
-
-    audit_case = _case(tmp_path / "audit")
-    transitions = []
-    with pytest.raises(AssignmentFailoverError, match="audit append failed"):
-        _run(
-            audit_case,
-            audit_append=lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk")),
-            registry_transition=lambda *args, **kwargs: transitions.append((args, kwargs)),
-        )
-    assert transitions == []
-    assert sc_mesh_registry.load_registry_strict(audit_case["registry_path"])["agents"][0]["status"] == "active"
-
-    drift_case = _case(tmp_path / "drift")
-    registry = json.loads(drift_case["registry_path"].read_text(encoding="utf-8"))
-    registry["agents"][0]["birth_id"] = "seat-drifted-birth"
-    drift_case["registry_path"].write_text(json.dumps(registry), encoding="utf-8")
-    delivered = []
-    with pytest.raises(AssignmentFailoverError, match="registry birth drift"):
-        _run(
-            drift_case,
-            guarded_delivery=lambda **kwargs: delivered.append(kwargs),
-        )
-    assert delivered == []
-    assert sc_mesh_registry.load_registry_strict(drift_case["registry_path"])["agents"][0]["status"] == "active"
-
-
-def test_second_guard_or_delivery_binding_failure_never_targets_a_process(tmp_path):
-    case = _case(tmp_path / "second-guard")
-    stages = []
-
-    def guard(**kwargs):
-        stages.append(kwargs["stage"])
-        return kwargs["stage"] != "before_delivery"
-
-    deliveries = []
-    with pytest.raises(AssignmentFailoverError, match="before_delivery"):
-        _run(case, exact_target_guard=guard, guarded_delivery=lambda **kwargs: deliveries.append(kwargs))
-    assert stages == ["before_authorization", "before_delivery"]
-    assert deliveries == []
-    assert sc_mesh_registry.load_registry_strict(case["registry_path"])["agents"][0]["status"] == "off_rails"
-
-    delivery_case = _case(tmp_path / "delivery")
-    with pytest.raises(AssignmentFailoverError, match="exact binding"):
-        _run(
-            delivery_case,
-            guarded_delivery=lambda **kwargs: {
-                **_delivery_receipt(kwargs["assignment"]),
-                "receiver_birth_id": "wrong-birth",
-            },
-        )
-    assert sc_mesh_registry.load_registry_strict(delivery_case["registry_path"])["agents"][0]["status"] == "off_rails"
+            _run(case, receipt=receipt, now=verification_time)
+        assert not case["saga_path"].exists() or list_pending_failovers(case["saga_path"]) == []

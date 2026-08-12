@@ -1,18 +1,21 @@
-"""Authenticated fresh-birth failover for blocked assignment seats.
+"""Durable authenticated fresh-birth failover for assignment seats.
 
-The signed assignment receipt is the authority for failover.  Mesh registry
-state is checked only as a compare-and-set routing mirror and is never accepted
-as evidence that a seat was blocked or rejected.  This module does not expose
-or invoke any process-termination operation.
+The authorizing receipt is verified cryptographically before a durable saga is
+prepared.  Exact retries resume the persisted outbox; conflicting use of the
+same receipt is rejected.  Registry state remains a compare-and-set routing
+mirror, never proof.  This module has no process-termination capability.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
 import secrets
+import sqlite3
 import time
 from collections.abc import Callable, Mapping
+from contextlib import closing
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -21,16 +24,51 @@ import sc_mesh_registry
 from sc_assignment_protocol import (
     AssignmentStateStore,
     AssignmentVerificationError,
-    issue_assignment,
-    verify_consume_state_receipt,
+    build_assignment,
+    verify_durably_consumed_state_receipt,
+    verify_state_receipt_authorization,
 )
+from sc_identity import AgentIdentity
 from sc_seat_identity import key_id, verify_enrollment
+from sc_tasks import FileLock
 
 FAILOVER_STATES = frozenset({"blocked", "rejected"})
+CONTINUITY_SCHEMA = "selfconnect-assignment-continuity-v1"
+CONTINUATION_PAYLOAD_SCHEMA = "selfconnect-assignment-continuation-v1"
+DELIVERY_RECEIPT_SCHEMA = "selfconnect-assignment-failover-delivery-v1"
+MAX_DELIVERY_CLOCK_SKEW_SECONDS = 5.0
+_STAGES = (
+    "prepared",
+    "authorized",
+    "intent_audited",
+    "off_rails",
+    "off_rails_audited",
+    "assignment_built",
+    "assignment_issued",
+    "delivered",
+)
+_STAGE_INDEX = {stage: index for index, stage in enumerate(_STAGES)}
+_RECEIPT_VERIFICATION_FIELDS = frozenset(
+    {
+        "pinned_coordinator_public_key_hex",
+        "expected_coordinator_birth_id",
+        "expected_coordinator_generation",
+        "expected_receiver_birth_id",
+        "expected_receiver_generation",
+        "expected_target_identity",
+        "expected_terminal_tab_identity",
+        "expected_response_receiver_public_key_hex",
+        "expected_response_channel",
+    }
+)
 
 
 class AssignmentFailoverError(AssignmentVerificationError):
-    """A fresh-birth failover authorization or boundary failed closed."""
+    """A failover authorization, saga, or high-assurance boundary failed."""
+
+
+class FailoverConflictError(AssignmentFailoverError):
+    """The authorizing receipt was reused with a different failover intent."""
 
 
 def _reject_constant(value: str) -> None:
@@ -59,8 +97,7 @@ def _canonical(value: Any) -> bytes:
         raise AssignmentFailoverError("record is not stable canonical JSON") from exc
 
 
-def _canonical_snapshot(value: Any, label: str) -> dict[str, Any]:
-    """Freeze a JSON object and require canonical bytes when bytes are supplied."""
+def _snapshot(value: Any, label: str, *, require_canonical_wire: bool = True) -> dict[str, Any]:
     raw: bytes | None = None
     if isinstance(value, bytes):
         raw = value
@@ -71,30 +108,27 @@ def _canonical_snapshot(value: Any, label: str) -> dict[str, Any]:
             raise AssignmentFailoverError(f"{label} is not UTF-8 JSON") from exc
     elif is_dataclass(value) and not isinstance(value, type):
         value = asdict(value)
-
     try:
-        if raw is not None:
-            decoded = raw.decode("utf-8")
-            snapshot = json.loads(
-                decoded,
-                object_pairs_hook=_unique_object,
-                parse_constant=_reject_constant,
-            )
-        else:
-            snapshot = json.loads(
-                _canonical(value).decode("ascii"),
-                object_pairs_hook=_unique_object,
-                parse_constant=_reject_constant,
-            )
+        if raw is None:
+            raw = _canonical(value)
+        result = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_constant,
+        )
     except AssignmentFailoverError:
         raise
     except (UnicodeDecodeError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise AssignmentFailoverError(f"{label} JSON is invalid") from exc
-    if type(snapshot) is not dict:
+    if type(result) is not dict:
         raise AssignmentFailoverError(f"{label} must be a JSON object")
-    if raw is not None and not secrets.compare_digest(raw, _canonical(snapshot)):
+    if require_canonical_wire and isinstance(value, (bytes, str)) and raw != _canonical(result):
         raise AssignmentFailoverError(f"{label} is not canonical JSON")
-    return snapshot
+    return result
+
+
+def _digest(value: Any) -> str:
+    return hashlib.sha256(_canonical(value)).hexdigest()
 
 
 def _finite(value: float | None, name: str) -> float:
@@ -107,40 +141,250 @@ def _finite(value: float | None, name: str) -> float:
     return result
 
 
-def _identity_document(value: Any, label: str) -> dict[str, Any]:
-    if is_dataclass(value) and not isinstance(value, type):
-        value = asdict(value)
-    return _canonical_snapshot(value, label)
+def _signed(body: dict[str, Any], identity: Any) -> dict[str, Any]:
+    frozen = _snapshot(body, "signed body", require_canonical_wire=False)
+    return {
+        **frozen,
+        "signature_b64": base64.b64encode(identity.sign(_canonical(frozen))).decode("ascii"),
+    }
 
 
-def _guard_exact_target(
-    guard: Callable[..., bool],
-    *,
-    target_identity: Any,
-    terminal_tab_identity: Any,
-    response_channel: Mapping[str, Any],
-    stage: str,
-) -> None:
-    if not callable(guard):
-        raise AssignmentFailoverError("exact target guard is required")
+def _verified_body(record: Any, public_key_hex: str, label: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    snap = _snapshot(record, label)
+    body = dict(snap)
+    signature = body.pop("signature_b64", None)
+    if type(signature) is not str:
+        raise AssignmentFailoverError(f"{label} is unsigned")
     try:
-        allowed = guard(
-            target_identity=target_identity,
-            terminal_tab_identity=terminal_tab_identity,
-            response_channel=response_channel,
-            stage=stage,
-        )
-    except Exception as exc:
-        raise AssignmentFailoverError(f"exact target guard failed at {stage}") from exc
-    if allowed is not True:
-        raise AssignmentFailoverError(f"exact target guard refused at {stage}")
+        raw_signature = base64.b64decode(signature, validate=True)
+    except (TypeError, ValueError) as exc:
+        raise AssignmentFailoverError(f"{label} signature is invalid") from exc
+    if not AgentIdentity.verify_with_pubkey_hex(public_key_hex, _canonical(body), raw_signature):
+        raise AssignmentFailoverError(f"{label} signature is invalid")
+    return snap, body
 
 
-def _require_boundary_result(result: Any, assignment: Mapping[str, Any]) -> dict[str, Any]:
-    if type(result) is not dict:
-        raise AssignmentFailoverError("guarded delivery boundary returned an invalid receipt")
+class FailoverSagaStore:
+    """SQLite saga/outbox keyed by the authorizing receipt and exact intent."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(self._connect()) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS failover_saga_v1 (
+                    operation_id TEXT PRIMARY KEY,
+                    receipt_sha256 TEXT NOT NULL UNIQUE,
+                    spec_sha256 TEXT NOT NULL UNIQUE,
+                    spec_json BLOB NOT NULL,
+                    stage TEXT NOT NULL CHECK(stage IN (
+                        'prepared','authorized','intent_audited','off_rails',
+                        'off_rails_audited','assignment_built',
+                        'assignment_issued','delivered')),
+                    receipt_commit_sha256 TEXT,
+                    continuity_json BLOB,
+                    replacement_assignment_json BLOB,
+                    delivery_receipt_json BLOB,
+                    last_error TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                """
+            )
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=5.0, isolation_level=None)
+        connection.execute("PRAGMA journal_mode=DELETE")
+        connection.execute("PRAGMA synchronous=FULL")
+        return connection
+
+    @staticmethod
+    def _decode(value: Any, label: str) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        raw = bytes(value) if not isinstance(value, bytes) else value
+        return _snapshot(raw, label)
+
+    def prepare(self, spec: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        frozen = _snapshot(spec, "failover operation spec", require_canonical_wire=False)
+        spec_hash = _digest(frozen)
+        operation_id = spec_hash
+        receipt_hash = str(frozen["receipt_sha256"])
+        now = time.time()
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT operation_id,spec_sha256,spec_json FROM failover_saga_v1 "
+                "WHERE receipt_sha256=?",
+                (receipt_hash,),
+            ).fetchone()
+            if existing is not None:
+                if existing[0] != operation_id or existing[1] != spec_hash:
+                    connection.rollback()
+                    raise FailoverConflictError("authorizing receipt has a conflicting failover intent")
+                stored = self._decode(existing[2], "stored failover spec")
+                if stored != frozen:
+                    connection.rollback()
+                    raise FailoverConflictError("stored failover intent integrity failed")
+                connection.commit()
+                return self.load(operation_id), False
+            try:
+                connection.execute(
+                    "INSERT INTO failover_saga_v1 "
+                    "(operation_id,receipt_sha256,spec_sha256,spec_json,stage,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (operation_id, receipt_hash, spec_hash, _canonical(frozen), "prepared", now, now),
+                )
+                connection.commit()
+            except sqlite3.IntegrityError as exc:
+                connection.rollback()
+                raise FailoverConflictError("failover operation conflicts with durable state") from exc
+        return self.load(operation_id), True
+
+    def load(self, operation_id: str) -> dict[str, Any]:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT operation_id,receipt_sha256,spec_sha256,spec_json,stage,"
+                "receipt_commit_sha256,continuity_json,replacement_assignment_json,"
+                "delivery_receipt_json,last_error,created_at,updated_at "
+                "FROM failover_saga_v1 WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()
+        if row is None:
+            raise AssignmentFailoverError("failover operation is not durable")
+        spec = self._decode(row[3], "stored failover spec")
+        if spec is None or _digest(spec) != row[2] or row[0] != row[2]:
+            raise AssignmentFailoverError("failover operation integrity failed")
+        return {
+            "operation_id": row[0],
+            "receipt_sha256": row[1],
+            "spec": spec,
+            "stage": row[4],
+            "receipt_commit_sha256": row[5],
+            "continuity": self._decode(row[6], "stored continuity artifact"),
+            "replacement_assignment": self._decode(row[7], "stored replacement assignment"),
+            "delivery_receipt": self._decode(row[8], "stored delivery receipt"),
+            "last_error": row[9],
+            "created_at": row[10],
+            "updated_at": row[11],
+        }
+
+    def find_by_receipt(self, receipt_sha256: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT operation_id FROM failover_saga_v1 WHERE receipt_sha256=?",
+                (receipt_sha256,),
+            ).fetchone()
+        return None if row is None else self.load(str(row[0]))
+
+    def advance(self, operation_id: str, expected_stage: str, next_stage: str, **values: Any) -> dict[str, Any]:
+        if _STAGE_INDEX[next_stage] != _STAGE_INDEX[expected_stage] + 1:
+            raise AssignmentFailoverError("invalid failover saga stage transition")
+        allowed = {
+            "receipt_commit_sha256",
+            "continuity_json",
+            "replacement_assignment_json",
+            "delivery_receipt_json",
+        }
+        if not set(values) <= allowed:
+            raise AssignmentFailoverError("invalid failover saga update")
+        assignments = ["stage=?", "updated_at=?", "last_error=NULL"]
+        parameters: list[Any] = [next_stage, time.time()]
+        for field, value in values.items():
+            assignments.append(f"{field}=?")
+            parameters.append(_canonical(value) if field.endswith("_json") else value)
+        parameters.extend((operation_id, expected_stage))
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                f"UPDATE failover_saga_v1 SET {','.join(assignments)} "
+                "WHERE operation_id=? AND stage=?",
+                parameters,
+            )
+            if cursor.rowcount != 1:
+                connection.rollback()
+                current = self.load(operation_id)
+                if _STAGE_INDEX[current["stage"]] >= _STAGE_INDEX[next_stage]:
+                    return current
+                raise AssignmentFailoverError("failover saga stage changed concurrently")
+            connection.commit()
+        return self.load(operation_id)
+
+    def record_error(self, operation_id: str, exc: BaseException) -> None:
+        message = f"{type(exc).__name__}:{exc}"[:2048]
+        with closing(self._connect()) as connection:
+            connection.execute(
+                "UPDATE failover_saga_v1 SET last_error=?,updated_at=? WHERE operation_id=?",
+                (message, time.time(), operation_id),
+            )
+
+    def pending(self) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT operation_id FROM failover_saga_v1 WHERE stage!='delivered' "
+                "ORDER BY created_at"
+            ).fetchall()
+        return [self.load(str(row[0])) for row in rows]
+
+
+def list_pending_failovers(path: str | Path) -> list[dict[str, Any]]:
+    """List durable intents which an owner can reconcile after restart."""
+    return FailoverSagaStore(path).pending()
+
+
+def create_delivery_receipt(
+    *,
+    operation_id: str,
+    continuity: Mapping[str, Any],
+    replacement_assignment: Mapping[str, Any],
+    seat_identity: Any,
+    delivered_at: float | None = None,
+) -> dict[str, Any]:
+    """Seat-side helper: sign proof that the exact replacement was received.
+
+    The failover coordinator never calls this helper.  A guarded delivery
+    implementation must obtain this proof from the enrolled replacement seat.
+    """
+    assignment = _snapshot(replacement_assignment, "replacement assignment", require_canonical_wire=False)
+    if key_id(str(seat_identity.public_key_hex)) != assignment.get("receiver_key_id"):
+        raise AssignmentFailoverError("delivery receipt signer is not the replacement seat")
+    body = {
+        "schema": DELIVERY_RECEIPT_SCHEMA,
+        "operation_id": operation_id,
+        "continuity_sha256": _digest(continuity),
+        "replacement_assignment_sha256": _digest(assignment),
+        "replacement_assignment_id": assignment["assignment_id"],
+        "receiver_birth_id": assignment["receiver_birth_id"],
+        "receiver_generation": assignment["receiver_generation"],
+        "receiver_key_id": assignment["receiver_key_id"],
+        "receiver_seat_epoch": assignment["receiver_seat_epoch"],
+        "target_identity_sha256": assignment["target_identity_sha256"],
+        "terminal_tab_identity_sha256": assignment["terminal_tab_identity_sha256"],
+        "response_channel_sha256": assignment["response_channel_sha256"],
+        "delivery_nonce": secrets.token_hex(32),
+        "delivered_at": _finite(delivered_at, "delivery time"),
+    }
+    return _signed(body, seat_identity)
+
+
+def _verify_delivery_receipt(
+    receipt: Any,
+    *,
+    operation_id: str,
+    continuity: Mapping[str, Any],
+    assignment: Mapping[str, Any],
+    replacement: Mapping[str, Any],
+    now: float,
+    require_fresh: bool,
+) -> dict[str, Any]:
+    snap, body = _verified_body(receipt, str(replacement["seat_public_key_hex"]), "delivery receipt")
     exact = {
-        "assignment_id": assignment["assignment_id"],
+        "schema": DELIVERY_RECEIPT_SCHEMA,
+        "operation_id": operation_id,
+        "continuity_sha256": _digest(continuity),
+        "replacement_assignment_sha256": _digest(assignment),
+        "replacement_assignment_id": assignment["assignment_id"],
         "receiver_birth_id": assignment["receiver_birth_id"],
         "receiver_generation": assignment["receiver_generation"],
         "receiver_key_id": assignment["receiver_key_id"],
@@ -149,11 +393,45 @@ def _require_boundary_result(result: Any, assignment: Mapping[str, Any]) -> dict
         "terminal_tab_identity_sha256": assignment["terminal_tab_identity_sha256"],
         "response_channel_sha256": assignment["response_channel_sha256"],
     }
-    if result.get("ok") is not True or result.get("state") != "delivered":
-        raise AssignmentFailoverError("guarded delivery boundary failed closed")
-    if any(result.get(field) != value for field, value in exact.items()):
-        raise AssignmentFailoverError("guarded delivery receipt exact binding mismatch")
-    return dict(result)
+    expected_fields = set(exact) | {"delivery_nonce", "delivered_at"}
+    if set(body) != expected_fields or any(body.get(field) != value for field, value in exact.items()):
+        raise AssignmentFailoverError("delivery receipt exact binding mismatch")
+    nonce = body.get("delivery_nonce")
+    if type(nonce) is not str or len(nonce) != 64 or any(ch not in "0123456789abcdef" for ch in nonce):
+        raise AssignmentFailoverError("delivery receipt nonce is invalid")
+    delivered = _finite(body.get("delivered_at"), "delivery receipt time")
+    if delivered < float(assignment["issued_at"]) or delivered > float(assignment["expires_at"]):
+        raise AssignmentFailoverError("delivery receipt is outside replacement assignment validity")
+    if require_fresh and abs(delivered - now) > MAX_DELIVERY_CLOCK_SKEW_SECONDS:
+        raise AssignmentFailoverError("delivery receipt is not fresh")
+    return snap
+
+
+def _guard(
+    resolver: Callable[..., bool],
+    *,
+    target: dict[str, Any],
+    tab: dict[str, Any],
+    channel: dict[str, Any],
+    operation_id: str,
+) -> None:
+    try:
+        result = resolver(
+            target_identity=target,
+            terminal_tab_identity=tab,
+            response_channel=channel,
+            operation_id=operation_id,
+            stage="before_delivery",
+        )
+    except Exception as exc:
+        raise AssignmentFailoverError("high-assurance target resolver failed") from exc
+    if result is not True:
+        raise AssignmentFailoverError("high-assurance target resolver refused")
+
+
+def _checkpoint(hook: Callable[[str, dict[str, Any]], None] | None, name: str, operation: dict[str, Any]) -> None:
+    if hook is not None:
+        hook(name, operation)
 
 
 def failover_assignment(
@@ -170,201 +448,459 @@ def failover_assignment(
     replacement_response_receiver_public_key_hex: str,
     replacement_response_channel: Mapping[str, Any],
     store: AssignmentStateStore,
+    saga_path: str | Path,
     registry_path: str | Path,
-    exact_target_guard: Callable[..., bool],
-    guarded_delivery: Callable[..., Mapping[str, Any]],
+    high_assurance_target_resolver: Callable[..., bool],
+    guarded_delivery: Callable[..., Any],
     audit_append: Callable[..., Mapping[str, Any]] = sc_mesh_registry.append_event,
-    registry_transition: Callable[..., Mapping[str, Any]] = (
-        sc_mesh_registry.transition_agent_off_rails_exact
-    ),
+    registry_transition: Callable[..., Mapping[str, Any]] = sc_mesh_registry.transition_agent_off_rails_exact,
     revoked_coordinator_key_ids: frozenset[str] = frozenset(),
     revoked_seat_key_ids: frozenset[str] = frozenset(),
     now: float | None = None,
-    replacement_ttl_seconds: float = 60.0,
+    replacement_ttl_seconds: float = 300.0,
+    stage_hook: Callable[[str, dict[str, Any]], None] | None = None,
     **receipt_verification: Any,
 ) -> dict[str, Any]:
-    """Replace a blocked/rejected seat through authenticated, guarded boundaries.
-
-    ``receipt_verification`` is the exact verification context accepted by
-    :func:`verify_consume_state_receipt`.  The receipt is durably consumed before
-    any audit or registry mutation.  Byte-identical receipt retries are rejected
-    here even though the lower-level receipt protocol permits idempotent reads.
-    """
+    """Run or resume one exact receipt-authorized failover saga."""
     current = _finite(now, "failover time")
-    if not isinstance(role, str) or not role.strip() or not isinstance(mesh, str) or not mesh.strip():
+    if not role.strip() or not mesh.strip():
         raise AssignmentFailoverError("role and mesh are required")
-    if not callable(audit_append) or not callable(registry_transition) or not callable(guarded_delivery):
-        raise AssignmentFailoverError("failover boundaries are required")
+    for boundary in (
+        high_assurance_target_resolver,
+        guarded_delivery,
+        audit_append,
+        registry_transition,
+    ):
+        if not callable(boundary):
+            raise AssignmentFailoverError("failover high-assurance boundaries are required")
 
-    canonical_receipt = _canonical_snapshot(receipt, "assignment failover receipt")
-    try:
-        verified = verify_consume_state_receipt(
-            canonical_receipt,
-            assignment,
-            store=store,
-            authority_public_key_hex=authority_public_key_hex,
-            revoked_coordinator_key_ids=revoked_coordinator_key_ids,
-            revoked_seat_key_ids=revoked_seat_key_ids,
-            now=current,
-            **receipt_verification,
-        )
-    except AssignmentFailoverError:
-        raise
-    except (AssignmentVerificationError, TypeError, ValueError) as exc:
-        raise AssignmentFailoverError(f"assignment failover receipt verification failed: {exc}") from exc
-    if verified.get("newly_committed") is not True:
-        raise AssignmentFailoverError("assignment failover receipt replay rejected")
-    if verified.get("state") not in FAILOVER_STATES:
-        raise AssignmentFailoverError("only blocked or rejected receipt authorizes failover")
-
-    old = {
-        "birth_id": verified["receiver_birth_id"],
-        "generation": verified["receiver_generation"],
-        "seat_key_id": verified["receiver_key_id"],
-        "seat_epoch": verified["receiver_seat_epoch"],
+    assignment_snap = _snapshot(assignment, "predecessor assignment")
+    receipt_snap = _snapshot(receipt, "authorizing receipt")
+    replacement_snap = _snapshot(replacement_enrollment, "replacement enrollment")
+    target = _snapshot(replacement_target_identity, "replacement target", require_canonical_wire=False)
+    tab = _snapshot(replacement_terminal_tab_identity, "replacement TerminalTab", require_canonical_wire=False)
+    channel = _snapshot(replacement_response_channel, "replacement response channel", require_canonical_wire=False)
+    if set(receipt_verification) != _RECEIPT_VERIFICATION_FIELDS:
+        raise AssignmentFailoverError("exact receipt verification context is required")
+    recovery_verification = {
+        "pinned_coordinator_public_key_hex": receipt_verification[
+            "pinned_coordinator_public_key_hex"
+        ],
+        "expected_coordinator_birth_id": receipt_verification[
+            "expected_coordinator_birth_id"
+        ],
+        "expected_coordinator_generation": receipt_verification[
+            "expected_coordinator_generation"
+        ],
+        "expected_receiver_birth_id": receipt_verification["expected_receiver_birth_id"],
+        "expected_receiver_generation": receipt_verification["expected_receiver_generation"],
+        "expected_target_identity": _snapshot(
+            receipt_verification["expected_target_identity"],
+            "predecessor target recovery context",
+            require_canonical_wire=False,
+        ),
+        "expected_terminal_tab_identity": _snapshot(
+            receipt_verification["expected_terminal_tab_identity"],
+            "predecessor TerminalTab recovery context",
+            require_canonical_wire=False,
+        ),
+        "expected_response_receiver_public_key_hex": receipt_verification[
+            "expected_response_receiver_public_key_hex"
+        ],
+        "expected_response_channel": _snapshot(
+            receipt_verification["expected_response_channel"],
+            "predecessor response-channel recovery context",
+            require_canonical_wire=False,
+        ),
     }
-    coordinator_key_id = key_id(str(coordinator_identity.public_key_hex))
-    if coordinator_key_id != verified["coordinator_key_id"]:
-        raise AssignmentFailoverError("failover coordinator is not the assignment coordinator")
-
-    replacement_snapshot = _canonical_snapshot(
-        replacement_enrollment, "replacement enrollment"
-    )
     try:
         replacement = verify_enrollment(
-            replacement_snapshot,
+            replacement_snap,
             authority_public_key_hex=authority_public_key_hex,
             revoked_key_ids=revoked_seat_key_ids,
             now=current,
         )
     except (TypeError, ValueError) as exc:
         raise AssignmentFailoverError(f"replacement enrollment verification failed: {exc}") from exc
-    if type(replacement.get("generation")) is not int or replacement["generation"] <= old["generation"]:
-        raise AssignmentFailoverError("replacement generation must be higher")
-    if replacement.get("birth_id") == old["birth_id"]:
+
+    receipt_hash = _digest(receipt_snap)
+    raw_old = {
+        "birth_id": receipt_snap.get("receiver_birth_id"),
+        "generation": receipt_snap.get("receiver_generation"),
+        "seat_key_id": receipt_snap.get("receiver_key_id"),
+        "seat_epoch": receipt_snap.get("receiver_seat_epoch"),
+    }
+    new = {
+        "birth_id": replacement["birth_id"],
+        "generation": replacement["generation"],
+        "seat_key_id": replacement["seat_key_id"],
+        "seat_epoch": replacement["seat_epoch"],
+    }
+    if new["birth_id"] == raw_old["birth_id"]:
         raise AssignmentFailoverError("replacement birth_id must be fresh")
-    if replacement.get("seat_key_id") == old["seat_key_id"]:
+    if type(raw_old["generation"]) is not int or new["generation"] <= raw_old["generation"]:
+        raise AssignmentFailoverError("replacement generation must be higher")
+    if new["seat_key_id"] == raw_old["seat_key_id"]:
         raise AssignmentFailoverError("replacement seat key must be distinct")
-    if replacement.get("seat_epoch") == old["seat_epoch"]:
+    if new["seat_epoch"] == raw_old["seat_epoch"]:
         raise AssignmentFailoverError("replacement seat epoch must be distinct")
+    coordinator_key_id = key_id(str(coordinator_identity.public_key_hex))
+    if coordinator_key_id in revoked_coordinator_key_ids:
+        raise AssignmentFailoverError("failover coordinator key is revoked")
 
-    target_document = _identity_document(replacement_target_identity, "replacement target")
-    tab_document = _identity_document(
-        replacement_terminal_tab_identity, "replacement TerminalTab"
-    )
-    channel_document = _canonical_snapshot(
-        replacement_response_channel, "replacement response channel"
-    )
-    _guard_exact_target(
-        exact_target_guard,
-        target_identity=target_document,
-        terminal_tab_identity=tab_document,
-        response_channel=channel_document,
-        stage="before_authorization",
-    )
-
-    receipt_sha256 = hashlib.sha256(_canonical(canonical_receipt)).hexdigest()
-    audit_data = {
-        "action": "authenticated_fresh_birth_failover",
-        "assignment_id": verified["assignment_id"],
-        "receipt_sha256": receipt_sha256,
-        "receipt_state": verified["state"],
-        "old_seat_key_id": old["seat_key_id"],
-        "old_seat_epoch": old["seat_epoch"],
-        "replacement_birth_id": replacement["birth_id"],
-        "replacement_generation": replacement["generation"],
-        "replacement_seat_key_id": replacement["seat_key_id"],
-        "replacement_seat_epoch": replacement["seat_epoch"],
-        "process_action": "none",
+    spec = {
+        "schema": "selfconnect-assignment-failover-operation-v1",
+        "receipt_sha256": receipt_hash,
+        "predecessor_assignment_sha256": _digest(assignment_snap),
+        "role": role,
+        "mesh": mesh,
+        "old_seat": raw_old,
+        "replacement_seat": new,
+        "replacement_enrollment_sha256": _digest(replacement_snap),
+        "target_identity_sha256": _digest(target),
+        "terminal_tab_identity_sha256": _digest(tab),
+        "response_channel_sha256": _digest(channel),
+        "response_receiver_key_id": key_id(replacement_response_receiver_public_key_hex),
+        "coordinator_key_id": coordinator_key_id,
+        "predecessor_assignment": assignment_snap,
+        "authorizing_receipt": receipt_snap,
+        "replacement_enrollment": replacement_snap,
+        "replacement_target_identity": target,
+        "replacement_terminal_tab_identity": tab,
+        "replacement_response_channel": channel,
+        "replacement_response_receiver_public_key_hex": (
+            replacement_response_receiver_public_key_hex
+        ),
+        "receipt_verification": recovery_verification,
     }
-    try:
-        audit_result = audit_append(
-            "blocked",
-            role=role,
-            mesh=mesh,
-            birth_id=old["birth_id"],
-            generation=old["generation"],
-            status="off_rails",
-            summary="authenticated assignment receipt authorized fresh-birth failover",
-            data=audit_data,
-            registry_path=registry_path,
-            strict=True,
-            strict_idempotency_key=f"assignment-failover:{receipt_sha256}",
-        )
-    except Exception as exc:
-        raise AssignmentFailoverError("strict failover audit append failed") from exc
-    if not isinstance(audit_result, Mapping) or audit_result.get("ok") is not True:
-        raise AssignmentFailoverError("strict failover audit append failed")
+    saga = FailoverSagaStore(saga_path)
+    lock_path = Path(saga_path).with_name(f"{Path(saga_path).name}.run.lock")
+    with FileLock(lock_path):
+        preverified: dict[str, Any] | None = None
+        if saga.find_by_receipt(receipt_hash) is None:
+            try:
+                preverified = verify_state_receipt_authorization(
+                    receipt_snap,
+                    assignment_snap,
+                    store=store,
+                    authority_public_key_hex=authority_public_key_hex,
+                    revoked_coordinator_key_ids=revoked_coordinator_key_ids,
+                    revoked_seat_key_ids=revoked_seat_key_ids,
+                    now=current,
+                    **receipt_verification,
+                )
+            except AssignmentVerificationError as exc:
+                raise AssignmentFailoverError(str(exc)) from exc
+            try:
+                store.require_receipt("consumed", receipt_snap)
+            except AssignmentVerificationError:
+                pass
+            else:
+                raise FailoverConflictError(
+                    "receipt was consumed outside a durable failover saga"
+                )
+        operation, created = saga.prepare(spec)
+        operation_id = operation["operation_id"]
+        try:
+            if created:
+                _checkpoint(stage_hook, "after_saga_prepare", operation)
+            if operation["stage"] != "prepared":
+                recovered = verify_durably_consumed_state_receipt(
+                    receipt_snap,
+                    assignment_snap,
+                    store=store,
+                    authority_public_key_hex=authority_public_key_hex,
+                    revoked_coordinator_key_ids=revoked_coordinator_key_ids,
+                    revoked_seat_key_ids=revoked_seat_key_ids,
+                    now=current,
+                    **receipt_verification,
+                )
+                recovered_old = {
+                    "birth_id": recovered["receiver_birth_id"],
+                    "generation": recovered["receiver_generation"],
+                    "seat_key_id": recovered["receiver_key_id"],
+                    "seat_epoch": recovered["receiver_seat_epoch"],
+                }
+                if (
+                    recovered["state"] not in FAILOVER_STATES
+                    or recovered_old != raw_old
+                    or recovered["coordinator_key_id"] != coordinator_key_id
+                ):
+                    raise AssignmentFailoverError("durable failover authorization binding mismatch")
+            if operation["stage"] == "prepared":
+                try:
+                    verified = preverified or verify_state_receipt_authorization(
+                            receipt_snap,
+                            assignment_snap,
+                            store=store,
+                            authority_public_key_hex=authority_public_key_hex,
+                            revoked_coordinator_key_ids=revoked_coordinator_key_ids,
+                            revoked_seat_key_ids=revoked_seat_key_ids,
+                            now=current,
+                            **receipt_verification,
+                        )
+                    newly_committed, commit_hash = store.consume_receipt(receipt_snap)
+                    if created and not newly_committed:
+                        raise FailoverConflictError("receipt was consumed outside this failover saga")
+                except AssignmentVerificationError:
+                    if created:
+                        raise
+                    try:
+                        verified = verify_durably_consumed_state_receipt(
+                            receipt_snap,
+                            assignment_snap,
+                            store=store,
+                            authority_public_key_hex=authority_public_key_hex,
+                            revoked_coordinator_key_ids=revoked_coordinator_key_ids,
+                            revoked_seat_key_ids=revoked_seat_key_ids,
+                            now=current,
+                            **receipt_verification,
+                        )
+                        commit_hash = str(verified["commit_sha256"])
+                    except AssignmentVerificationError:
+                        receipt_time = _finite(
+                            receipt_snap.get("issued_at"), "prepared receipt recovery time"
+                        )
+                        verified = verify_state_receipt_authorization(
+                            receipt_snap,
+                            assignment_snap,
+                            store=store,
+                            authority_public_key_hex=authority_public_key_hex,
+                            revoked_coordinator_key_ids=revoked_coordinator_key_ids,
+                            revoked_seat_key_ids=revoked_seat_key_ids,
+                            now=receipt_time,
+                            **receipt_verification,
+                        )
+                        newly_committed, commit_hash = store.consume_receipt(receipt_snap)
+                        if not newly_committed:
+                            raise FailoverConflictError(
+                                "prepared receipt recovery conflicted with durable consumption"
+                            )
+                if verified["state"] not in FAILOVER_STATES:
+                    raise AssignmentFailoverError("only blocked or rejected receipt authorizes failover")
+                exact_old = {
+                    "birth_id": verified["receiver_birth_id"],
+                    "generation": verified["receiver_generation"],
+                    "seat_key_id": verified["receiver_key_id"],
+                    "seat_epoch": verified["receiver_seat_epoch"],
+                }
+                if exact_old != raw_old or verified["coordinator_key_id"] != coordinator_key_id:
+                    raise AssignmentFailoverError("verified failover identity binding mismatch")
+                operation = saga.advance(
+                    operation_id,
+                    "prepared",
+                    "authorized",
+                    receipt_commit_sha256=commit_hash,
+                )
 
-    try:
-        transition = registry_transition(
-            role,
-            mesh=mesh,
-            expected_birth_id=old["birth_id"],
-            expected_generation=old["generation"],
-            expected_seat_key_id=old["seat_key_id"],
-            expected_seat_epoch=old["seat_epoch"],
-            registry_path=registry_path,
-        )
-    except Exception as exc:
-        raise AssignmentFailoverError("exact old-seat registry transition failed") from exc
-    if not isinstance(transition, Mapping) or transition.get("ok") is not True:
-        error = transition.get("error", "registry transition refused") if isinstance(transition, Mapping) else "invalid registry transition result"
-        raise AssignmentFailoverError(f"exact old-seat registry transition failed: {error}")
+            common_audit = {
+                "operation_id": operation_id,
+                "assignment_id": receipt_snap["assignment_id"],
+                "authorizing_receipt_sha256": receipt_hash,
+                "predecessor_assignment_sha256": spec["predecessor_assignment_sha256"],
+                "old_seat_key_id": raw_old["seat_key_id"],
+                "old_seat_epoch": raw_old["seat_epoch"],
+                "replacement_seat": new,
+                "process_action": "none",
+            }
+            if operation["stage"] == "authorized":
+                result = audit_append(
+                    "assignment_failover_intent",
+                    role=role,
+                    mesh=mesh,
+                    birth_id=str(raw_old["birth_id"]),
+                    generation=int(raw_old["generation"]),
+                    status="pending",
+                    summary="authenticated failover intent pending exact registry CAS",
+                    data=common_audit,
+                    registry_path=registry_path,
+                    strict=True,
+                    strict_idempotency_key=f"assignment-failover-intent:{operation_id}",
+                )
+                if not isinstance(result, Mapping) or result.get("ok") is not True:
+                    raise AssignmentFailoverError("strict failover intent audit failed")
+                _checkpoint(stage_hook, "after_intent_audit", operation)
+                operation = saga.advance(operation_id, "authorized", "intent_audited")
 
-    _guard_exact_target(
-        exact_target_guard,
-        target_identity=target_document,
-        terminal_tab_identity=tab_document,
-        response_channel=channel_document,
-        stage="before_delivery",
-    )
-    replacement_assignment = issue_assignment(
-        verified["payload"] if "payload" in verified else _canonical_snapshot(assignment, "assignment")["payload"],
-        coordinator_identity=coordinator_identity,
-        coordinator_birth_id=verified["coordinator_birth_id"],
-        coordinator_generation=verified["coordinator_generation"],
-        receiver_enrollment=replacement_snapshot,
-        authority_public_key_hex=authority_public_key_hex,
-        target_identity=target_document,
-        terminal_tab_identity=tab_document,
-        response_receiver_public_key_hex=replacement_response_receiver_public_key_hex,
-        response_channel=channel_document,
-        store=store,
-        revoked_coordinator_key_ids=revoked_coordinator_key_ids,
-        revoked_seat_key_ids=revoked_seat_key_ids,
-        now=current,
-        ttl_seconds=replacement_ttl_seconds,
-    )
-    try:
-        delivery_result = guarded_delivery(
-            assignment=replacement_assignment,
-            target_identity=target_document,
-            terminal_tab_identity=tab_document,
-            response_channel=channel_document,
-        )
-    except Exception as exc:
-        raise AssignmentFailoverError("guarded replacement delivery failed") from exc
-    delivery = _require_boundary_result(delivery_result, replacement_assignment)
-    return {
-        "ok": True,
-        "old_seat": old,
-        "replacement_seat": {
-            "birth_id": replacement["birth_id"],
-            "generation": replacement["generation"],
-            "seat_key_id": replacement["seat_key_id"],
-            "seat_epoch": replacement["seat_epoch"],
-        },
-        "replacement_assignment": replacement_assignment,
-        "delivery": delivery,
-        "audit": dict(audit_result),
-        "registry_transition": dict(transition),
-        "process_action": "none",
-    }
+            if operation["stage"] == "intent_audited":
+                transition = registry_transition(
+                    role,
+                    mesh=mesh,
+                    expected_birth_id=str(raw_old["birth_id"]),
+                    expected_generation=int(raw_old["generation"]),
+                    expected_seat_key_id=str(raw_old["seat_key_id"]),
+                    expected_seat_epoch=str(raw_old["seat_epoch"]),
+                    registry_path=registry_path,
+                )
+                if not isinstance(transition, Mapping) or transition.get("ok") is not True:
+                    error = transition.get("error", "registry CAS refused") if isinstance(transition, Mapping) else "invalid registry CAS result"
+                    raise AssignmentFailoverError(f"exact old-seat registry CAS failed: {error}")
+                _checkpoint(stage_hook, "after_registry_cas", operation)
+                operation = saga.advance(operation_id, "intent_audited", "off_rails")
+
+            if operation["stage"] == "off_rails":
+                result = audit_append(
+                    "assignment_failover_off_rails",
+                    role=role,
+                    mesh=mesh,
+                    birth_id=str(raw_old["birth_id"]),
+                    generation=int(raw_old["generation"]),
+                    status="off_rails",
+                    summary="exact authenticated assignment seat transitioned off rails",
+                    data=common_audit,
+                    registry_path=registry_path,
+                    strict=True,
+                    strict_idempotency_key=f"assignment-failover-off-rails:{operation_id}",
+                )
+                if not isinstance(result, Mapping) or result.get("ok") is not True:
+                    raise AssignmentFailoverError("strict off-rails audit failed")
+                _checkpoint(stage_hook, "after_off_rails_audit", operation)
+                operation = saga.advance(operation_id, "off_rails", "off_rails_audited")
+
+            if operation["stage"] == "off_rails_audited":
+                continuity_body = {
+                    "schema": CONTINUITY_SCHEMA,
+                    "operation_id": operation_id,
+                    "predecessor_assignment_id": assignment_snap["assignment_id"],
+                    "predecessor_assignment_sha256": spec["predecessor_assignment_sha256"],
+                    "authorizing_receipt_sha256": receipt_hash,
+                    "authorizing_receipt_commit_sha256": operation["receipt_commit_sha256"],
+                    "old_seat": raw_old,
+                    "replacement_seat": new,
+                    "target_identity_sha256": spec["target_identity_sha256"],
+                    "terminal_tab_identity_sha256": spec["terminal_tab_identity_sha256"],
+                    "response_channel_sha256": spec["response_channel_sha256"],
+                    "coordinator_key_id": coordinator_key_id,
+                    "issued_at": current,
+                }
+                continuity = _signed(continuity_body, coordinator_identity)
+                continuation_payload = _canonical(
+                    {
+                        "schema": CONTINUATION_PAYLOAD_SCHEMA,
+                        "predecessor_payload": assignment_snap["payload"],
+                        "continuity": continuity,
+                    }
+                ).decode("ascii")
+                requested_ttl = _finite(replacement_ttl_seconds, "replacement assignment TTL")
+                remaining_enrollment = float(replacement["expires_at"]) - current
+                effective_ttl = min(requested_ttl, remaining_enrollment)
+                if effective_ttl <= 0:
+                    raise AssignmentFailoverError("replacement enrollment expired before assignment issue")
+                replacement_assignment = build_assignment(
+                    continuation_payload,
+                    coordinator_identity=coordinator_identity,
+                    coordinator_birth_id=receipt_snap["coordinator_birth_id"],
+                    coordinator_generation=receipt_snap["coordinator_generation"],
+                    receiver_enrollment=replacement_snap,
+                    authority_public_key_hex=authority_public_key_hex,
+                    target_identity=target,
+                    terminal_tab_identity=tab,
+                    response_receiver_public_key_hex=replacement_response_receiver_public_key_hex,
+                    response_channel=channel,
+                    revoked_coordinator_key_ids=revoked_coordinator_key_ids,
+                    revoked_seat_key_ids=revoked_seat_key_ids,
+                    now=current,
+                    ttl_seconds=effective_ttl,
+                )
+                operation = saga.advance(
+                    operation_id,
+                    "off_rails_audited",
+                    "assignment_built",
+                    continuity_json=continuity,
+                    replacement_assignment_json=replacement_assignment,
+                )
+                _checkpoint(stage_hook, "after_assignment_build", operation)
+
+            if operation["stage"] == "assignment_built":
+                replacement_assignment = operation["replacement_assignment"]
+                if replacement_assignment is None:
+                    raise AssignmentFailoverError("replacement assignment outbox is missing")
+                store.ensure_assignment("issued", replacement_assignment)
+                _checkpoint(stage_hook, "after_assignment_issue", operation)
+                operation = saga.advance(operation_id, "assignment_built", "assignment_issued")
+
+            if operation["stage"] == "assignment_issued":
+                continuity = operation["continuity"]
+                replacement_assignment = operation["replacement_assignment"]
+                if continuity is None or replacement_assignment is None:
+                    raise AssignmentFailoverError("failover outbox is incomplete")
+                _guard(
+                    high_assurance_target_resolver,
+                    target=target,
+                    tab=tab,
+                    channel=channel,
+                    operation_id=operation_id,
+                )
+                raw_delivery = guarded_delivery(
+                    operation_id=operation_id,
+                    continuity=continuity,
+                    assignment=replacement_assignment,
+                    target_identity=target,
+                    terminal_tab_identity=tab,
+                    response_channel=channel,
+                )
+                delivery = _verify_delivery_receipt(
+                    raw_delivery,
+                    operation_id=operation_id,
+                    continuity=continuity,
+                    assignment=replacement_assignment,
+                    replacement=replacement,
+                    now=current,
+                    require_fresh=True,
+                )
+                operation = saga.advance(
+                    operation_id,
+                    "assignment_issued",
+                    "delivered",
+                    delivery_receipt_json=delivery,
+                )
+                _checkpoint(stage_hook, "after_delivery", operation)
+
+            if operation["stage"] != "delivered":
+                raise AssignmentFailoverError("failover saga did not reach delivery")
+            continuity = operation["continuity"]
+            replacement_assignment = operation["replacement_assignment"]
+            delivery = operation["delivery_receipt"]
+            if continuity is None or replacement_assignment is None or delivery is None:
+                raise AssignmentFailoverError("completed failover outbox is incomplete")
+            _verify_delivery_receipt(
+                delivery,
+                operation_id=operation_id,
+                continuity=continuity,
+                assignment=replacement_assignment,
+                replacement=replacement,
+                now=current,
+                require_fresh=False,
+            )
+            return {
+                "ok": True,
+                "stage": "delivered",
+                "operation_id": operation_id,
+                "old_seat": raw_old,
+                "replacement_seat": new,
+                "continuity": continuity,
+                "replacement_assignment": replacement_assignment,
+                "delivery_receipt": delivery,
+                "process_action": "none",
+                "resumed": not created,
+            }
+        except Exception as exc:
+            saga.record_error(operation_id, exc)
+            if isinstance(exc, AssignmentFailoverError):
+                raise
+            if isinstance(exc, AssignmentVerificationError):
+                raise AssignmentFailoverError(str(exc)) from exc
+            raise AssignmentFailoverError(f"failover saga boundary failed: {type(exc).__name__}:{exc}") from exc
 
 
 __all__ = [
+    "CONTINUITY_SCHEMA",
+    "DELIVERY_RECEIPT_SCHEMA",
     "FAILOVER_STATES",
     "AssignmentFailoverError",
+    "FailoverConflictError",
+    "FailoverSagaStore",
+    "create_delivery_receipt",
     "failover_assignment",
+    "list_pending_failovers",
 ]

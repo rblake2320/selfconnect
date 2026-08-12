@@ -7,8 +7,9 @@ for unknown governance or actuation kinds.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any
 
 KIND_VERSION = 1
 OBSERVATIONAL = "observational"
@@ -41,6 +42,8 @@ _DEFINITIONS = (
     EventKind(112, "approval", GOVERNANCE),
     EventKind(113, "blocked", GOVERNANCE),
     EventKind(114, "role_migrated", GOVERNANCE),
+    EventKind(115, "assignment_failover_intent", GOVERNANCE),
+    EventKind(116, "assignment_failover_off_rails", GOVERNANCE),
     EventKind(1_000, "role_heartbeat", OBSERVATIONAL),
     EventKind(1_001, "fleet_agent_heartbeat", OBSERVATIONAL),
     EventKind(1_002, "fleet_agent_done", OBSERVATIONAL),

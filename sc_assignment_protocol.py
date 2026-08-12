@@ -366,6 +366,37 @@ class AssignmentStateStore:
                 raise AssignmentReplayError(f"assignment {kind} replay rejected") from exc
         return snap
 
+    def ensure_assignment(self, kind: str, assignment: Any) -> tuple[dict[str, Any], bool]:
+        """Idempotently persist one exact assignment for a durable outbox."""
+        if kind not in {"issued", "consumed"}:
+            raise ValueError("invalid assignment store kind")
+        snap, digest = _record_hash(assignment, "assignment")
+        assignment_id = _safe_id(snap.get("assignment_id"), "assignment_id")
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT record_sha256,record_json FROM assignment_v2 "
+                "WHERE kind=? AND assignment_id=?",
+                (kind, assignment_id),
+            ).fetchone()
+            if existing is not None:
+                stored = self._decode(existing[1], "stored assignment")
+                if not secrets.compare_digest(str(existing[0]), digest) or stored != snap:
+                    connection.rollback()
+                    raise AssignmentReplayError("assignment identity conflicts with durable record")
+                connection.commit()
+                return stored, False
+            try:
+                connection.execute(
+                    "INSERT INTO assignment_v2 VALUES (?,?,?,?,?)",
+                    (kind, assignment_id, digest, _canonical(snap), time.time()),
+                )
+                connection.commit()
+            except sqlite3.IntegrityError as exc:
+                connection.rollback()
+                raise AssignmentReplayError(f"assignment {kind} replay rejected") from exc
+        return snap, True
+
     def require_assignment(self, kind: str, assignment: Any) -> dict[str, Any]:
         snap, digest = _record_hash(assignment, "assignment")
         assignment_id = _safe_id(snap.get("assignment_id"), "assignment_id")
@@ -640,7 +671,7 @@ _ASSIGNMENT_FIELDS = {
 }
 
 
-def issue_assignment(
+def build_assignment(
     payload: str,
     *,
     coordinator_identity: Any,
@@ -652,13 +683,12 @@ def issue_assignment(
     terminal_tab_identity: Any,
     response_receiver_public_key_hex: str,
     response_channel: Any,
-    store: AssignmentStateStore,
     revoked_coordinator_key_ids: frozenset[str] = frozenset(),
     revoked_seat_key_ids: frozenset[str] = frozenset(),
     now: float | None = None,
     ttl_seconds: float = 60.0,
 ) -> dict[str, Any]:
-    """Issue and durably record one coordinator-signed inline assignment."""
+    """Build one coordinator-signed assignment for a durable outbox."""
     payload = _bounded_text(payload, "assignment payload", MAX_PAYLOAD_BYTES)
     ttl = _finite(ttl_seconds, "assignment TTL")
     if not 0 < ttl <= MAX_ASSIGNMENT_TTL_SECONDS:
@@ -705,7 +735,44 @@ def issue_assignment(
         "issued_at": issued,
         "expires_at": expires,
     }
-    assignment = _signed(body, coordinator_identity)
+    return _signed(body, coordinator_identity)
+
+
+def issue_assignment(
+    payload: str,
+    *,
+    coordinator_identity: Any,
+    coordinator_birth_id: str,
+    coordinator_generation: int,
+    receiver_enrollment: Any,
+    authority_public_key_hex: str,
+    target_identity: Any,
+    terminal_tab_identity: Any,
+    response_receiver_public_key_hex: str,
+    response_channel: Any,
+    store: AssignmentStateStore,
+    revoked_coordinator_key_ids: frozenset[str] = frozenset(),
+    revoked_seat_key_ids: frozenset[str] = frozenset(),
+    now: float | None = None,
+    ttl_seconds: float = 60.0,
+) -> dict[str, Any]:
+    """Issue and durably record one coordinator-signed inline assignment."""
+    assignment = build_assignment(
+        payload,
+        coordinator_identity=coordinator_identity,
+        coordinator_birth_id=coordinator_birth_id,
+        coordinator_generation=coordinator_generation,
+        receiver_enrollment=receiver_enrollment,
+        authority_public_key_hex=authority_public_key_hex,
+        target_identity=target_identity,
+        terminal_tab_identity=terminal_tab_identity,
+        response_receiver_public_key_hex=response_receiver_public_key_hex,
+        response_channel=response_channel,
+        revoked_coordinator_key_ids=revoked_coordinator_key_ids,
+        revoked_seat_key_ids=revoked_seat_key_ids,
+        now=now,
+        ttl_seconds=ttl_seconds,
+    )
     return store.record_assignment("issued", assignment)
 
 
@@ -958,17 +1025,17 @@ def emit_state_receipt(
     )
 
 
-def verify_consume_state_receipt(
+def _verify_state_receipt_record(
     receipt: Any,
     assignment: Any,
     *,
     store: AssignmentStateStore,
+    enforce_receipt_freshness: bool,
     revoked_coordinator_key_ids: frozenset[str] = frozenset(),
     revoked_seat_key_ids: frozenset[str] = frozenset(),
     now: float | None = None,
     **verification: Any,
-) -> dict[str, Any]:
-    """Verify and commit one receipt, allowing only byte-identical retries."""
+) -> tuple[dict[str, Any], dict[str, Any]]:
     assignment_snap, assignment_body, enrolled = _verify_assignment(
         assignment,
         revoked_coordinator_key_ids=revoked_coordinator_key_ids,
@@ -1023,8 +1090,90 @@ def verify_consume_state_receipt(
         raise AssignmentVerificationError("receipt validity interval is invalid")
     if issued < _finite(assignment_body["issued_at"], "assignment issued_at") - MAX_CLOCK_SKEW_SECONDS:
         raise AssignmentVerificationError("receipt predates its assignment")
-    if issued > current + MAX_CLOCK_SKEW_SECONDS or current > expires:
+    if enforce_receipt_freshness and (
+        issued > current + MAX_CLOCK_SKEW_SECONDS or current > expires
+    ):
         raise AssignmentVerificationError("assignment receipt is outside its freshness window")
+    return receipt_snap, body
+
+
+def verify_state_receipt_authorization(
+    receipt: Any,
+    assignment: Any,
+    *,
+    store: AssignmentStateStore,
+    revoked_coordinator_key_ids: frozenset[str] = frozenset(),
+    revoked_seat_key_ids: frozenset[str] = frozenset(),
+    now: float | None = None,
+    **verification: Any,
+) -> dict[str, Any]:
+    """Verify a fresh receipt without consuming it or authorizing actuation."""
+    _receipt_snap, body = _verify_state_receipt_record(
+        receipt,
+        assignment,
+        store=store,
+        enforce_receipt_freshness=True,
+        revoked_coordinator_key_ids=revoked_coordinator_key_ids,
+        revoked_seat_key_ids=revoked_seat_key_ids,
+        now=now,
+        **verification,
+    )
+    return body
+
+
+def verify_durably_consumed_state_receipt(
+    receipt: Any,
+    assignment: Any,
+    *,
+    store: AssignmentStateStore,
+    revoked_coordinator_key_ids: frozenset[str] = frozenset(),
+    revoked_seat_key_ids: frozenset[str] = frozenset(),
+    now: float | None = None,
+    **verification: Any,
+) -> dict[str, Any]:
+    """Re-verify an exact durably consumed receipt for saga recovery.
+
+    Cryptographic, assignment, seat, revocation, and structural validation are
+    repeated.  The original freshness window is not replayed as authority; the
+    exact durable consumption record is required instead.
+    """
+    receipt_for_time = _snapshot(receipt, "durably consumed receipt")
+    recovery_time = _finite(receipt_for_time.get("issued_at"), "receipt recovery time")
+    receipt_snap, body = _verify_state_receipt_record(
+        receipt_for_time,
+        assignment,
+        store=store,
+        enforce_receipt_freshness=False,
+        revoked_coordinator_key_ids=revoked_coordinator_key_ids,
+        revoked_seat_key_ids=revoked_seat_key_ids,
+        now=recovery_time,
+        **verification,
+    )
+    _stored, commit_hash = store.require_receipt("consumed", receipt_snap)
+    return {**body, "newly_committed": False, "commit_sha256": commit_hash}
+
+
+def verify_consume_state_receipt(
+    receipt: Any,
+    assignment: Any,
+    *,
+    store: AssignmentStateStore,
+    revoked_coordinator_key_ids: frozenset[str] = frozenset(),
+    revoked_seat_key_ids: frozenset[str] = frozenset(),
+    now: float | None = None,
+    **verification: Any,
+) -> dict[str, Any]:
+    """Verify and commit one receipt, allowing only byte-identical retries."""
+    receipt_snap, body = _verify_state_receipt_record(
+        receipt,
+        assignment,
+        store=store,
+        enforce_receipt_freshness=True,
+        revoked_coordinator_key_ids=revoked_coordinator_key_ids,
+        revoked_seat_key_ids=revoked_seat_key_ids,
+        now=now,
+        **verification,
+    )
     newly_committed, commit_hash = store.consume_receipt(receipt_snap)
     return {**body, "newly_committed": newly_committed, "commit_sha256": commit_hash}
 
@@ -1226,6 +1375,7 @@ __all__ = [
     "AssignmentVerificationError",
     "acknowledge_state_receipt",
     "admit_assignment",
+    "build_assignment",
     "create_assignment",
     "create_state_receipt",
     "emit_state_receipt",
@@ -1234,5 +1384,7 @@ __all__ = [
     "verify_consume_ack",
     "verify_consume_assignment",
     "verify_consume_state_receipt",
+    "verify_durably_consumed_state_receipt",
     "verify_state_receipt",
+    "verify_state_receipt_authorization",
 ]
