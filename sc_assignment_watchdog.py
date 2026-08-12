@@ -1,4 +1,5 @@
 """Fail-closed operational wrapper around the canonical assignment protocol."""
+
 from __future__ import annotations
 
 import copy
@@ -14,6 +15,7 @@ from sc_assignment_protocol import (
     AssignmentVerificationError,
     poll_state_receipts,
 )
+from sc_guarded_submit import TargetIdentity
 
 
 @dataclass(frozen=True)
@@ -35,11 +37,20 @@ _BARE_SHELL = re.compile(r"\A(?:PS [A-Za-z]:\\[^>]*>|\$)\s*\Z", re.I)
 class AssignmentWatchdog:
     """Poll authenticated state receipts; never injects recovery or assignment text."""
 
-    def __init__(self, *, store: AssignmentStateStore, receipt_reader: Callable[[int], Any],
-                 read_uia: Callable[[int], str], read_ocr: Callable[[int], str],
-                 capture: Callable[[int], Any], alert_coordinator: Callable[[dict[str, Any]], None],
-                 source_guard: Callable[[Any], bool], target_guard: Callable[[int], bool],
-                 verification: dict[str, Any], clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        *,
+        store: AssignmentStateStore,
+        receipt_reader: Callable[[], Any],
+        read_uia: Callable[[int], str],
+        read_ocr: Callable[[int], str],
+        capture: Callable[[int], Any],
+        alert_coordinator: Callable[[dict[str, Any]], None],
+        source_guard: Callable[[Any], bool],
+        target_guard: Callable[[TargetIdentity], bool],
+        verification: dict[str, Any],
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._store = store
         self._receipt_reader = receipt_reader
         self._read_uia, self._read_ocr = read_uia, read_ocr
@@ -93,8 +104,13 @@ class AssignmentWatchdog:
             capture = self._capture(hwnd)
         except Exception as exc:
             capture_error = f"{type(exc).__name__}: {exc}"
-        event = {"hwnd": hwnd, "state": state, "reason": reason,
-                 "screen_evidence": self._last_screen, "capture": capture}
+        event = {
+            "hwnd": hwnd,
+            "state": state,
+            "reason": reason,
+            "screen_evidence": self._last_screen,
+            "capture": capture,
+        }
         if capture_error:
             event["capture_error"] = capture_error
         try:
@@ -103,22 +119,33 @@ class AssignmentWatchdog:
             # A broken alert sink cannot turn an unsafe result into success.
             pass
 
-    def monitor(self, *, hwnd: int, assignment: dict[str, Any], payload: str,
-                assignment_source: Any, timeout_seconds: float = 30.0,
-                poll_seconds: float = .25,
-                sleep: Callable[[float], None] = time.sleep) -> Observation:
+    def monitor(
+        self,
+        *,
+        hwnd: int,
+        assignment: dict[str, Any],
+        assignment_source: Any,
+        timeout_seconds: float = 30.0,
+        poll_seconds: float = 0.25,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> Observation:
         """Return only authenticated terminal states; all failures are blocked."""
-        if not isinstance(assignment, dict) or not isinstance(payload, str):
+        if not isinstance(assignment, dict):
             self._escalate(hwnd=hwnd, state="blocked", reason="malformed_assignment_input")
             return Observation("blocked", "assignment input is malformed", "protocol")
         if not callable(self._receipt_reader) or not callable(self._source_guard) or not callable(self._target_guard):
             self._escalate(hwnd=hwnd, state="blocked", reason="required_guard_or_reader_missing")
             return Observation("blocked", "receipt reader and both guards are required", "configuration")
 
+        expected_target = self._verification.get("expected_target_identity")
+        if type(expected_target) is not TargetIdentity or expected_target.hwnd != hwnd:
+            self._escalate(hwnd=hwnd, state="blocked", reason="expected_target_identity_missing_or_mismatched")
+            return Observation("blocked", "exact expected target identity is required", "configuration")
+
         def receipt_source() -> dict[str, Any] | None:
             # UIA/OCR is sampled for diagnostics only and cannot return state.
             self._last_screen = self._screen_evidence(hwnd)
-            raw = self._receipt_reader(hwnd)
+            raw = self._receipt_reader()
             if raw is None:
                 return None
             if type(raw) is not dict:
@@ -129,15 +156,20 @@ class AssignmentWatchdog:
             return self._source_guard(assignment_source) is True
 
         def guarded_target() -> bool:
-            return self._target_guard(hwnd) is True
+            return self._target_guard(expected_target) is True
 
         try:
             verified = poll_state_receipts(
-                copy.deepcopy(assignment), receipt_source=receipt_source,
-                source_guard=guarded_source, target_guard=guarded_target,
+                copy.deepcopy(assignment),
+                receipt_source=receipt_source,
+                source_guard=guarded_source,
+                target_guard=guarded_target,
                 until_states={"completed", "blocked", "rejected"},
-                timeout_seconds=timeout_seconds, poll_seconds=poll_seconds,
-                sleep=sleep, clock=self._clock, store=self._store,
+                timeout_seconds=timeout_seconds,
+                poll_seconds=poll_seconds,
+                sleep=sleep,
+                clock=self._clock,
+                store=self._store,
                 **copy.deepcopy(self._verification),
             )
         except TimeoutError:
@@ -150,11 +182,18 @@ class AssignmentWatchdog:
         state = str(verified["state"])
         if state in {"blocked", "rejected"}:
             self._last_screen = self._screen_evidence(hwnd)
-            self._escalate(hwnd=hwnd, state="blocked" if state == "blocked" else "refused",
-                           reason="authenticated_receipt_terminal_failure")
-        return Observation("refused" if state == "rejected" else state,
-                           "canonical authenticated state receipt", "receipt", True,
-                           copy.deepcopy(verified))
+            self._escalate(
+                hwnd=hwnd,
+                state="blocked" if state == "blocked" else "refused",
+                reason="authenticated_receipt_terminal_failure",
+            )
+        return Observation(
+            "refused" if state == "rejected" else state,
+            "canonical authenticated state receipt",
+            "receipt",
+            True,
+            copy.deepcopy(verified),
+        )
 
 
 __all__ = ["ASSIGNMENT_STATES", "AssignmentWatchdog", "Observation"]

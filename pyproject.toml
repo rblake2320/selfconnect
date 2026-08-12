@@ -123,6 +123,7 @@ include = [
     "sc_guarded_submit.py",
     "sc_assignment_watchdog.py",
     "sc_assignment_protocol.py",
+    "sc_assignment_runtime.py",
     "sc_seat_identity.py",
     "sc_seat_pipe.py",
     "sc_seat_revocation.py",
