@@ -10,9 +10,9 @@ from __future__ import annotations
 import argparse
 import copy
 import functools
-import inspect
 import hashlib
 import hmac
+import inspect
 import json
 import math
 import os
@@ -904,6 +904,54 @@ def update_agent(
         registry_path=saved,
     )
     return {"ok": True, "path": str(saved), "agent": existing}
+
+
+@_registry_writer
+def transition_agent_off_rails_exact(
+    role: str,
+    *,
+    expected_birth_id: str,
+    expected_generation: int,
+    expected_seat_key_id: str,
+    expected_seat_epoch: str,
+    mesh: str = DEFAULT_MESH,
+    registry_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """CAS the exact routed birth to ``off_rails`` after external proof.
+
+    The registry is deliberately not an authentication source.  The caller
+    supplies the already-verified seat key and epoch, which are persisted as
+    the identity placed off rails.  Existing registry birth/generation values
+    are used only to detect concurrent replacement or drift.
+    """
+    if (
+        not role.strip()
+        or not expected_birth_id.strip()
+        or type(expected_generation) is not int
+        or expected_generation <= 0
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_seat_key_id)
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_seat_epoch)
+    ):
+        return {"ok": False, "error": "invalid exact old-seat identity"}
+    registry = load_registry_strict(registry_path)
+    existing = _find_agent(registry, mesh, role)
+    if existing is None:
+        return {"ok": False, "error": "role not registered"}
+    if (
+        existing.get("birth_id") != expected_birth_id
+        or existing.get("generation") != expected_generation
+    ):
+        return {"ok": False, "error": "registry birth drift"}
+    existing["status"] = "off_rails"
+    existing["last_seen"] = _now()
+    existing["off_rails_identity"] = {
+        "birth_id": expected_birth_id,
+        "generation": expected_generation,
+        "seat_key_id": expected_seat_key_id,
+        "seat_epoch": expected_seat_epoch,
+    }
+    saved = save_registry(registry, registry_path)
+    return {"ok": True, "path": str(saved), "agent": copy.deepcopy(existing)}
 
 
 @_registry_writer
