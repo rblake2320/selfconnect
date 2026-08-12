@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import re
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ from sc_assignment_protocol import (
     ASSIGNMENT_STATES,
     AssignmentStateStore,
     AssignmentVerificationError,
-    poll_state_receipts,
+    verify_consume_state_receipt,
 )
 from sc_guarded_submit import TargetIdentity
 
@@ -48,7 +49,8 @@ class AssignmentWatchdog:
         alert_coordinator: Callable[[dict[str, Any]], None],
         source_guard: Callable[[Any], bool],
         target_guard: Callable[[TargetIdentity], bool],
-        verification: dict[str, Any],
+        verification_resolver: Callable[[], dict[str, Any]],
+        receipt_acknowledger: Callable[[dict[str, Any]], Any] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._store = store
@@ -56,8 +58,12 @@ class AssignmentWatchdog:
         self._read_uia, self._read_ocr = read_uia, read_ocr
         self._capture, self._alert = capture, alert_coordinator
         self._source_guard, self._target_guard = source_guard, target_guard
-        self._verification = copy.deepcopy(verification)
+        if not callable(verification_resolver):
+            raise TypeError("a live verification and revocation resolver is required")
+        self._verification_resolver = verification_resolver
+        self._receipt_acknowledger = receipt_acknowledger
         self._clock = clock
+        self._monitor_lock = threading.Lock()
         self._last_screen = Observation("submitted", "no authenticated receipt yet", "transport")
 
     @staticmethod
@@ -130,6 +136,31 @@ class AssignmentWatchdog:
         sleep: Callable[[float], None] = time.sleep,
     ) -> Observation:
         """Return only authenticated terminal states; all failures are blocked."""
+        if not self._monitor_lock.acquire(blocking=False):
+            self._escalate(hwnd=hwnd, state="blocked", reason="monitor_reentrancy_rejected")
+            return Observation("blocked", "assignment monitor is already active", "configuration")
+        try:
+            return self._monitor_locked(
+                hwnd=hwnd,
+                assignment=assignment,
+                assignment_source=assignment_source,
+                timeout_seconds=timeout_seconds,
+                poll_seconds=poll_seconds,
+                sleep=sleep,
+            )
+        finally:
+            self._monitor_lock.release()
+
+    def _monitor_locked(
+        self,
+        *,
+        hwnd: int,
+        assignment: dict[str, Any],
+        assignment_source: Any,
+        timeout_seconds: float,
+        poll_seconds: float,
+        sleep: Callable[[float], None],
+    ) -> Observation:
         if not isinstance(assignment, dict):
             self._escalate(hwnd=hwnd, state="blocked", reason="malformed_assignment_input")
             return Observation("blocked", "assignment input is malformed", "protocol")
@@ -137,41 +168,51 @@ class AssignmentWatchdog:
             self._escalate(hwnd=hwnd, state="blocked", reason="required_guard_or_reader_missing")
             return Observation("blocked", "receipt reader and both guards are required", "configuration")
 
-        expected_target = self._verification.get("expected_target_identity")
+        try:
+            initial_verification = self._resolve_verification()
+        except Exception as exc:
+            self._escalate(hwnd=hwnd, state="blocked", reason=f"revocation_resolution_failed:{type(exc).__name__}")
+            return Observation("blocked", str(exc), "configuration")
+        expected_target = initial_verification.get("expected_target_identity")
         if type(expected_target) is not TargetIdentity or expected_target.hwnd != hwnd:
             self._escalate(hwnd=hwnd, state="blocked", reason="expected_target_identity_missing_or_mismatched")
             return Observation("blocked", "exact expected target identity is required", "configuration")
 
-        def receipt_source() -> dict[str, Any] | None:
-            # UIA/OCR is sampled for diagnostics only and cannot return state.
-            self._last_screen = self._screen_evidence(hwnd)
-            raw = self._receipt_reader()
-            if raw is None:
-                return None
-            if type(raw) is not dict:
-                raise AssignmentVerificationError("receipt source returned a non-dict")
-            return copy.deepcopy(raw)
-
-        def guarded_source() -> bool:
-            return self._source_guard(assignment_source) is True
-
-        def guarded_target() -> bool:
-            return self._target_guard(expected_target) is True
-
         try:
-            verified = poll_state_receipts(
-                copy.deepcopy(assignment),
-                receipt_source=receipt_source,
-                source_guard=guarded_source,
-                target_guard=guarded_target,
-                until_states={"completed", "blocked", "rejected"},
-                timeout_seconds=timeout_seconds,
-                poll_seconds=poll_seconds,
-                sleep=sleep,
-                clock=self._clock,
-                store=self._store,
-                **copy.deepcopy(self._verification),
-            )
+            timeout = float(timeout_seconds)
+            interval = float(poll_seconds)
+            if timeout <= 0 or interval <= 0:
+                raise AssignmentVerificationError("invalid receipt polling policy")
+            deadline = self._clock() + timeout
+            verified = None
+            while self._clock() < deadline:
+                self._guard_pair(assignment_source, expected_target, "before_receipt_read")
+                self._last_screen = self._screen_evidence(hwnd)
+                raw = self._receipt_reader()
+                self._guard_pair(assignment_source, expected_target, "after_receipt_read")
+                if raw is not None:
+                    if type(raw) is not dict:
+                        raise AssignmentVerificationError("receipt source returned a non-dict")
+                    verification = self._resolve_verification()
+                    if verification.get("expected_target_identity") != expected_target:
+                        raise AssignmentVerificationError("live expected target identity changed")
+                    verified = verify_consume_state_receipt(
+                        copy.deepcopy(raw),
+                        copy.deepcopy(assignment),
+                        store=self._store,
+                        **verification,
+                    )
+                    self._guard_pair(assignment_source, expected_target, "after_receipt_verify")
+                    acknowledge = getattr(self._receipt_reader, "acknowledge", None)
+                    if callable(acknowledge):
+                        acknowledge(raw)
+                    if self._receipt_acknowledger is not None:
+                        self._receipt_acknowledger(copy.deepcopy(raw))
+                    if verified["state"] in {"completed", "blocked", "rejected"}:
+                        break
+                sleep(min(interval, max(0.0, deadline - self._clock())))
+            if verified is None or verified["state"] not in {"completed", "blocked", "rejected"}:
+                raise TimeoutError("authenticated assignment receipt deadline expired")
         except TimeoutError:
             self._escalate(hwnd=hwnd, state="blocked", reason="timeout")
             return Observation("blocked", "authenticated receipt timeout", "timeout")
@@ -194,6 +235,24 @@ class AssignmentWatchdog:
             True,
             copy.deepcopy(verified),
         )
+
+    def _resolve_verification(self) -> dict[str, Any]:
+        verification = self._verification_resolver()
+        if type(verification) is not dict:
+            raise AssignmentVerificationError("live verification resolver returned a non-dict")
+        for name in ("revoked_coordinator_key_ids", "revoked_seat_key_ids"):
+            if type(verification.get(name)) is not frozenset:
+                raise AssignmentVerificationError(f"live {name} snapshot is required")
+        return copy.deepcopy(verification)
+
+    def _guard_pair(self, source: Any, target: TargetIdentity, stage: str) -> None:
+        try:
+            source_guarded = self._source_guard(source) is True
+            target_guarded = self._target_guard(target) is True
+        except Exception as exc:
+            raise AssignmentVerificationError(f"assignment guard failed at {stage}") from exc
+        if not source_guarded or not target_guarded:
+            raise AssignmentVerificationError(f"assignment guard failed closed at {stage}")
 
 
 __all__ = ["ASSIGNMENT_STATES", "AssignmentWatchdog", "Observation"]

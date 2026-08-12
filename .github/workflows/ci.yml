@@ -37,6 +37,9 @@ jobs:
           approval_partner.py
           approval_telegram.py
           sc_authority_trust.py
+          sc_assignment_protocol.py
+          sc_assignment_runtime.py
+          sc_assignment_watchdog.py
           sc_seat_identity.py
           sc_seat_pipe.py
           sc_seat_revocation.py
@@ -44,13 +47,17 @@ jobs:
           claudego/
           tools/release_gate.py
           tests/test_authority_revocation.py
+          tests/test_assignment_runtime.py
+          tests/test_assignment_runtime_adversarial.py
+          tests/test_assignment_watchdog.py
           tests/test_release_gate.py
           tests/test_seat_canonicalization.py
           tests/test_seat_pipe.py
 
       - name: Syntax check
         run: >
-          python -m py_compile self_connect.py sc_authority_trust.py
+          python -m py_compile self_connect.py sc_assignment_protocol.py
+          sc_assignment_runtime.py sc_assignment_watchdog.py sc_authority_trust.py
           sc_seat_identity.py sc_seat_pipe.py sc_seat_revocation.py
           sc_trust_anchor.py
 
@@ -93,6 +100,17 @@ jobs:
 
       - name: Unit tests (no Win32 desktop needed)
         run: python -m pytest tests/ -v --tb=short
+
+      - name: Signed assignment runtime security gate
+        run: >
+          python -m pytest
+          tests/test_guarded_submit.py
+          tests/test_assignment_protocol.py
+          tests/test_assignment_watchdog.py
+          tests/test_assignment_runtime.py
+          tests/test_terminal_tab_guard.py
+          tests/test_assignment_runtime_adversarial.py
+          -q
 
       - name: Release claim and package audit
         run: python tools/release_gate.py audit --root .

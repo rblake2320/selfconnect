@@ -81,6 +81,8 @@ def _case(tmp_path):
         "expected_terminal_tab_identity": tab,
         "expected_response_receiver_public_key_hex": response_receiver.public_key_hex,
         "expected_response_channel": channel,
+        "revoked_coordinator_key_ids": frozenset(),
+        "revoked_seat_key_ids": frozenset(),
         "now": NOW + 1,
     }
     admit_assignment(assignment, store=seat_store, **verification)
@@ -107,7 +109,7 @@ def _watch(tmp_path, receipts, *, uia="Working", source=True, target=True, captu
         alert_coordinator=alerts.append,
         source_guard=lambda _source: source,
         target_guard=lambda _target: target,
-        verification=verification,
+        verification_resolver=lambda: verification,
         clock=clock or time.monotonic,
     )
     return seat, seat_store, assignment, watch, alerts, queue, live

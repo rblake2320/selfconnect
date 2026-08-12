@@ -13,9 +13,11 @@ from sc_assignment_protocol import (
 )
 from sc_assignment_runtime import (
     AssignmentBindings,
+    DurableAssignmentJournal,
     DurableReceiptMailbox,
     GuardedSubmitConfig,
     ProductionAssignmentRuntime,
+    RevocationSnapshot,
     SeatAssignmentBroker,
 )
 from sc_guarded_submit import AckKeyRing, TargetIdentity
@@ -94,17 +96,23 @@ def _case(tmp_path, monkeypatch):
             "state": "acknowledged",
             "delivery_verified": True,
             "peer_acknowledged": True,
+            "decision": "accepted",
         }
 
     monkeypatch.setattr(runtime_module, "guarded_submit", fake_guarded_submit)
     guard = TerminalTabGuard(tab, None, None, None)
     coordinator_store = AssignmentStateStore(tmp_path / "coordinator.sqlite3")
+    assignment_journal = DurableAssignmentJournal(tmp_path / "dispatch.sqlite3")
+    revocations = RevocationSnapshot(frozenset(), frozenset(), "test-v1", NOW)
+    revocations_ref = [revocations]
     coordinator_runtime = ProductionAssignmentRuntime(
         coordinator_identity=coordinator,
         coordinator_store=coordinator_store,
         receiver_enrollment=enrollment,
         bindings=bindings,
         mailbox=mailbox,
+        assignment_journal=assignment_journal,
+        revocation_resolver=lambda: revocations_ref[0],
         terminal_tab_guard=guard,
         submit_config=GuardedSubmitConfig(
             sender="codex-12-4abf6b40",
@@ -115,6 +123,7 @@ def _case(tmp_path, monkeypatch):
             replay_path=tmp_path / "ack.sqlite3",
             event_log_path=tmp_path / "events.jsonl",
         ),
+        wall_clock=lambda: NOW + 4,
     )
     return {
         "authority": authority,
@@ -129,6 +138,9 @@ def _case(tmp_path, monkeypatch):
         "mailbox": mailbox,
         "submitted": submitted,
         "coordinator_store": coordinator_store,
+        "assignment_journal": assignment_journal,
+        "revocations": revocations,
+        "revocations_ref": revocations_ref,
         "runtime": coordinator_runtime,
     }
 
@@ -139,6 +151,8 @@ def _broker(case, tmp_path, wall, **providers):
         seat_identity=case["seat"],
         bindings=case["bindings"],
         mailbox=case["mailbox"],
+        assignment_journal=case["assignment_journal"],
+        revocation_resolver=lambda: case["revocations_ref"][0],
         current_target=providers.get("current_target", lambda: case["target"]),
         current_terminal_tab=providers.get("current_terminal_tab", lambda: case["tab"]),
         current_response_receiver_public_key=providers.get(
@@ -164,7 +178,7 @@ def test_signed_inline_dispatch_broker_and_dynamic_watchdog_end_to_end(tmp_path,
 
     wall = [NOW + 1]
     broker = _broker(case, tmp_path, wall)
-    admission = broker.admit(dispatch.assignment)
+    admission = broker.admit_raw(json.dumps(dispatch.assignment, sort_keys=True, separators=(",", ":")))
     assert admission.assignment["payload"] == PAYLOAD
     assert admission.accepted_receipt["state"] == "accepted"
     wall[0] = NOW + 2
@@ -194,7 +208,6 @@ def test_signed_inline_dispatch_broker_and_dynamic_watchdog_end_to_end(tmp_path,
         target_guard=lambda value: target_checks.append(value) or value == case["target"],
         assignment_source="signed-terminal-channel",
         clock=lambda: 0.0,
-        verification_now=NOW + 4,
     )
     result = watchdog.monitor(
         hwnd=case["target"].hwnd,
@@ -206,7 +219,9 @@ def test_signed_inline_dispatch_broker_and_dynamic_watchdog_end_to_end(tmp_path,
     )
     assert result.state == "completed" and result.authenticated is True
     assert result.receipt["result_sha256"] == RESULT_HASH
-    assert len(target_checks) == 3 and all(item == case["target"] for item in target_checks)
+    assert len(target_checks) == 9 and all(item == case["target"] for item in target_checks)
+    ack = broker.consume_receipt_ack(dispatch.assignment, admission.accepted_receipt)
+    assert ack is not None and ack["state"] == "accepted"
 
 
 def test_dynamic_reader_observes_receipt_published_after_initial_empty_read(tmp_path, monkeypatch):
@@ -214,8 +229,12 @@ def test_dynamic_reader_observes_receipt_published_after_initial_empty_read(tmp_
     assignment = case["runtime"].dispatch(PAYLOAD, now=NOW).assignment
     reader = case["mailbox"].reader(assignment, channel=case["channel"])
     assert reader() is None
-    admission = _broker(case, tmp_path, [NOW + 1]).admit(assignment)
-    assert reader() == admission.accepted_receipt
+    admission = _broker(case, tmp_path, [NOW + 1]).admit_raw(
+        json.dumps(assignment, sort_keys=True, separators=(",", ":"))
+    )
+    receipt = reader()
+    assert receipt == admission.accepted_receipt
+    reader.acknowledge(receipt)
     assert reader() is None
 
 
@@ -236,13 +255,17 @@ def test_live_target_response_key_and_channel_mismatches_fail_before_admission(t
     )
     for index, providers in enumerate(cases):
         with pytest.raises(AssignmentVerificationError):
-            _broker(case, tmp_path / str(index), [NOW + 1], **providers).admit(assignment)
+            _broker(case, tmp_path / str(index), [NOW + 1], **providers).admit_raw(
+                json.dumps(assignment, sort_keys=True, separators=(",", ":"))
+            )
 
 
 def test_mailbox_fork_and_forged_receipt_never_authenticate(tmp_path, monkeypatch):
     case = _case(tmp_path, monkeypatch)
     assignment = case["runtime"].dispatch(PAYLOAD, now=NOW).assignment
-    admission = _broker(case, tmp_path, [NOW + 1]).admit(assignment)
+    admission = _broker(case, tmp_path, [NOW + 1]).admit_raw(
+        json.dumps(assignment, sort_keys=True, separators=(",", ":"))
+    )
     fork = copy.deepcopy(admission.accepted_receipt)
     fork["detail"] = {"forged": True}
     with pytest.raises(AssignmentReplayError, match="fork"):
@@ -262,7 +285,7 @@ def test_mailbox_fork_and_forged_receipt_never_authenticate(tmp_path, monkeypatc
         alert_coordinator=alerts.append,
         source_guard=lambda _source: True,
         target_guard=lambda target: target == case["target"],
-        verification=case["bindings"].verification(now=NOW + 2),
+        verification_resolver=lambda: case["bindings"].verification(case["revocations"], now=NOW + 2),
         clock=lambda: 0.0,
     )
     result = watchdog.monitor(
@@ -278,5 +301,5 @@ def test_mailbox_fork_and_forged_receipt_never_authenticate(tmp_path, monkeypatc
 
 
 def test_runtime_surface_has_no_external_receiver_payload_authority():
-    assert "payload" not in inspect.signature(SeatAssignmentBroker.admit).parameters
+    assert "payload" not in inspect.signature(SeatAssignmentBroker.admit_raw).parameters
     assert "payload" not in inspect.signature(runtime_module.AssignmentWatchdog.monitor).parameters
