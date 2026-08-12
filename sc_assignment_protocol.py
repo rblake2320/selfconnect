@@ -5,6 +5,7 @@ assignment payload are never authority.  A worker acts only after consuming a
 coordinator-signed assignment which embeds the bounded payload and binds the
 authority-enrolled seat, exact target, exact TerminalTab, and response channel.
 """
+
 from __future__ import annotations
 
 import base64
@@ -216,9 +217,7 @@ def _identity_document(value: Any, label: str, expected_type: type[Any]) -> dict
     return document
 
 
-def _identity_bindings(
-    target_identity: Any, terminal_tab_identity: Any
-) -> tuple[str, str, dict[str, Any]]:
+def _identity_bindings(target_identity: Any, terminal_tab_identity: Any) -> tuple[str, str, dict[str, Any]]:
     target = _identity_document(target_identity, "target identity", TargetIdentity)
     tab = _identity_document(terminal_tab_identity, "TerminalTab identity", TerminalTabIdentity)
     exact = (
@@ -271,9 +270,7 @@ def _verified_enrollment(enrollment: Any, **kwargs: Any) -> tuple[dict[str, Any]
     try:
         body = verify_enrollment(snap, **kwargs)
     except (TypeError, ValueError) as exc:
-        raise AssignmentVerificationError(
-            f"receiver enrollment verification failed: {exc}"
-        ) from exc
+        raise AssignmentVerificationError(f"receiver enrollment verification failed: {exc}") from exc
     _safe_id(body.get("birth_id"), "enrollment birth_id")
     _positive_int(body.get("generation"), "enrollment generation")
     _hex(body.get("seat_epoch"), "enrollment seat_epoch")
@@ -374,8 +371,7 @@ class AssignmentStateStore:
         assignment_id = _safe_id(snap.get("assignment_id"), "assignment_id")
         with closing(self._connect()) as connection:
             row = connection.execute(
-                "SELECT record_sha256, record_json FROM assignment_v2 "
-                "WHERE kind=? AND assignment_id=?",
+                "SELECT record_sha256, record_json FROM assignment_v2 WHERE kind=? AND assignment_id=?",
                 (kind, assignment_id),
             ).fetchone()
         if row is None or not secrets.compare_digest(str(row[0]), digest):
@@ -430,8 +426,7 @@ class AssignmentStateStore:
             digest = _sha256(_canonical(receipt))
             try:
                 connection.execute(
-                    "INSERT INTO receipt_v2 VALUES "
-                    "('emitted',?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO receipt_v2 VALUES ('emitted',?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         assignment_id,
                         sequence,
@@ -513,8 +508,7 @@ class AssignmentStateStore:
             )
             try:
                 connection.execute(
-                    "INSERT INTO receipt_v2 VALUES "
-                    "('consumed',?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO receipt_v2 VALUES ('consumed',?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         assignment_id,
                         sequence,
@@ -598,8 +592,7 @@ class AssignmentStateStore:
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             emitted = connection.execute(
-                "SELECT record_sha256 FROM receipt_v2 WHERE kind='emitted' "
-                "AND assignment_id=? AND sequence=?",
+                "SELECT record_sha256 FROM receipt_v2 WHERE kind='emitted' AND assignment_id=? AND sequence=?",
                 (ack["assignment_id"], ack["sequence"]),
             ).fetchone()
             if emitted is None or not secrets.compare_digest(str(emitted[0]), receipt_hash):
@@ -677,9 +670,7 @@ def issue_assignment(
         revoked_key_ids=revoked_seat_key_ids,
         now=issued,
     )
-    coordinator_key = _public_key(
-        str(coordinator_identity.public_key_hex), "coordinator public key"
-    )
+    coordinator_key = _public_key(str(coordinator_identity.public_key_hex), "coordinator public key")
     coordinator_id = key_id(coordinator_key)
     if coordinator_id in revoked_coordinator_key_ids:
         raise AssignmentVerificationError("coordinator key is revoked")
@@ -688,23 +679,17 @@ def issue_assignment(
     expires = issued + ttl
     if expires * 1000 > _finite(enrolled["expires_at"], "enrollment expires_at"):
         raise AssignmentVerificationError("assignment outlives the receiver enrollment")
-    target_hash, tab_hash, tab = _identity_bindings(
-        target_identity, terminal_tab_identity
-    )
+    target_hash, tab_hash, tab = _identity_bindings(target_identity, terminal_tab_identity)
     if tab["peer_birth_id"] != enrolled["birth_id"]:
         raise AssignmentVerificationError("TerminalTab peer birth_id is not the enrolled seat")
-    receiver_key = _public_key(
-        response_receiver_public_key_hex, "response receiver public key"
-    )
+    receiver_key = _public_key(response_receiver_public_key_hex, "response receiver public key")
     body = {
         "schema": ASSIGNMENT_SCHEMA,
         "assignment_id": secrets.token_hex(16),
         "payload": payload,
         "payload_sha256": _sha256(payload.encode("utf-8")),
         "coordinator_birth_id": _safe_id(coordinator_birth_id, "coordinator birth_id"),
-        "coordinator_generation": _positive_int(
-            coordinator_generation, "coordinator generation"
-        ),
+        "coordinator_generation": _positive_int(coordinator_generation, "coordinator generation"),
         "coordinator_key_id": coordinator_id,
         "receiver_birth_id": enrolled["birth_id"],
         "receiver_generation": enrolled["generation"],
@@ -742,9 +727,7 @@ def _verify_assignment(
     now: float | None,
     enforce_assignment_freshness: bool,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    coordinator_key = _public_key(
-        pinned_coordinator_public_key_hex, "pinned coordinator public key"
-    )
+    coordinator_key = _public_key(pinned_coordinator_public_key_hex, "pinned coordinator public key")
     snap, body = _verified_body(assignment, coordinator_key, "assignment")
     if set(body) != _ASSIGNMENT_FIELDS or body.get("schema") != ASSIGNMENT_SCHEMA:
         raise AssignmentVerificationError("assignment fields are invalid")
@@ -753,9 +736,7 @@ def _verify_assignment(
         raise AssignmentVerificationError("coordinator key is revoked")
     if body["coordinator_key_id"] != coordinator_id:
         raise AssignmentVerificationError("assignment coordinator key is not pinned")
-    if body["coordinator_birth_id"] != _safe_id(
-        expected_coordinator_birth_id, "expected coordinator birth_id"
-    ):
+    if body["coordinator_birth_id"] != _safe_id(expected_coordinator_birth_id, "expected coordinator birth_id"):
         raise AssignmentVerificationError("assignment coordinator birth_id mismatch")
     if body["coordinator_generation"] != _positive_int(
         expected_coordinator_generation, "expected coordinator generation"
@@ -778,17 +759,13 @@ def _verify_assignment(
     }
     if any(body.get(field) != value for field, value in exact_enrollment.items()):
         raise AssignmentVerificationError("assignment receiver enrollment binding mismatch")
-    if body["receiver_birth_id"] != _safe_id(
-        expected_receiver_birth_id, "expected receiver birth_id"
-    ) or body["receiver_generation"] != _positive_int(
-        expected_receiver_generation, "expected receiver generation"
-    ):
+    if body["receiver_birth_id"] != _safe_id(expected_receiver_birth_id, "expected receiver birth_id") or body[
+        "receiver_generation"
+    ] != _positive_int(expected_receiver_generation, "expected receiver generation"):
         raise AssignmentVerificationError("assignment receiver seat identity mismatch")
     if coordinator_id == body["receiver_key_id"]:
         raise AssignmentVerificationError("coordinator and receiver keys are not distinct")
-    target_hash, tab_hash, tab = _identity_bindings(
-        expected_target_identity, expected_terminal_tab_identity
-    )
+    target_hash, tab_hash, tab = _identity_bindings(expected_target_identity, expected_terminal_tab_identity)
     if tab["peer_birth_id"] != body["receiver_birth_id"]:
         raise AssignmentVerificationError("TerminalTab peer birth_id mismatch")
     expected_bindings = {
@@ -818,9 +795,7 @@ def _verify_assignment(
         raise AssignmentVerificationError("assignment validity interval is invalid")
     if expires * 1000 > _finite(enrolled["expires_at"], "enrollment expires_at"):
         raise AssignmentVerificationError("assignment outlives receiver enrollment")
-    if enforce_assignment_freshness and (
-        issued > current + MAX_CLOCK_SKEW_SECONDS or current > expires
-    ):
+    if enforce_assignment_freshness and (issued > current + MAX_CLOCK_SKEW_SECONDS or current > expires):
         raise AssignmentVerificationError("assignment is outside its freshness window")
     return snap, body, enrolled
 
@@ -933,9 +908,7 @@ def emit_state_receipt(
     if live_tab["peer_birth_id"] != admitted["receiver_birth_id"] or any(
         admitted.get(field) != value for field, value in live_bindings.items()
     ):
-        raise AssignmentVerificationError(
-            "receipt live seat, target, or response-channel binding mismatch"
-        )
+        raise AssignmentVerificationError("receipt live seat, target, or response-channel binding mismatch")
     seat_key = _public_key(str(seat_identity.public_key_hex), "seat public key")
     if key_id(seat_key) != admitted["receiver_key_id"]:
         raise AssignmentVerificationError("receipt signer is not the assigned seat")
@@ -1005,9 +978,7 @@ def verify_consume_state_receipt(
         **verification,
     )
     store.require_assignment("issued", assignment_snap)
-    receipt_snap, body = _verified_body(
-        receipt, enrolled["seat_public_key_hex"], "assignment receipt"
-    )
+    receipt_snap, body = _verified_body(receipt, enrolled["seat_public_key_hex"], "assignment receipt")
     if set(body) != _RECEIPT_FIELDS or body.get("schema") != RECEIPT_SCHEMA:
         raise AssignmentVerificationError("assignment receipt fields are invalid")
     exact = {
@@ -1090,9 +1061,7 @@ def acknowledge_state_receipt(
 ) -> dict[str, Any]:
     """Create a coordinator-only ACK, but only after durable receipt commit."""
     receipt_snap, _digest = _record_hash(receipt, "receipt")
-    coordinator_key = _public_key(
-        str(coordinator_identity.public_key_hex), "coordinator public key"
-    )
+    coordinator_key = _public_key(str(coordinator_identity.public_key_hex), "coordinator public key")
     if key_id(coordinator_key) != receipt_snap.get("coordinator_key_id"):
         raise AssignmentVerificationError("ACK signer is not the assignment coordinator")
     if key_id(coordinator_key) in frozenset(revoked_coordinator_key_ids):
@@ -1148,9 +1117,7 @@ def verify_consume_ack(
     receipt_snap, receipt_hash = _record_hash(receipt, "receipt")
     store.require_assignment("consumed", assignment_snap)
     store.require_receipt("emitted", receipt_snap)
-    coordinator_key = _public_key(
-        pinned_coordinator_public_key_hex, "pinned coordinator public key"
-    )
+    coordinator_key = _public_key(pinned_coordinator_public_key_hex, "pinned coordinator public key")
     coordinator_id = key_id(coordinator_key)
     if coordinator_id in frozenset(revoked_coordinator_key_ids):
         raise AssignmentVerificationError("ACK coordinator key is revoked")
@@ -1161,9 +1128,7 @@ def verify_consume_ack(
         revoked_key_ids=frozenset(revoked_seat_key_ids),
         now=current,
     )
-    target_hash, tab_hash, tab = _identity_bindings(
-        expected_target_identity, expected_terminal_tab_identity
-    )
+    target_hash, tab_hash, tab = _identity_bindings(expected_target_identity, expected_terminal_tab_identity)
     if tab["peer_birth_id"] != enrolled["birth_id"]:
         raise AssignmentVerificationError("ACK TerminalTab peer birth_id mismatch")
     ack_snap, body = _verified_body(ack, coordinator_key, "receipt ACK")
@@ -1233,9 +1198,7 @@ def poll_state_receipts(
             raise AssignmentVerificationError("assignment source or target guard failed closed")
         receipt = receipt_source()
         if receipt is not None:
-            verified = verify_consume_state_receipt(
-                receipt, assignment, **verification
-            )
+            verified = verify_consume_state_receipt(receipt, assignment, **verification)
             if verified["state"] in wanted:
                 return verified
         sleep(min(interval, max(0.0, deadline - clock())))

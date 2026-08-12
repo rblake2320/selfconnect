@@ -121,9 +121,7 @@ def _case(tmp_path, *, consume=True, assignment_ttl=60.0, enrollment_ttl=300.0):
     }
     admitted = None
     if consume:
-        admitted = verify_consume_assignment(
-            assignment, store=seat_store, **verification
-        )
+        admitted = verify_consume_assignment(assignment, store=seat_store, **verification)
     return {
         "authority": authority,
         "coordinator": coordinator,
@@ -192,11 +190,7 @@ def test_end_to_end_inline_assignment_receipt_chain_and_post_commit_ack(tmp_path
         verified = _verify(case, receipt)
         assert verified["sequence"] == sequence
         assert verified["newly_committed"] is True
-        expected_prior = (
-            "0" * 64
-            if prior is None
-            else __import__("hashlib").sha256(_canonical(prior)).hexdigest()
-        )
+        expected_prior = "0" * 64 if prior is None else __import__("hashlib").sha256(_canonical(prior)).hexdigest()
         assert receipt["prior_receipt_sha256"] == expected_prior
         prior = receipt
         receipts.append(receipt)
@@ -228,9 +222,7 @@ def test_end_to_end_inline_assignment_receipt_chain_and_post_commit_ack(tmp_path
 
 def test_assignment_payload_is_inline_bounded_and_external_substitution_is_impossible(tmp_path):
     case = _case(tmp_path)
-    assert case["assignment"]["payload_sha256"] == __import__("hashlib").sha256(
-        PAYLOAD.encode()
-    ).hexdigest()
+    assert case["assignment"]["payload_sha256"] == __import__("hashlib").sha256(PAYLOAD.encode()).hexdigest()
     assert "payload" not in inspect.signature(verify_consume_assignment).parameters
     forbidden_payloads = (
         "",
@@ -482,9 +474,7 @@ def test_emit_and_ack_recheck_live_target_channel_enrollment_and_revocation(tmp_
             result_sha256=None,
             idempotency_key="revoked-coordinator",
             store=case["seat_store"],
-            revoked_coordinator_key_ids=frozenset(
-                {seat_key_id(case["coordinator"].public_key_hex)}
-            ),
+            revoked_coordinator_key_ids=frozenset({seat_key_id(case["coordinator"].public_key_hex)}),
             now=NOW + 1,
         )
     accepted = _emit(case, "accepted", 1)
