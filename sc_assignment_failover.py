@@ -16,7 +16,7 @@ import sqlite3
 import time
 from collections.abc import Callable, Mapping
 from contextlib import closing
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,7 @@ FAILOVER_STATES = frozenset({"blocked", "rejected"})
 CONTINUITY_SCHEMA = "selfconnect-assignment-continuity-v1"
 CONTINUATION_PAYLOAD_SCHEMA = "selfconnect-assignment-continuation-v1"
 DELIVERY_RECEIPT_SCHEMA = "selfconnect-assignment-failover-delivery-v1"
+ACTUATION_PROOF_SCHEMA = "selfconnect-seat-delivery-actuation-v1"
 MAX_DELIVERY_CLOCK_SKEW_SECONDS = 5.0
 _STAGES = (
     "prepared",
@@ -61,6 +62,8 @@ _RECEIPT_VERIFICATION_FIELDS = frozenset(
         "expected_response_channel",
     }
 )
+_CONTEXT_SEAL = object()
+_SEAT_CLAIM_SEAL = object()
 
 
 class AssignmentFailoverError(AssignmentVerificationError):
@@ -69,6 +72,87 @@ class AssignmentFailoverError(AssignmentVerificationError):
 
 class FailoverConflictError(AssignmentFailoverError):
     """The authorizing receipt was reused with a different failover intent."""
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class FailoverLaunchContext:
+    """Trusted immutable durability capability created once at runtime launch."""
+
+    assignment_store: AssignmentStateStore
+    assignment_store_path: Path
+    saga_store: FailoverSagaStore
+    saga_store_path: Path
+    registry_path: Path
+    event_log_path: Path
+    event_head_anchor: str
+    _seal: object
+
+    def __init__(
+        self,
+        *,
+        assignment_store: AssignmentStateStore,
+        saga_path: str | Path,
+        registry_path: str | Path,
+        seal: object,
+    ) -> None:
+        if seal is not _CONTEXT_SEAL or type(assignment_store) is not AssignmentStateStore:
+            raise TypeError("FailoverLaunchContext is runtime-owned")
+        resolved_registry = Path(registry_path).resolve(strict=True)
+        resolved_saga = Path(saga_path).resolve(strict=False)
+        if resolved_saga == resolved_registry:
+            raise ValueError("saga and registry paths must be distinct")
+        verified = sc_mesh_registry.verify_events(registry_path=resolved_registry)
+        if verified.get("ok") is not True:
+            raise AssignmentFailoverError("event log is not valid at launch")
+        object.__setattr__(self, "assignment_store", assignment_store)
+        object.__setattr__(self, "assignment_store_path", assignment_store.path.resolve())
+        saga_store = FailoverSagaStore(resolved_saga)
+        object.__setattr__(self, "saga_store", saga_store)
+        object.__setattr__(self, "saga_store_path", saga_store.path)
+        object.__setattr__(self, "registry_path", resolved_registry)
+        object.__setattr__(
+            self,
+            "event_log_path",
+            sc_mesh_registry.default_event_log_path(resolved_registry).resolve(strict=False),
+        )
+        object.__setattr__(self, "event_head_anchor", str(verified["head_hash"]))
+        object.__setattr__(self, "_seal", seal)
+
+
+def _create_launch_context(
+    *,
+    assignment_store: AssignmentStateStore,
+    saga_path: str | Path,
+    registry_path: str | Path,
+) -> FailoverLaunchContext:
+    """Trusted launcher hook; action APIs accept only the resulting capability."""
+    return FailoverLaunchContext(
+        assignment_store=assignment_store,
+        saga_path=saga_path,
+        registry_path=registry_path,
+        seal=_CONTEXT_SEAL,
+    )
+
+
+def _require_launch_context(context: Any) -> FailoverLaunchContext:
+    if type(context) is not FailoverLaunchContext or context._seal is not _CONTEXT_SEAL:
+        raise AssignmentFailoverError("trusted immutable failover launch context is required")
+    if context.assignment_store.path.resolve() != context.assignment_store_path:
+        raise AssignmentFailoverError("launch assignment store path drifted")
+    if context.saga_store.path.resolve() != context.saga_store_path:
+        raise AssignmentFailoverError("launch saga path drifted")
+    verified = sc_mesh_registry.verify_events(event_log_path=context.event_log_path)
+    if verified.get("ok") is not True:
+        raise AssignmentFailoverError("event log failed launch-anchor verification")
+    anchor = context.event_head_anchor
+    if anchor != sc_mesh_registry.EVENT_GENESIS_HASH:
+        events = sc_mesh_registry.load_events(
+            event_log_path=context.event_log_path,
+            limit=max(1, int(verified["events_checked"])),
+        )["events"]
+        if not any(secrets.compare_digest(str(item.get("event_hash", "")), anchor) for item in events):
+            raise AssignmentFailoverError("launch event-head anchor is absent")
+    return context
 
 
 def _reject_constant(value: str) -> None:
@@ -161,6 +245,55 @@ def _verified_body(record: Any, public_key_hex: str, label: str) -> tuple[dict[s
         raise AssignmentFailoverError(f"{label} signature is invalid") from exc
     if not AgentIdentity.verify_with_pubkey_hex(public_key_hex, _canonical(body), raw_signature):
         raise AssignmentFailoverError(f"{label} signature is invalid")
+    return snap, body
+
+
+def _create_seat_actuation_proof(
+    claim: Mapping[str, Any],
+    *,
+    seat_identity: Any,
+    result_sha256: str,
+    acted_at: float | None = None,
+) -> dict[str, Any]:
+    """Create the seat's signed assertion that an exact durable claim acted."""
+    frozen_claim = _snapshot(claim, "delivery claim", require_canonical_wire=False)
+    body = {
+        "schema": ACTUATION_PROOF_SCHEMA,
+        "claim": frozen_claim,
+        "result_sha256": result_sha256,
+        "actuation_nonce": secrets.token_hex(32),
+        "acted_at": _finite(acted_at, "actuation time"),
+    }
+    return _signed(body, seat_identity)
+
+
+def _verify_seat_actuation_proof(
+    proof: Any,
+    *,
+    claim: Mapping[str, Any],
+    seat_public_key_hex: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    snap, body = _verified_body(proof, seat_public_key_hex, "seat actuation proof")
+    exact = {
+        "schema": ACTUATION_PROOF_SCHEMA,
+        "claim": _snapshot(claim, "delivery claim", require_canonical_wire=False),
+    }
+    expected_fields = set(exact) | {
+        "result_sha256",
+        "actuation_nonce",
+        "acted_at",
+    }
+    if set(body) != expected_fields or any(
+        body.get(field) != value for field, value in exact.items()
+    ):
+        raise AssignmentFailoverError("seat actuation proof exact claim binding mismatch")
+    for field in ("result_sha256", "actuation_nonce"):
+        value = body.get(field)
+        if type(value) is not str or len(value) != 64 or any(
+            ch not in "0123456789abcdef" for ch in value
+        ):
+            raise AssignmentFailoverError(f"seat actuation proof {field} is invalid")
+    _finite(body.get("acted_at"), "actuation time")
     return snap, body
 
 
@@ -333,19 +466,162 @@ def list_pending_failovers(path: str | Path) -> list[dict[str, Any]]:
     return FailoverSagaStore(path).pending()
 
 
-def create_delivery_receipt(
+class SeatDeliveryClaimStore:
+    """Seat-side claim/dedupe authority committed before remote actuation."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path).resolve(strict=False)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(self._connect()) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS delivery_claim_v1 (
+                    assignment_sha256 TEXT PRIMARY KEY,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    claim_id TEXT NOT NULL UNIQUE,
+                    state TEXT NOT NULL CHECK(state IN ('claimed','completed')),
+                    receipt_json BLOB,
+                    created_at REAL NOT NULL,
+                    completed_at REAL
+                );
+                """
+            )
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=5.0, isolation_level=None)
+        connection.execute("PRAGMA journal_mode=DELETE")
+        connection.execute("PRAGMA synchronous=FULL")
+        return connection
+
+    def deliver_exact(
+        self,
+        *,
+        operation_id: str,
+        continuity: Mapping[str, Any],
+        replacement_assignment: Mapping[str, Any],
+        seat_identity: Any,
+        actuator: Callable[[dict[str, Any]], Mapping[str, Any]],
+        delivered_at: float | None = None,
+        after_commit: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
+        """Claim once, actuate once, persist proof, and replay exact proof.
+
+        A process failure after the claim but before durable completion leaves
+        the claim ambiguous and retries fail closed without a second actuation.
+        A transport failure after completion returns the stored signed receipt
+        on retry without invoking ``actuator`` again.
+        """
+        assignment = _snapshot(
+            replacement_assignment,
+            "seat delivery assignment",
+            require_canonical_wire=False,
+        )
+        assignment_hash = _digest(assignment)
+        idempotency_key = f"failover-delivery:{operation_id}"
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT idempotency_key,claim_id,state,receipt_json "
+                "FROM delivery_claim_v1 WHERE assignment_sha256=?",
+                (assignment_hash,),
+            ).fetchone()
+            if row is not None:
+                if row[0] != idempotency_key:
+                    connection.rollback()
+                    raise FailoverConflictError("delivery assignment has a conflicting idempotency key")
+                if row[2] == "completed" and row[3] is not None:
+                    receipt = _snapshot(bytes(row[3]), "stored seat delivery receipt")
+                    connection.commit()
+                    return receipt
+                connection.rollback()
+                raise AssignmentFailoverError(
+                    "seat delivery claim is ambiguous; second actuation refused"
+                )
+            claim_id = secrets.token_hex(32)
+            connection.execute(
+                "INSERT INTO delivery_claim_v1 VALUES(?,?,?,'claimed',NULL,?,NULL)",
+                (assignment_hash, idempotency_key, claim_id, time.time()),
+            )
+            connection.commit()
+
+        claim_body = {
+            "schema": "selfconnect-seat-delivery-claim-v1",
+            "claim_id": claim_id,
+            "idempotency_key": idempotency_key,
+            "operation_id": operation_id,
+            "replacement_assignment_sha256": assignment_hash,
+            "continuity_sha256": _digest(continuity),
+        }
+        claim = {
+            **claim_body,
+            "claim_commit_sha256": _digest(claim_body),
+        }
+        try:
+            proof = actuator(dict(claim))
+        except Exception as exc:
+            raise AssignmentFailoverError("seat delivery actuator failed after durable claim") from exc
+        verified_proof, proof_body = _verify_seat_actuation_proof(
+            proof,
+            claim=claim,
+            seat_public_key_hex=str(seat_identity.public_key_hex),
+        )
+        result_hash = str(proof_body["result_sha256"])
+        receipt = _create_delivery_receipt(
+            operation_id=operation_id,
+            continuity=continuity,
+            replacement_assignment=assignment,
+            seat_identity=seat_identity,
+            delivery_claim_id=claim_id,
+            delivery_idempotency_key=idempotency_key,
+            delivery_claim_commit_sha256=claim["claim_commit_sha256"],
+            actuation_proof=verified_proof,
+            result_sha256=result_hash,
+            delivered_at=(
+                float(proof_body["acted_at"])
+                if delivered_at is None
+                else delivered_at
+            ),
+            _claim_seal=_SEAT_CLAIM_SEAL,
+        )
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                "UPDATE delivery_claim_v1 SET state='completed',receipt_json=?,completed_at=? "
+                "WHERE assignment_sha256=? AND claim_id=? AND state='claimed'",
+                (_canonical(receipt), time.time(), assignment_hash, claim_id),
+            )
+            if cursor.rowcount != 1:
+                connection.rollback()
+                raise AssignmentFailoverError("seat delivery claim completion conflicted")
+            connection.commit()
+        if after_commit is not None:
+            after_commit()
+        return receipt
+
+
+def _create_delivery_receipt(
     *,
     operation_id: str,
     continuity: Mapping[str, Any],
     replacement_assignment: Mapping[str, Any],
     seat_identity: Any,
+    delivery_claim_id: str,
+    delivery_idempotency_key: str,
+    delivery_claim_commit_sha256: str,
+    actuation_proof: Mapping[str, Any],
+    result_sha256: str,
     delivered_at: float | None = None,
+    _claim_seal: object | None = None,
 ) -> dict[str, Any]:
     """Seat-side helper: sign proof that the exact replacement was received.
 
     The failover coordinator never calls this helper.  A guarded delivery
     implementation must obtain this proof from the enrolled replacement seat.
     """
+    if _claim_seal is not _SEAT_CLAIM_SEAL:
+        raise AssignmentFailoverError(
+            "delivery receipts require a durable seat-side claim store"
+        )
     assignment = _snapshot(replacement_assignment, "replacement assignment", require_canonical_wire=False)
     if key_id(str(seat_identity.public_key_hex)) != assignment.get("receiver_key_id"):
         raise AssignmentFailoverError("delivery receipt signer is not the replacement seat")
@@ -362,6 +638,15 @@ def create_delivery_receipt(
         "target_identity_sha256": assignment["target_identity_sha256"],
         "terminal_tab_identity_sha256": assignment["terminal_tab_identity_sha256"],
         "response_channel_sha256": assignment["response_channel_sha256"],
+        "delivery_claim_id": delivery_claim_id,
+        "delivery_idempotency_key": delivery_idempotency_key,
+        "delivery_claim_commit_sha256": delivery_claim_commit_sha256,
+        "actuation_proof": _snapshot(
+            actuation_proof,
+            "seat actuation proof",
+            require_canonical_wire=False,
+        ),
+        "result_sha256": result_sha256,
         "delivery_nonce": secrets.token_hex(32),
         "delivered_at": _finite(delivered_at, "delivery time"),
     }
@@ -392,14 +677,58 @@ def _verify_delivery_receipt(
         "target_identity_sha256": assignment["target_identity_sha256"],
         "terminal_tab_identity_sha256": assignment["terminal_tab_identity_sha256"],
         "response_channel_sha256": assignment["response_channel_sha256"],
+        "delivery_idempotency_key": f"failover-delivery:{operation_id}",
     }
-    expected_fields = set(exact) | {"delivery_nonce", "delivered_at"}
+    expected_fields = set(exact) | {
+        "actuation_proof",
+        "delivery_claim_id",
+        "delivery_claim_commit_sha256",
+        "delivery_nonce",
+        "delivered_at",
+        "result_sha256",
+    }
     if set(body) != expected_fields or any(body.get(field) != value for field, value in exact.items()):
         raise AssignmentFailoverError("delivery receipt exact binding mismatch")
     nonce = body.get("delivery_nonce")
     if type(nonce) is not str or len(nonce) != 64 or any(ch not in "0123456789abcdef" for ch in nonce):
         raise AssignmentFailoverError("delivery receipt nonce is invalid")
+    for field in (
+        "delivery_claim_id",
+        "delivery_claim_commit_sha256",
+        "result_sha256",
+    ):
+        value = body.get(field)
+        if type(value) is not str or len(value) != 64 or any(
+            ch not in "0123456789abcdef" for ch in value
+        ):
+            raise AssignmentFailoverError(f"delivery receipt {field} is invalid")
+    claim = {
+        "schema": "selfconnect-seat-delivery-claim-v1",
+        "claim_id": body["delivery_claim_id"],
+        "idempotency_key": body["delivery_idempotency_key"],
+        "operation_id": operation_id,
+        "replacement_assignment_sha256": body["replacement_assignment_sha256"],
+        "continuity_sha256": body["continuity_sha256"],
+    }
+    claim["claim_commit_sha256"] = _digest(claim)
+    if not secrets.compare_digest(
+        claim["claim_commit_sha256"],
+        str(body["delivery_claim_commit_sha256"]),
+    ):
+        raise AssignmentFailoverError("delivery receipt claim commit is invalid")
+    _proof, proof_body = _verify_seat_actuation_proof(
+        body.get("actuation_proof"),
+        claim=claim,
+        seat_public_key_hex=str(replacement["seat_public_key_hex"]),
+    )
+    if not secrets.compare_digest(
+        str(proof_body["result_sha256"]),
+        str(body["result_sha256"]),
+    ):
+        raise AssignmentFailoverError("delivery receipt actuation result mismatch")
     delivered = _finite(body.get("delivered_at"), "delivery receipt time")
+    if _finite(proof_body.get("acted_at"), "actuation time") != delivered:
+        raise AssignmentFailoverError("delivery receipt actuation time mismatch")
     if delivered < float(assignment["issued_at"]) or delivered > float(assignment["expires_at"]):
         raise AssignmentFailoverError("delivery receipt is outside replacement assignment validity")
     if require_fresh and abs(delivered - now) > MAX_DELIVERY_CLOCK_SKEW_SECONDS:
@@ -438,6 +767,7 @@ def failover_assignment(
     assignment: Any,
     receipt: Any,
     *,
+    context: FailoverLaunchContext,
     role: str,
     mesh: str,
     coordinator_identity: Any,
@@ -447,9 +777,6 @@ def failover_assignment(
     replacement_terminal_tab_identity: Any,
     replacement_response_receiver_public_key_hex: str,
     replacement_response_channel: Mapping[str, Any],
-    store: AssignmentStateStore,
-    saga_path: str | Path,
-    registry_path: str | Path,
     high_assurance_target_resolver: Callable[..., bool],
     guarded_delivery: Callable[..., Any],
     audit_append: Callable[..., Mapping[str, Any]] = sc_mesh_registry.append_event,
@@ -462,6 +789,10 @@ def failover_assignment(
     **receipt_verification: Any,
 ) -> dict[str, Any]:
     """Run or resume one exact receipt-authorized failover saga."""
+    context = _require_launch_context(context)
+    store = context.assignment_store
+    saga = context.saga_store
+    registry_path = context.registry_path
     current = _finite(now, "failover time")
     if not role.strip() or not mesh.strip():
         raise AssignmentFailoverError("role and mesh are required")
@@ -572,9 +903,12 @@ def failover_assignment(
             replacement_response_receiver_public_key_hex
         ),
         "receipt_verification": recovery_verification,
+        "launch_event_head_anchor": context.event_head_anchor,
+        "launch_event_log_path_sha256": hashlib.sha256(
+            str(context.event_log_path).encode("utf-8")
+        ).hexdigest(),
     }
-    saga = FailoverSagaStore(saga_path)
-    lock_path = Path(saga_path).with_name(f"{Path(saga_path).name}.run.lock")
+    lock_path = saga.path.with_name(f"{saga.path.name}.run.lock")
     with FileLock(lock_path):
         preverified: dict[str, Any] | None = None
         if saga.find_by_receipt(receipt_hash) is None:
@@ -899,8 +1233,9 @@ __all__ = [
     "FAILOVER_STATES",
     "AssignmentFailoverError",
     "FailoverConflictError",
+    "FailoverLaunchContext",
     "FailoverSagaStore",
-    "create_delivery_receipt",
+    "SeatDeliveryClaimStore",
     "failover_assignment",
     "list_pending_failovers",
 ]

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import base64
 import copy
+import inspect
 import json
+import shutil
 import tomllib
 from pathlib import Path
 
@@ -11,8 +13,11 @@ import sc_mesh_registry
 from sc_assignment_failover import (
     AssignmentFailoverError,
     FailoverConflictError,
+    FailoverLaunchContext,
     FailoverSagaStore,
-    create_delivery_receipt,
+    SeatDeliveryClaimStore,
+    _create_launch_context,
+    _create_seat_actuation_proof,
     failover_assignment,
     list_pending_failovers,
 )
@@ -37,6 +42,15 @@ def _canonical(value):
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
     ).encode("ascii")
+
+
+def _actuation_proof(case, claim, *, result_sha256="d" * 64, acted_at=NOW + 3):
+    return _create_seat_actuation_proof(
+        claim,
+        seat_identity=case["new_seat"],
+        result_sha256=result_sha256,
+        acted_at=acted_at,
+    )
 
 
 def _target(hwnd, pid, started, title):
@@ -171,6 +185,13 @@ def _case(tmp_path, *, receipt_state="blocked"):
         generation=3,
         registry_path=registry_path,
     )["ok"]
+    saga_path = tmp_path / "failover.sqlite3"
+    context = _create_launch_context(
+        assignment_store=coordinator_store,
+        saga_path=saga_path,
+        registry_path=registry_path,
+    )
+    delivery_store = SeatDeliveryClaimStore(tmp_path / "seat-delivery.sqlite3")
     return {
         "authority": authority,
         "coordinator": coordinator,
@@ -184,7 +205,9 @@ def _case(tmp_path, *, receipt_state="blocked"):
         "assignment": assignment,
         "receipt": receipt,
         "store": coordinator_store,
-        "saga_path": tmp_path / "failover.sqlite3",
+        "saga_path": saga_path,
+        "context": context,
+        "delivery_store": delivery_store,
         "registry_path": registry_path,
         "verification": verification,
     }
@@ -209,16 +232,18 @@ def _run(case, *, shared=None, receipt=None, **overrides):
 
     def deliver(**kwargs):
         shared["delivery"].append(kwargs)
-        operation_id = kwargs["operation_id"]
-        if operation_id not in shared["delivery_receipts"]:
-            shared["delivery_receipts"][operation_id] = create_delivery_receipt(
-                operation_id=operation_id,
-                continuity=kwargs["continuity"],
-                replacement_assignment=kwargs["assignment"],
-                seat_identity=case["new_seat"],
-                delivered_at=delivery_now,
-            )
-        return shared["delivery_receipts"][operation_id]
+        return case["delivery_store"].deliver_exact(
+            operation_id=kwargs["operation_id"],
+            continuity=kwargs["continuity"],
+            replacement_assignment=kwargs["assignment"],
+            seat_identity=case["new_seat"],
+            actuator=lambda claim: _actuation_proof(
+                case,
+                claim,
+                acted_at=delivery_now,
+            ),
+            delivered_at=delivery_now,
+        )
 
     args = {
         "role": "worker",
@@ -230,9 +255,7 @@ def _run(case, *, shared=None, receipt=None, **overrides):
         "replacement_terminal_tab_identity": case["new_tab"],
         "replacement_response_receiver_public_key_hex": case["new_response"].public_key_hex,
         "replacement_response_channel": case["new_channel"],
-        "store": case["store"],
-        "saga_path": case["saga_path"],
-        "registry_path": case["registry_path"],
+        "context": case["context"],
         "high_assurance_target_resolver": guard,
         "guarded_delivery": deliver,
         "audit_append": audit,
@@ -294,6 +317,44 @@ def test_package_manifest_and_ci_include_failover_module():
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "ruff check\n" in workflow
     assert "python -m py_compile self_connect.py sc_assignment_failover.py" in workflow
+
+
+def test_public_action_uses_only_pinned_launch_durability_and_fresh_path_rejected(tmp_path):
+    case = _case(tmp_path)
+    parameters = inspect.signature(failover_assignment).parameters
+    assert "context" in parameters
+    assert "store" not in parameters
+    assert "saga_path" not in parameters
+    assert "registry_path" not in parameters
+
+    fresh_store_path = tmp_path / "fresh-coordinator.sqlite3"
+    shutil.copy2(case["store"].path, fresh_store_path)
+    fresh_store = AssignmentStateStore(fresh_store_path)
+    fresh_saga = tmp_path / "fresh-saga.sqlite3"
+    _run(case)
+    with pytest.raises(AssignmentVerificationError, match="not durably consumed"):
+        fresh_store.require_receipt("consumed", case["receipt"])
+    with pytest.raises(AssignmentFailoverError, match="verification context"):
+        _run(case, store=fresh_store, saga_path=fresh_saga)
+    assert not fresh_saga.exists()
+    assert list_pending_failovers(case["saga_path"]) == []
+    with pytest.raises(TypeError, match="runtime-owned"):
+        FailoverLaunchContext(
+            assignment_store=fresh_store,
+            saga_path=fresh_saga,
+            registry_path=case["registry_path"],
+            seal=object(),
+        )
+
+
+def test_launch_event_head_anchor_rejects_truncated_history(tmp_path):
+    case = _case(tmp_path)
+    assert case["context"].event_head_anchor != "0" * 64
+    case["context"].event_log_path.write_text("", encoding="utf-8")
+
+    with pytest.raises(AssignmentFailoverError, match="anchor is absent"):
+        _run(case)
+    assert list_pending_failovers(case["saga_path"]) == []
 
 
 def test_continuity_artifact_binds_predecessor_and_authorizing_receipt(tmp_path):
@@ -425,16 +486,110 @@ def test_unsigned_echo_zero_and_wrong_signed_delivery_never_go(tmp_path):
         assignment["receiver_key_id"] = __import__("hashlib").sha256(
             bytes.fromhex(wrong.public_key_hex)
         ).hexdigest()
-        return create_delivery_receipt(
+        return SeatDeliveryClaimStore(tmp_path / "wrong-signer.sqlite3").deliver_exact(
             operation_id=kwargs["operation_id"],
             continuity=kwargs["continuity"],
             replacement_assignment=assignment,
             seat_identity=wrong,
+            actuator=lambda claim: _create_seat_actuation_proof(
+                claim,
+                seat_identity=wrong,
+                result_sha256="d" * 64,
+                acted_at=NOW + 3,
+            ),
             delivered_at=NOW + 3,
         )
 
     with pytest.raises(AssignmentFailoverError, match="signature"):
         _run(case, guarded_delivery=wrong_delivery)
+
+
+def test_seat_claim_persists_before_actuation_and_response_loss_never_reacts(tmp_path):
+    case = _case(tmp_path)
+    actions = []
+    lose_once = {"value": True}
+
+    def delivery_with_response_loss(**kwargs):
+        def actuator(claim):
+            actions.append(claim)
+            return _actuation_proof(
+                case,
+                claim,
+                result_sha256="e" * 64,
+            )
+
+        def after_commit():
+            if lose_once["value"]:
+                lose_once["value"] = False
+                raise OSError("response lost after durable seat receipt")
+
+        return case["delivery_store"].deliver_exact(
+            operation_id=kwargs["operation_id"],
+            continuity=kwargs["continuity"],
+            replacement_assignment=kwargs["assignment"],
+            seat_identity=case["new_seat"],
+            actuator=actuator,
+            delivered_at=NOW + 3,
+            after_commit=after_commit,
+        )
+
+    with pytest.raises(AssignmentFailoverError, match="response lost"):
+        _run(case, guarded_delivery=delivery_with_response_loss)
+    assert len(actions) == 1
+    assert list_pending_failovers(case["saga_path"])[0]["stage"] == "assignment_issued"
+
+    result, _shared = _run(case, guarded_delivery=delivery_with_response_loss)
+    assert result["ok"] is True
+    assert len(actions) == 1
+    assert result["delivery_receipt"]["delivery_claim_id"] == actions[0]["claim_id"]
+
+
+def test_crash_after_claim_before_proof_is_ambiguous_and_never_reacts(tmp_path):
+    store = SeatDeliveryClaimStore(tmp_path / "seat-claim.sqlite3")
+    case = _case(tmp_path / "case")
+    actions = []
+
+    def broken_actuator(claim):
+        actions.append(claim)
+        raise RuntimeError("remote result lost")
+
+    kwargs = {
+        "operation_id": "a" * 64,
+        "continuity": {"continuity": "proof"},
+        "replacement_assignment": case["assignment"],
+        "seat_identity": case["old_seat"],
+        "actuator": broken_actuator,
+        "delivered_at": NOW + 3,
+    }
+    with pytest.raises(AssignmentFailoverError, match="after durable claim"):
+        store.deliver_exact(**kwargs)
+    with pytest.raises(AssignmentFailoverError, match="ambiguous"):
+        store.deliver_exact(**kwargs)
+    assert len(actions) == 1
+
+
+def test_unsigned_echo_callback_cannot_complete_claim_or_go(tmp_path):
+    store = SeatDeliveryClaimStore(tmp_path / "seat-claim.sqlite3")
+    case = _case(tmp_path / "case")
+    calls = []
+
+    def unsigned_echo(claim):
+        calls.append(claim)
+        return {**claim, "result_sha256": "f" * 64}
+
+    kwargs = {
+        "operation_id": "b" * 64,
+        "continuity": {"continuity": "proof"},
+        "replacement_assignment": case["assignment"],
+        "seat_identity": case["old_seat"],
+        "actuator": unsigned_echo,
+        "delivered_at": NOW + 3,
+    }
+    with pytest.raises(AssignmentFailoverError, match="actuation proof is unsigned"):
+        store.deliver_exact(**kwargs)
+    with pytest.raises(AssignmentFailoverError, match="ambiguous"):
+        store.deliver_exact(**kwargs)
+    assert len(calls) == 1
 
 
 def test_cas_drift_has_intent_only_and_restart_reconciles_after_restore(tmp_path):
@@ -497,11 +652,12 @@ def test_wrong_target_channel_guard_and_revocation_fail_closed(tmp_path):
     channel_case = _case(tmp_path / "channel")
 
     def wrong_channel_delivery(**kwargs):
-        receipt = create_delivery_receipt(
+        receipt = channel_case["delivery_store"].deliver_exact(
             operation_id=kwargs["operation_id"],
             continuity=kwargs["continuity"],
             replacement_assignment=kwargs["assignment"],
             seat_identity=channel_case["new_seat"],
+            actuator=lambda claim: _actuation_proof(channel_case, claim),
             delivered_at=NOW + 3,
         )
         body = dict(receipt)
@@ -525,7 +681,7 @@ def test_wrong_target_channel_guard_and_revocation_fail_closed(tmp_path):
                 {revoked_case["new_enrollment"]["seat_key_id"]}
             ),
         )
-    assert not revoked_case["saga_path"].exists()
+    assert list_pending_failovers(revoked_case["saga_path"]) == []
 
 
 def test_forged_stale_wrong_seat_and_noncanonical_receipt_never_create_saga(tmp_path):
