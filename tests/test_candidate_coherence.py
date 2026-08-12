@@ -33,6 +33,7 @@ def test_base_or_partial_candidate_reports_implementation_failures(tmp_path: Pat
     findings = {item["code"]: item for item in report["findings"]}
     assert findings["implementation.modules"]["status"] == "fail"
     assert "sc_assignment_watchdog.py" in findings["implementation.modules"]["detail"]
+    assert "sc_seat_pipe.py" in findings["implementation.modules"]["detail"]
     assert findings["release.invariants"]["status"] == "fail"
 
 

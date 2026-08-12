@@ -19,9 +19,11 @@ REQUIRED_MODULES = (
     "sc_assignment_runtime.py",
     "sc_assignment_watchdog.py",
     "sc_assignment_failover.py",
-    "sc_seat_channel.py",
-    "sc_revocation.py",
+    "sc_seat_identity.py",
+    "sc_seat_pipe.py",
+    "sc_seat_revocation.py",
     "sc_authority_trust.py",
+    "sc_trust_anchor.py",
 )
 CI_WORKFLOW = Path(".github/workflows/ci.yml")
 INVARIANTS = Path("release/core_invariants.json")
