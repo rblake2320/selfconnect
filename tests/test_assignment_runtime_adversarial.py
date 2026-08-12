@@ -20,11 +20,12 @@ from sc_assignment_runtime import (
     GuardedSubmitConfig,
     ProductionAssignmentRuntime,
     ReceiverLaunchContext,
+    RuntimeTrustRoot,
     SeatAssignmentBroker,
     SeatRevocationResolver,
     SelfConnectAssignmentReceiver,
-    SignedLaunchAnchor,
     parse_assignment_ingress,
+    provision_runtime_trust_root,
 )
 from sc_assignment_watchdog import AssignmentWatchdog
 from sc_authority_trust import bootstrap_authority_trust
@@ -67,7 +68,7 @@ def _tab():
     )
 
 
-def _environment(tmp_path, monkeypatch, *, submit_result=None, submit_error=None):
+def _environment(tmp_path, monkeypatch, *, submit_result=None, submit_error=None, attest_result=True):
     authority = AgentIdentity.generate("authority")
     coordinator = AgentIdentity.generate("coordinator")
     response_receiver = AgentIdentity.generate("response-receiver")
@@ -119,16 +120,13 @@ def _environment(tmp_path, monkeypatch, *, submit_result=None, submit_error=None
         )
 
     monkeypatch.setattr(runtime_module, "guarded_submit", submit)
-    launch = AgentIdentity.generate("launch")
-    mailbox = DurableReceiptMailbox(
-        tmp_path / "mailbox.sqlite3",
-        channel_binding=channel,
-        launch_anchor=SignedLaunchAnchor(tmp_path / "mailbox.anchor", launch),
-    )
-    journal = DurableAssignmentJournal(
-        tmp_path / "dispatch.sqlite3",
-        launch_anchor=SignedLaunchAnchor(tmp_path / "dispatch.anchor", launch),
-    )
+    if attest_result:
+        monkeypatch.setattr(
+            runtime_module,
+            "_verify_guarded_delivery_result",
+            lambda _result, _wire, _config: {"ack_sha256": "a" * 64},
+        )
+    launch = AgentIdentity.generate("launch-provisioner")
     trust_path, revocation_path = tmp_path / "trust.json", tmp_path / "revocations.json"
     bootstrap_authority_trust(
         trust_path,
@@ -145,13 +143,27 @@ def _environment(tmp_path, monkeypatch, *, submit_result=None, submit_error=None
         [sign_revocation_snapshot(snapshot, authority)],
         now=NOW,
     )
-    resolver = SeatRevocationResolver(revocation_path, trust_path, clock=lambda: wall[0])
+    root_key = provision_runtime_trust_root(
+        tmp_path / "runtime-root.json",
+        tmp_path / "runtime-state.dpapi",
+        provisioning_identity=launch,
+        mailbox_path=tmp_path / "mailbox.sqlite3",
+        dispatch_path=tmp_path / "dispatch.sqlite3",
+        receiver_store_path=tmp_path / "seat.sqlite3",
+        revocation_store_path=revocation_path,
+        revocation_trust_path=trust_path,
+    )
+    trust_root = RuntimeTrustRoot(tmp_path / "runtime-root.json", pinned_public_key_hex=root_key)
+    mailbox = DurableReceiptMailbox(channel_binding=channel, trust_root=trust_root)
+    journal = DurableAssignmentJournal(trust_root=trust_root)
+    resolver = SeatRevocationResolver(trust_root, clock=lambda: wall[0])
     coordinator_store = AssignmentStateStore(tmp_path / "coordinator.sqlite3")
     runtime = ProductionAssignmentRuntime(
         coordinator_identity=coordinator,
         coordinator_store=coordinator_store,
         receiver_enrollment=enrollment,
         bindings=bindings,
+        trust_root=trust_root,
         mailbox=mailbox,
         assignment_journal=journal,
         revocation_resolver=resolver,
@@ -187,19 +199,20 @@ def _environment(tmp_path, monkeypatch, *, submit_result=None, submit_error=None
         "coordinator_store": coordinator_store,
         "runtime": runtime,
         "launch": launch,
+        "root_key": root_key,
+        "trust_root": trust_root,
+        "root_config_path": tmp_path / "runtime-root.json",
+        "root_state_path": tmp_path / "runtime-state.dpapi",
     }
 
 
 def _broker(env, path):
-    store = AssignmentStateStore(path / "seat.sqlite3")
     return SeatAssignmentBroker(
         launch_context=ReceiverLaunchContext(
-            store=store,
+            trust_root=env["trust_root"],
             assignment_journal=env["journal"],
             mailbox=env["mailbox"],
             revocation_resolver=env["revocation_resolver"],
-            store_path=store.path,
-            store_anchor=SignedLaunchAnchor(path / "receiver-store.anchor", env["launch"]),
         ),
         seat_identity=env["seat"],
         bindings=env["bindings"],
@@ -252,6 +265,16 @@ def test_guarded_submit_exception_quarantines_without_returning_assignment(tmp_p
     with pytest.raises(AssignmentDispatchError, match="quarantined"):
         _dispatch(env)
     assert env["journal"].state(parse_assignment_ingress(env["submitted"][0][0])) == "quarantined"
+
+
+def test_forged_success_shape_without_durable_authenticated_ack_cannot_promote(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch, attest_result=False)
+    with pytest.raises(AssignmentDispatchError, match="durable authenticated ACK"):
+        _dispatch(env)
+    record = parse_assignment_ingress(env["submitted"][0][0])
+    assert env["journal"].state(record) == "quarantined"
+    with pytest.raises(AssignmentVerificationError, match="delivery-authorized"):
+        _broker(env, tmp_path).admit_raw(_canonical(record))
 
 
 def test_live_revocation_snapshots_gate_issue_admit_emit_and_watchdog(tmp_path, monkeypatch):
@@ -597,13 +620,12 @@ def test_mailbox_wholesale_replacement_fails_external_launch_anchor(tmp_path, mo
     env = _environment(tmp_path, monkeypatch)
     assignment = _dispatch(env).assignment
     _broker(env, tmp_path).admit_raw(_canonical(assignment))
-    env["mailbox"].path.unlink()
-    with pytest.raises(AssignmentVerificationError, match=r"replacement|rollback"):
-        DurableReceiptMailbox(
-            env["mailbox"].path,
-            channel_binding=env["channel"],
-            launch_anchor=SignedLaunchAnchor(tmp_path / "mailbox.anchor", env["launch"]),
-        )
+    with sqlite3.connect(env["mailbox"].path) as connection:
+        connection.execute("DELETE FROM receipt_mailbox_v1")
+        connection.execute("DELETE FROM receipt_mailbox_head_v1")
+        connection.execute("UPDATE receipt_mailbox_meta_v1 SET database_id='replacement-database'")
+    with pytest.raises(AssignmentVerificationError, match=r"database ID|anchor"):
+        DurableReceiptMailbox(channel_binding=env["channel"], trust_root=env["trust_root"])
 
 
 def test_selfconnect_receiver_hook_routes_raw_only_through_broker(tmp_path, monkeypatch):
@@ -613,7 +635,13 @@ def test_selfconnect_receiver_hook_routes_raw_only_through_broker(tmp_path, monk
     receiver = SelfConnectAssignmentReceiver(broker, read_raw_assignment=lambda: _canonical(assignment))
     admission = receiver.serve_once()
     assert admission.assignment["assignment_id"] == assignment["assignment_id"]
-    assert receiver.transport_assurance == "third_party_tui_unintercepted"
+    assert receiver.transport_assurance == "selfconnect_owned_sidecar_transport_unattested"
+    with pytest.raises(ValueError, match="third-party TUI"):
+        SelfConnectAssignmentReceiver(
+            broker,
+            read_raw_assignment=lambda: _canonical(assignment),
+            selfconnect_owned_sidecar=False,
+        )
     with pytest.raises(ValueError, match="attestation verifier"):
         SelfConnectAssignmentReceiver(
             broker,
@@ -630,16 +658,18 @@ def test_replay_store_is_launch_pinned_and_fresh_store_cannot_readmit(tmp_path, 
     with pytest.raises(Exception, match="replay"):
         broker.admit_raw(_canonical(assignment))
     assert "store" not in __import__("inspect").signature(broker.admit_raw).parameters
-    wrong = AssignmentStateStore(tmp_path / "fresh.sqlite3")
-    with pytest.raises(ValueError, match="differs"):
-        ReceiverLaunchContext(
-            store=wrong,
-            assignment_journal=env["journal"],
-            mailbox=env["mailbox"],
-            revocation_resolver=env["revocation_resolver"],
-            store_path=tmp_path / "trusted.sqlite3",
-            store_anchor=SignedLaunchAnchor(tmp_path / "fresh.anchor", env["launch"]),
-        )
+    assert "store_path" not in __import__("inspect").signature(ReceiverLaunchContext).parameters
+    fresh = tmp_path / "fresh.sqlite3"
+    AssignmentStateStore(fresh)
+    with pytest.raises(TypeError):
+        env["trust_root"]._config["receiver_store_path"] = str(fresh)
+    context = ReceiverLaunchContext(
+        trust_root=env["trust_root"],
+        assignment_journal=env["journal"],
+        mailbox=env["mailbox"],
+        revocation_resolver=env["revocation_resolver"],
+    )
+    assert context.store_path == env["trust_root"].path("receiver_store")
 
 
 def test_ack_failure_keeps_cursor_for_restart_auto_recovery(tmp_path, monkeypatch):
@@ -704,7 +734,18 @@ def test_ack_failure_keeps_cursor_for_restart_auto_recovery(tmp_path, monkeypatc
 def test_guard_after_ack_blocks_authenticated_return_and_preserves_cursor(tmp_path, monkeypatch):
     env = _environment(tmp_path, monkeypatch)
     assignment = _dispatch(env).assignment
-    _broker(env, tmp_path).admit_raw(_canonical(assignment))
+    broker = _broker(env, tmp_path)
+    broker.admit_raw(_canonical(assignment))
+    env["wall"][0] = NOW + 2
+    broker.emit(assignment, state="working", detail={}, idempotency_key="working-after-guard")
+    env["wall"][0] = NOW + 3
+    broker.emit(
+        assignment,
+        state="completed",
+        detail={},
+        result_sha256=RESULT_HASH,
+        idempotency_key="completed-after-guard",
+    )
     checks = []
     watchdog, source = env["runtime"].watchdog(
         assignment,
@@ -712,7 +753,7 @@ def test_guard_after_ack_blocks_authenticated_return_and_preserves_cursor(tmp_pa
         read_ocr=lambda _hwnd: "",
         capture=lambda _hwnd: None,
         alert_coordinator=lambda _event: None,
-        source_guard=lambda _source: checks.append(True) or len(checks) < 4,
+        source_guard=lambda _source: checks.append(True) or len(checks) < 5,
         target_guard=lambda _target: True,
         assignment_source="source",
         clock=lambda: 0.0,
@@ -728,6 +769,26 @@ def test_guard_after_ack_blocks_authenticated_return_and_preserves_cursor(tmp_pa
     assert result.state == "blocked" and result.authenticated is False
     reader = env["mailbox"].reader(assignment, channel=env["channel"])
     assert reader()["sequence"] == 1
+    restarted, source = env["runtime"].watchdog(
+        assignment,
+        read_uia=lambda _hwnd: "advisory only",
+        read_ocr=lambda _hwnd: "",
+        capture=lambda _hwnd: None,
+        alert_coordinator=lambda _event: None,
+        source_guard=lambda _source: True,
+        target_guard=lambda _target: True,
+        assignment_source="source",
+        clock=lambda: 0.0,
+    )
+    recovered = restarted.monitor(
+        hwnd=env["target"].hwnd,
+        assignment=assignment,
+        assignment_source=source,
+        timeout_seconds=1,
+        poll_seconds=0.1,
+        sleep=lambda _seconds: None,
+    )
+    assert recovered.state == "completed" and recovered.authenticated is True
 
 
 def test_signed_revocation_resolver_rejects_nan_stale_and_replay(tmp_path, monkeypatch):
@@ -743,5 +804,56 @@ def test_signed_revocation_resolver_rejects_nan_stale_and_replay(tmp_path, monke
     _update_revocations(env, [])
     env["revocation_resolver"]()
     env["revocation_path"].write_bytes(old)
+    restarted = SeatRevocationResolver(env["trust_root"], clock=lambda: env["wall"][0])
     with pytest.raises(AssignmentVerificationError, match=r"replay|rollback"):
-        env["revocation_resolver"]()
+        restarted()
+
+
+def test_runtime_root_consumer_has_no_signer_and_rejects_attacker_key(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    root = env["trust_root"]
+    assert not hasattr(root, "identity")
+    assert not hasattr(root, "sign")
+    assert root.key_id == key_id(env["root_key"])
+    attacker = AgentIdentity.generate("attacker-launch-root")
+    with pytest.raises(AssignmentVerificationError, match="not pinned"):
+        RuntimeTrustRoot(env["root_config_path"], pinned_public_key_hex=attacker.public_key_hex)
+
+
+def test_runtime_root_is_provision_once_and_authorities_cannot_be_mixed(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    with pytest.raises(FileExistsError, match="already provisioned"):
+        provision_runtime_trust_root(
+            env["root_config_path"],
+            env["root_state_path"],
+            provisioning_identity=AgentIdentity.generate("attacker"),
+            mailbox_path=tmp_path / "attacker-mailbox.sqlite3",
+            dispatch_path=tmp_path / "attacker-dispatch.sqlite3",
+            receiver_store_path=tmp_path / "attacker-seat.sqlite3",
+            revocation_store_path=env["revocation_path"],
+            revocation_trust_path=env["trust_path"],
+        )
+
+    other = _environment(tmp_path / "other", monkeypatch)
+    with pytest.raises(AssignmentVerificationError, match="do not share"):
+        ReceiverLaunchContext(
+            trust_root=env["trust_root"],
+            assignment_journal=other["journal"],
+            mailbox=env["mailbox"],
+            revocation_resolver=env["revocation_resolver"],
+        )
+
+
+def test_mailbox_and_protected_root_reset_cannot_reinitialize(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    assignment = _dispatch(env).assignment
+    _broker(env, tmp_path).admit_raw(_canonical(assignment))
+    with sqlite3.connect(env["mailbox"].path) as connection:
+        connection.execute("DELETE FROM receipt_mailbox_v1")
+        connection.execute("DELETE FROM receipt_mailbox_head_v1")
+        connection.execute("UPDATE receipt_mailbox_meta_v1 SET database_id='reset-database'")
+    with pytest.raises(AssignmentVerificationError, match=r"database ID|anchor"):
+        DurableReceiptMailbox(channel_binding=env["channel"], trust_root=env["trust_root"])
+    env["root_state_path"].unlink()
+    with pytest.raises(AssignmentVerificationError, match="state is absent"):
+        RuntimeTrustRoot(env["root_config_path"], pinned_public_key_hex=env["root_key"])

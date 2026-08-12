@@ -20,6 +20,7 @@ from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from sc_assignment_protocol import (
@@ -33,7 +34,7 @@ from sc_assignment_protocol import (
     verify_consume_assignment,
 )
 from sc_assignment_watchdog import AssignmentWatchdog
-from sc_guarded_submit import AckKeyRing, TargetIdentity, guarded_submit
+from sc_guarded_submit import AckKeyRing, DurableAckFinalizer, TargetIdentity, guarded_submit, verify_peer_ack
 from sc_identity import AgentIdentity
 from sc_seat_identity import key_id
 from sc_seat_revocation import resolve_revoked_key_ids
@@ -44,12 +45,88 @@ class AssignmentDispatchError(RuntimeError):
     """A signed assignment was quarantined before it became admissible."""
 
 
+def _verify_guarded_delivery_result(
+    result: Any,
+    wire_assignment: str,
+    config: GuardedSubmitConfig,
+) -> dict[str, Any]:
+    """Re-authenticate the durable peer ACK before dispatch promotion."""
+    if type(result) is not dict or type(result.get("ack")) is not dict:
+        raise AssignmentVerificationError("guarded delivery result has no authenticated ACK")
+    ack_result = result["ack"]
+    input_sha256 = hashlib.sha256(wire_assignment.encode("utf-8")).hexdigest()
+    required_result = {
+        "message_id": result.get("message_id"),
+        "challenge": result.get("challenge"),
+        "input_sha256": result.get("input_sha256"),
+        "sender": result.get("sender"),
+        "receiver": result.get("receiver"),
+    }
+    if (
+        required_result["input_sha256"] != input_sha256
+        or required_result["sender"] != config.sender
+        or required_result["receiver"] != config.receiver
+        or any(type(value) is not str for value in required_result.values())
+    ):
+        raise AssignmentVerificationError("guarded delivery result binding is invalid")
+    DurableAckFinalizer(config.replay_path)
+    with sqlite3.connect(Path(config.replay_path)) as connection:
+        row = connection.execute(
+            "SELECT raw_ack,ack_sha256,state FROM peer_ack_finalization WHERE sender=? AND receiver=? AND message_id=?",
+            (config.receiver, config.sender, required_result["message_id"]),
+        ).fetchone()
+    if row is None or row[2] != "audited" or type(row[0]) is not bytes:
+        raise AssignmentVerificationError("guarded delivery ACK is not durably audited")
+    raw_ack = bytes(row[0])
+    if hashlib.sha256(raw_ack).hexdigest() != row[1] or ack_result.get("ack_sha256") != row[1]:
+        raise AssignmentVerificationError("guarded delivery ACK hash is invalid")
+    response_key_id = config.key_id if config.response_key_id is None else config.response_key_id
+    ack = verify_peer_ack(
+        raw_ack,
+        keyring=config.keyring,
+        key_id=response_key_id,
+        message_id=required_result["message_id"],
+        challenge=required_result["challenge"],
+        attempt_nonce=ack_result.get("attempt_nonce"),
+        input_sha256=input_sha256,
+        operation_sha256=ack_result.get("operation_sha256"),
+        sender=config.receiver,
+        receiver=config.sender,
+        max_age_seconds=config.max_ack_age_seconds,
+    )
+    expected_ack = {
+        "schema": ack.schema,
+        "key_id": ack.key_id,
+        "challenge": ack.challenge,
+        "ack_nonce": ack.ack_nonce,
+        "attempt_nonce": ack.attempt_nonce,
+        "operation_sha256": ack.operation_sha256,
+        "processed_input_sha256": ack.processed_input_sha256,
+        "sender": ack.sender,
+        "receiver": ack.receiver,
+        "decision": ack.decision,
+        "issued_at": ack.issued_at,
+        "ack_sha256": row[1],
+    }
+    if ack_result != expected_ack or ack.decision != "accepted" or ack.processed_input_sha256 != input_sha256:
+        raise AssignmentVerificationError("guarded delivery ACK content is invalid")
+    return {
+        "message_id": ack.message_id,
+        "ack_sha256": row[1],
+        "input_sha256": input_sha256,
+        "operation_sha256": ack.operation_sha256,
+    }
+
+
 class SeatRevocationResolver:
     """Mandatory signed/fresh resolver with launch-monotonic rollback memory."""
 
-    def __init__(self, store_path: str | Path, trust_path: str | Path, *, clock: Callable[[], float]) -> None:
-        self.store_path = Path(store_path).resolve()
-        self.trust_path = Path(trust_path).resolve()
+    def __init__(self, trust_root: RuntimeTrustRoot, *, clock: Callable[[], float]) -> None:
+        if type(trust_root) is not RuntimeTrustRoot:
+            raise TypeError("revocation resolver requires the provisioned runtime trust root")
+        self._trust_root = trust_root
+        self.store_path = trust_root.path("revocation_store")
+        self.trust_path = trust_root.path("revocation_trust")
         self._clock = clock
         self._last_version = 0
         self._last_digest = "0" * 64
@@ -71,6 +148,7 @@ class SeatRevocationResolver:
         if version < self._last_version or (version == self._last_version and digest != self._last_digest):
             raise AssignmentVerificationError("seat revocation snapshot replay or rollback rejected")
         self._last_version, self._last_digest = version, digest
+        self._trust_root.verify_and_advance_revocation(version, digest)
         return revoked
 
 
@@ -181,41 +259,160 @@ class MailboxPublishOutcome:
     disposition: str
 
 
-class SignedLaunchAnchor:
-    """Externally stored Ed25519-signed launch state for rollback detection."""
+def _dpapi_protect(data: bytes, entropy: bytes) -> bytes:
+    if __import__("os").name != "nt":
+        raise AssignmentVerificationError("Windows DPAPI is required for runtime trust state")
+    try:
+        import win32crypt  # type: ignore[import-untyped]
 
-    def __init__(self, path: str | Path, identity: AgentIdentity) -> None:
-        if type(identity) is not AgentIdentity:
-            raise TypeError("an exact launch signing identity is required")
-        self.path = Path(path).resolve()
-        self.identity = identity
-        self.public_key_hex = identity.public_key_hex
+        return bytes(win32crypt.CryptProtectData(data, "SelfConnect runtime root", entropy, None, None, 0))
+    except Exception as exc:
+        raise AssignmentVerificationError("DPAPI protection failed") from exc
 
-    def load(self, kind: str) -> dict[str, Any] | None:
-        if not self.path.exists():
-            return None
-        record = _snapshot(self.path.read_bytes(), "launch anchor")
-        signature = record.pop("signature_b64", None)
-        if record.get("kind") != kind or record.get("public_key_hex") != self.public_key_hex:
-            raise AssignmentVerificationError("launch anchor identity or kind mismatch")
+
+def _dpapi_unprotect(data: bytes, entropy: bytes) -> bytes:
+    try:
+        import win32crypt  # type: ignore[import-untyped]
+
+        return bytes(win32crypt.CryptUnprotectData(data, entropy, None, None, 0)[1])
+    except Exception as exc:
+        raise AssignmentVerificationError("DPAPI runtime trust state verification failed") from exc
+
+
+def provision_runtime_trust_root(
+    config_path: str | Path,
+    state_path: str | Path,
+    *,
+    provisioning_identity: AgentIdentity,
+    mailbox_path: str | Path,
+    dispatch_path: str | Path,
+    receiver_store_path: str | Path,
+    revocation_store_path: str | Path,
+    revocation_trust_path: str | Path,
+) -> str:
+    """Provision once; signer is used only here and is never retained."""
+    config_target, state_target = Path(config_path).resolve(), Path(state_path).resolve()
+    if config_target.exists() or state_target.exists():
+        raise FileExistsError("runtime trust root is already provisioned")
+    mailbox_id, dispatch_id, receiver_id = secrets.token_hex(32), secrets.token_hex(32), secrets.token_hex(32)
+    body = {
+        "schema": "selfconnect-assignment-runtime-root-v1",
+        "key_id": key_id(provisioning_identity.public_key_hex),
+        "public_key_hex": provisioning_identity.public_key_hex,
+        "state_path": str(state_target),
+        "mailbox_path": str(Path(mailbox_path).resolve()),
+        "mailbox_database_id": mailbox_id,
+        "dispatch_path": str(Path(dispatch_path).resolve()),
+        "dispatch_database_id": dispatch_id,
+        "receiver_store_path": str(Path(receiver_store_path).resolve()),
+        "receiver_store_database_id": receiver_id,
+        "revocation_store_path": str(Path(revocation_store_path).resolve()),
+        "revocation_trust_path": str(Path(revocation_trust_path).resolve()),
+    }
+    signed = {
+        **body,
+        "signature_b64": base64.b64encode(provisioning_identity.sign(_canonical(body))).decode("ascii"),
+    }
+    for database_path, table, database_id in (
+        (Path(body["mailbox_path"]), "receipt_mailbox_meta_v1", mailbox_id),
+        (Path(body["dispatch_path"]), "assignment_dispatch_meta_v3", dispatch_id),
+        (Path(body["receiver_store_path"]), "receiver_launch_meta_v1", receiver_id),
+    ):
+        database_path.parent.mkdir(parents=True, exist_ok=True)
+        if database_path.exists():
+            raise FileExistsError(f"provisioned database already exists: {database_path}")
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                f"CREATE TABLE {table} (singleton INTEGER PRIMARY KEY CHECK(singleton=1),database_id TEXT NOT NULL)"
+            )
+            connection.execute(f"INSERT INTO {table} VALUES (1,?)", (database_id,))
+    config_target.parent.mkdir(parents=True, exist_ok=True)
+    state_target.parent.mkdir(parents=True, exist_ok=True)
+    config_target.write_bytes(_canonical(signed))
+    entropy = hashlib.sha256(_canonical(body)).digest()
+    initial_state = {
+        "anchors": {
+            "mailbox": {"database_id": mailbox_id, "heads": []},
+            "dispatch": {"database_id": dispatch_id, "sequence": 0, "head_sha256": "0" * 64},
+            "receiver_store": {"database_id": receiver_id, "store_path": body["receiver_store_path"]},
+        },
+        "revocation_high_water": None,
+    }
+    state_target.write_bytes(_dpapi_protect(_canonical(initial_state), entropy))
+    return provisioning_identity.public_key_hex
+
+
+class RuntimeTrustRoot:
+    """Read-only signed config verifier plus DPAPI-protected mutable high-water state."""
+
+    def __init__(self, config_path: str | Path, *, pinned_public_key_hex: str) -> None:
+        record = _snapshot(Path(config_path).resolve().read_bytes(), "runtime trust config")
+        signature_b64 = record.pop("signature_b64", None)
+        if record.get("schema") != "selfconnect-assignment-runtime-root-v1":
+            raise AssignmentVerificationError("runtime trust config schema is invalid")
+        if record.get("public_key_hex") != pinned_public_key_hex or record.get("key_id") != key_id(
+            pinned_public_key_hex
+        ):
+            raise AssignmentVerificationError("runtime trust root key is not pinned")
         try:
-            raw_signature = base64.b64decode(signature, validate=True)
+            signature = base64.b64decode(signature_b64, validate=True)
         except Exception as exc:
-            raise AssignmentVerificationError("launch anchor signature encoding is invalid") from exc
-        if not AgentIdentity.verify_with_pubkey_hex(self.public_key_hex, _canonical(record), raw_signature):
-            raise AssignmentVerificationError("launch anchor signature is invalid")
-        return record
+            raise AssignmentVerificationError("runtime trust config signature encoding is invalid") from exc
+        if not AgentIdentity.verify_with_pubkey_hex(pinned_public_key_hex, _canonical(record), signature):
+            raise AssignmentVerificationError("runtime trust config signature is invalid")
+        self._entropy = hashlib.sha256(_canonical(record)).digest()
+        self._config = MappingProxyType(copy.deepcopy(record))
+        self._state_path = Path(record["state_path"]).resolve()
+        if not self._state_path.exists():
+            raise AssignmentVerificationError("provisioned runtime trust state is absent")
+        self._read_state()
 
-    def write(self, kind: str, body: dict[str, Any]) -> None:
-        record = {"kind": kind, "public_key_hex": self.public_key_hex, **_snapshot(body, "anchor body")}
-        signed = {
-            **record,
-            "signature_b64": base64.b64encode(self.identity.sign(_canonical(record))).decode("ascii"),
-        }
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        staged = self.path.with_suffix(self.path.suffix + ".tmp")
-        staged.write_bytes(_canonical(signed))
-        staged.replace(self.path)
+    def path(self, name: str) -> Path:
+        return Path(self._config[f"{name}_path"]).resolve()
+
+    def database_id(self, name: str) -> str:
+        return str(self._config[f"{name}_database_id"])
+
+    @property
+    def key_id(self) -> str:
+        return str(self._config["key_id"])
+
+    def _read_state(self) -> dict[str, Any]:
+        return _snapshot(_dpapi_unprotect(self._state_path.read_bytes(), self._entropy), "runtime trust state")
+
+    def _write_state(self, state: dict[str, Any]) -> None:
+        staged = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
+        staged.write_bytes(_dpapi_protect(_canonical(state), self._entropy))
+        staged.replace(self._state_path)
+
+    def verify_anchor(self, name: str, actual: dict[str, Any]) -> None:
+        expected = self._read_state()["anchors"].get(name)
+        if expected is None or expected != _snapshot(actual, "actual protected anchor"):
+            raise AssignmentVerificationError(f"protected {name} anchor mismatch")
+
+    def initialize_anchor(self, name: str, actual: dict[str, Any]) -> None:
+        state = self._read_state()
+        if name in state["anchors"]:
+            raise AssignmentVerificationError(f"protected {name} anchor already exists")
+        state["anchors"][name] = _snapshot(actual, "initial protected anchor")
+        self._write_state(state)
+
+    def advance_anchor(self, name: str, actual: dict[str, Any]) -> None:
+        state = self._read_state()
+        if name not in state["anchors"]:
+            raise AssignmentVerificationError(f"protected {name} anchor is absent")
+        state["anchors"][name] = _snapshot(actual, "advanced protected anchor")
+        self._write_state(state)
+
+    def verify_and_advance_revocation(self, version: int, digest: str) -> None:
+        state = self._read_state()
+        previous = state.get("revocation_high_water")
+        if previous is not None and (
+            version < previous["version"] or (version == previous["version"] and digest != previous["digest"])
+        ):
+            raise AssignmentVerificationError("seat revocation snapshot durable rollback rejected")
+        state["revocation_high_water"] = {"version": version, "digest": digest}
+        self._write_state(state)
 
 
 class DurableReceiptMailbox:
@@ -228,18 +425,16 @@ class DurableReceiptMailbox:
 
     def __init__(
         self,
-        path: str | Path,
         *,
         channel_binding: dict[str, Any],
-        launch_anchor: SignedLaunchAnchor,
+        trust_root: RuntimeTrustRoot,
     ) -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if type(trust_root) is not RuntimeTrustRoot:
+            raise TypeError("mailbox requires the provisioned runtime trust root")
+        self._trust_root = trust_root
+        self.path = trust_root.path("mailbox")
         self.channel_binding = _snapshot(channel_binding, "response channel")
         self.channel_sha256 = hashlib.sha256(_canonical(self.channel_binding)).hexdigest()
-        if type(launch_anchor) is not SignedLaunchAnchor:
-            raise TypeError("mailbox requires an external signed launch anchor")
-        self._launch_anchor = launch_anchor
         with closing(self._connect()) as connection:
             connection.executescript(
                 """
@@ -280,9 +475,9 @@ class DurableReceiptMailbox:
                 """
             )
             row = connection.execute("SELECT database_id FROM receipt_mailbox_meta_v1 WHERE singleton=1").fetchone()
-            if row is None:
-                connection.execute("INSERT INTO receipt_mailbox_meta_v1 VALUES (1,?)", (secrets.token_hex(32),))
-        self._verify_or_bootstrap_anchor()
+            if row is None or row[0] != trust_root.database_id("mailbox"):
+                raise AssignmentVerificationError("mailbox database ID differs from provisioned root")
+        self._verify_anchor()
 
     def _head_document(self) -> dict[str, Any]:
         with closing(self._connect()) as connection:
@@ -294,28 +489,11 @@ class DurableReceiptMailbox:
             ).fetchall()
         return {"database_id": database_id, "heads": [list(row) for row in heads]}
 
-    def _verify_or_bootstrap_anchor(self) -> None:
-        actual = self._head_document()
-        anchored = self._launch_anchor.load("assignment-mailbox-v1")
-        if anchored is None:
-            self._launch_anchor.write("assignment-mailbox-v1", actual)
-        elif {"database_id": anchored.get("database_id"), "heads": anchored.get("heads")} != actual:
-            raise AssignmentVerificationError("mailbox database replacement or rollback detected")
-
     def _verify_anchor(self) -> None:
-        anchored = self._launch_anchor.load("assignment-mailbox-v1")
-        if (
-            anchored is None
-            or {
-                "database_id": anchored.get("database_id"),
-                "heads": anchored.get("heads"),
-            }
-            != self._head_document()
-        ):
-            raise AssignmentVerificationError("mailbox launch anchor mismatch")
+        self._trust_root.verify_anchor("mailbox", self._head_document())
 
     def _advance_anchor(self) -> None:
-        self._launch_anchor.write("assignment-mailbox-v1", self._head_document())
+        self._trust_root.advance_anchor("mailbox", self._head_document())
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5.0, isolation_level=None)
@@ -541,20 +719,22 @@ class DynamicReceiptReader:
 
 
 class DurableAssignmentJournal:
-    """Signed append-only dispatch gate with an external launch anchor."""
+    """Hash-chained dispatch gate rooted in DPAPI-protected launch state."""
 
-    def __init__(self, path: str | Path, *, launch_anchor: SignedLaunchAnchor) -> None:
-        self.path = Path(path).resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        if type(launch_anchor) is not SignedLaunchAnchor:
-            raise TypeError("dispatch journal requires an external signed launch anchor")
-        self._launch_anchor = launch_anchor
+    def __init__(self, *, trust_root: RuntimeTrustRoot) -> None:
+        if type(trust_root) is not RuntimeTrustRoot:
+            raise TypeError("dispatch journal requires the provisioned runtime trust root")
+        self._trust_root = trust_root
+        self.path = trust_root.path("dispatch")
         with closing(self._connect()) as connection:
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS assignment_dispatch_chain_v2 ("
                 "sequence INTEGER PRIMARY KEY CHECK(sequence>0),prior_sha256 TEXT NOT NULL,"
-                "entry_sha256 TEXT NOT NULL UNIQUE,entry_json BLOB NOT NULL,signature_b64 TEXT NOT NULL)"
+                "entry_sha256 TEXT NOT NULL UNIQUE,entry_json BLOB NOT NULL)"
             )
+            row = connection.execute("SELECT database_id FROM assignment_dispatch_meta_v3 WHERE singleton=1").fetchone()
+            if row is None or row[0] != trust_root.database_id("dispatch"):
+                raise AssignmentVerificationError("dispatch database ID differs from provisioned root")
         self._verify_anchor()
 
     def _connect(self) -> sqlite3.Connection:
@@ -575,16 +755,10 @@ class DurableAssignmentJournal:
         prior, states = "0" * 64, {}
         with closing(self._connect()) as connection:
             rows = connection.execute("SELECT * FROM assignment_dispatch_chain_v2 ORDER BY sequence").fetchall()
-        for expected, (sequence, previous, digest, raw, signature_b64) in enumerate(rows, 1):
+        for expected, (sequence, previous, digest, raw) in enumerate(rows, 1):
             raw = bytes(raw)
             if sequence != expected or previous != prior or hashlib.sha256(raw).hexdigest() != digest:
                 raise AssignmentVerificationError("dispatch journal chain integrity failed")
-            try:
-                signature = base64.b64decode(signature_b64, validate=True)
-            except Exception as exc:
-                raise AssignmentVerificationError("dispatch journal signature encoding failed") from exc
-            if not AgentIdentity.verify_with_pubkey_hex(self._launch_anchor.public_key_hex, raw, signature):
-                raise AssignmentVerificationError("dispatch journal signature failed")
             entry = _snapshot(raw, "dispatch journal entry")
             if entry.get("sequence") != sequence or entry.get("prior_sha256") != prior:
                 raise AssignmentVerificationError("dispatch journal signed fields mismatch")
@@ -595,11 +769,7 @@ class DurableAssignmentJournal:
     def _verify_anchor(self) -> None:
         sequence, head, _states = self._chain()
         actual = {"sequence": sequence, "head_sha256": head}
-        anchored = self._launch_anchor.load("assignment-dispatch-chain-v2")
-        if anchored is None:
-            self._launch_anchor.write("assignment-dispatch-chain-v2", actual)
-        elif {"sequence": anchored.get("sequence"), "head_sha256": anchored.get("head_sha256")} != actual:
-            raise AssignmentVerificationError("dispatch journal replacement or rollback detected")
+        self._trust_root.verify_anchor("dispatch", {"database_id": self._trust_root.database_id("dispatch"), **actual})
 
     def _append(self, assignment: Any, state: str, reason: str, evidence: Any) -> None:
         self._verify_anchor()
@@ -621,13 +791,15 @@ class DurableAssignmentJournal:
         }
         raw = _canonical(entry)
         digest = hashlib.sha256(raw).hexdigest()
-        signature = base64.b64encode(self._launch_anchor.identity.sign(raw)).decode("ascii")
         with closing(self._connect()) as connection:
             connection.execute(
-                "INSERT INTO assignment_dispatch_chain_v2 VALUES (?,?,?,?,?)",
-                (sequence + 1, prior, digest, raw, signature),
+                "INSERT INTO assignment_dispatch_chain_v2 VALUES (?,?,?,?)",
+                (sequence + 1, prior, digest, raw),
             )
-        self._launch_anchor.write("assignment-dispatch-chain-v2", {"sequence": sequence + 1, "head_sha256": digest})
+        self._trust_root.advance_anchor(
+            "dispatch",
+            {"database_id": self._trust_root.database_id("dispatch"), "sequence": sequence + 1, "head_sha256": digest},
+        )
 
     def record_issued(self, assignment: Any) -> None:
         self._append(assignment, "issued", "pending_submit", {})
@@ -679,43 +851,37 @@ class SeatAdmission:
     accepted_receipt: dict[str, Any]
 
 
-@dataclass(frozen=True)
 class ReceiverLaunchContext:
     """Trusted launch-pinned receiver authorities; never parsed from a message."""
 
-    store: AssignmentStateStore
-    assignment_journal: DurableAssignmentJournal
-    mailbox: DurableReceiptMailbox
-    revocation_resolver: SeatRevocationResolver
-    store_path: Path
-    store_anchor: SignedLaunchAnchor
-
-    def __post_init__(self) -> None:
-        if type(self.store) is not AssignmentStateStore:
-            raise TypeError("receiver store must be an exact AssignmentStateStore")
-        expected = Path(self.store.path).resolve()
-        if Path(self.store_path).resolve() != expected:
-            raise ValueError("receiver replay store path differs from trusted launch context")
-        object.__setattr__(self, "store_path", expected)
-        if type(self.store_anchor) is not SignedLaunchAnchor:
-            raise TypeError("receiver store requires an external signed launch anchor")
-        with sqlite3.connect(expected) as connection:
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS receiver_launch_meta_v1 ("
-                "singleton INTEGER PRIMARY KEY CHECK(singleton=1),database_id TEXT NOT NULL)"
-            )
+    def __init__(
+        self,
+        *,
+        trust_root: RuntimeTrustRoot,
+        assignment_journal: DurableAssignmentJournal,
+        mailbox: DurableReceiptMailbox,
+        revocation_resolver: SeatRevocationResolver,
+    ) -> None:
+        if type(trust_root) is not RuntimeTrustRoot:
+            raise TypeError("receiver context requires the provisioned runtime trust root")
+        if (
+            assignment_journal._trust_root is not trust_root
+            or mailbox._trust_root is not trust_root
+            or revocation_resolver._trust_root is not trust_root
+        ):
+            raise AssignmentVerificationError("receiver authorities do not share the provisioned trust root")
+        self._trust_root = trust_root
+        self.store_path = trust_root.path("receiver_store")
+        self.store = AssignmentStateStore(self.store_path)
+        self.assignment_journal = assignment_journal
+        self.mailbox = mailbox
+        self.revocation_resolver = revocation_resolver
+        with sqlite3.connect(self.store_path) as connection:
             row = connection.execute("SELECT database_id FROM receiver_launch_meta_v1 WHERE singleton=1").fetchone()
-            if row is None:
-                database_id = secrets.token_hex(32)
-                connection.execute("INSERT INTO receiver_launch_meta_v1 VALUES (1,?)", (database_id,))
-            else:
-                database_id = str(row[0])
-        anchor = self.store_anchor.load("assignment-replay-store-v1")
-        body = {"database_id": database_id, "store_path": str(expected)}
-        if anchor is None:
-            self.store_anchor.write("assignment-replay-store-v1", body)
-        elif {"database_id": anchor.get("database_id"), "store_path": anchor.get("store_path")} != body:
-            raise AssignmentVerificationError("receiver replay store replacement detected")
+        body = {"database_id": trust_root.database_id("receiver_store"), "store_path": str(self.store_path)}
+        if row is None or row[0] != body["database_id"]:
+            raise AssignmentVerificationError("receiver replay store ID differs from provisioned root")
+        trust_root.verify_anchor("receiver_store", body)
 
 
 class SeatAssignmentBroker:
@@ -840,28 +1006,26 @@ class SeatAssignmentBroker:
 
 
 class SelfConnectAssignmentReceiver:
-    """Concrete SelfConnect receiver hook; raw bytes have one authority path."""
+    """Concrete SelfConnect-owned sidecar hook; raw bytes have one authority path."""
 
     def __init__(
         self,
         broker: SeatAssignmentBroker,
         *,
         read_raw_assignment: Callable[[], bytes],
-        third_party_tui_intercepted: bool = False,
+        selfconnect_owned_sidecar: bool = True,
         high_assurance: bool = False,
     ) -> None:
         if type(broker) is not SeatAssignmentBroker or not callable(read_raw_assignment):
             raise TypeError("receiver requires an exact broker and raw SelfConnect reader")
-        if high_assurance:
+        if high_assurance or not selfconnect_owned_sidecar:
             raise ValueError(
-                "high-assurance receiver refuses until third-party TUI interception "
-                "has an integrated attestation verifier"
+                "receiver refuses third-party TUI ingress and high-assurance mode until "
+                "the SelfConnect sidecar transport has an integrated attestation verifier"
             )
         self._broker = broker
         self._read_raw_assignment = read_raw_assignment
-        self.transport_assurance = (
-            "selfconnect_receiver_intercepted" if third_party_tui_intercepted else "third_party_tui_unintercepted"
-        )
+        self.transport_assurance = "selfconnect_owned_sidecar_transport_unattested"
 
     def serve_once(self) -> SeatAdmission:
         raw = self._read_raw_assignment()
@@ -910,6 +1074,7 @@ class ProductionAssignmentRuntime:
         coordinator_store: AssignmentStateStore,
         receiver_enrollment: dict[str, Any],
         bindings: AssignmentBindings,
+        trust_root: RuntimeTrustRoot,
         mailbox: DurableReceiptMailbox,
         assignment_journal: DurableAssignmentJournal,
         revocation_resolver: SeatRevocationResolver,
@@ -919,6 +1084,14 @@ class ProductionAssignmentRuntime:
     ) -> None:
         if type(terminal_tab_guard) is not TerminalTabGuard:
             raise TypeError("production runtime requires an exact TerminalTabGuard")
+        if type(trust_root) is not RuntimeTrustRoot:
+            raise TypeError("production runtime requires the provisioned read-only trust root")
+        if (
+            mailbox._trust_root is not trust_root
+            or assignment_journal._trust_root is not trust_root
+            or revocation_resolver._trust_root is not trust_root
+        ):
+            raise AssignmentVerificationError("runtime authorities do not share the provisioned trust root")
         if terminal_tab_guard.identity != bindings.terminal_tab_identity:
             raise ValueError("TerminalTabGuard identity differs from assignment binding")
         if key_id(str(coordinator_identity.public_key_hex)) != key_id(bindings.coordinator_public_key_hex):
@@ -929,6 +1102,7 @@ class ProductionAssignmentRuntime:
         self._store = coordinator_store
         self._receiver_enrollment = copy.deepcopy(receiver_enrollment)
         self._bindings = bindings
+        self._trust_root = trust_root
         self._mailbox = mailbox
         self._assignment_journal = assignment_journal
         self._revocation_resolver = revocation_resolver
@@ -1013,11 +1187,23 @@ class ProductionAssignmentRuntime:
                 evidence=result if isinstance(result, dict) else {"malformed": True},
             )
             raise AssignmentDispatchError("guarded submit did not authenticate delivery; assignment quarantined")
+        try:
+            durable_attestation = _verify_guarded_delivery_result(result, wire_assignment, config)
+        except Exception as exc:
+            self._assignment_journal.transition(
+                assignment,
+                state="quarantined",
+                reason=f"guarded_delivery_attestation_failed:{type(exc).__name__}",
+                evidence={"result": result, "exception_type": type(exc).__name__},
+            )
+            raise AssignmentDispatchError(
+                "guarded delivery did not have a durable authenticated ACK; assignment quarantined"
+            ) from exc
         self._assignment_journal.transition(
             assignment,
             state="delivered",
             reason="guarded_submit_authenticated_acceptance",
-            evidence=result,
+            evidence={"result": result, "durable_attestation": durable_attestation},
         )
         return AssignmentDispatch(
             copy.deepcopy(assignment),
@@ -1093,10 +1279,11 @@ __all__ = [
     "MailboxPublishOutcome",
     "ProductionAssignmentRuntime",
     "ReceiverLaunchContext",
+    "RuntimeTrustRoot",
     "SeatAdmission",
     "SeatAssignmentBroker",
     "SeatRevocationResolver",
     "SelfConnectAssignmentReceiver",
-    "SignedLaunchAnchor",
     "parse_assignment_ingress",
+    "provision_runtime_trust_root",
 ]

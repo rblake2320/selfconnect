@@ -18,9 +18,10 @@ from sc_assignment_runtime import (
     GuardedSubmitConfig,
     ProductionAssignmentRuntime,
     ReceiverLaunchContext,
+    RuntimeTrustRoot,
     SeatAssignmentBroker,
     SeatRevocationResolver,
-    SignedLaunchAnchor,
+    provision_runtime_trust_root,
 )
 from sc_authority_trust import bootstrap_authority_trust
 from sc_guarded_submit import AckKeyRing, TargetIdentity
@@ -91,11 +92,6 @@ def _case(tmp_path, monkeypatch):
         response_channel=channel,
     )
     launch = AgentIdentity.generate("launch")
-    mailbox = DurableReceiptMailbox(
-        tmp_path / "receipts.sqlite3",
-        channel_binding=channel,
-        launch_anchor=SignedLaunchAnchor(tmp_path / "mailbox.anchor", launch),
-    )
     submitted = []
 
     def fake_guarded_submit(text, **kwargs):
@@ -110,12 +106,13 @@ def _case(tmp_path, monkeypatch):
         }
 
     monkeypatch.setattr(runtime_module, "guarded_submit", fake_guarded_submit)
+    monkeypatch.setattr(
+        runtime_module,
+        "_verify_guarded_delivery_result",
+        lambda _result, _wire, _config: {"ack_sha256": "a" * 64},
+    )
     guard = TerminalTabGuard(tab, None, None, None)
     coordinator_store = AssignmentStateStore(tmp_path / "coordinator.sqlite3")
-    assignment_journal = DurableAssignmentJournal(
-        tmp_path / "dispatch.sqlite3",
-        launch_anchor=SignedLaunchAnchor(tmp_path / "dispatch.anchor", launch),
-    )
     trust_path, revocation_path = tmp_path / "trust.json", tmp_path / "revocations.json"
     bootstrap_authority_trust(
         trust_path,
@@ -132,12 +129,26 @@ def _case(tmp_path, monkeypatch):
         [sign_revocation_snapshot(snapshot, authority)],
         now=NOW,
     )
-    revocation_resolver = SeatRevocationResolver(revocation_path, trust_path, clock=lambda: NOW + 4)
+    root_key = provision_runtime_trust_root(
+        tmp_path / "runtime-root.json",
+        tmp_path / "runtime-state.dpapi",
+        provisioning_identity=launch,
+        mailbox_path=tmp_path / "receipts.sqlite3",
+        dispatch_path=tmp_path / "dispatch.sqlite3",
+        receiver_store_path=tmp_path / "seat.sqlite3",
+        revocation_store_path=revocation_path,
+        revocation_trust_path=trust_path,
+    )
+    trust_root = RuntimeTrustRoot(tmp_path / "runtime-root.json", pinned_public_key_hex=root_key)
+    mailbox = DurableReceiptMailbox(channel_binding=channel, trust_root=trust_root)
+    assignment_journal = DurableAssignmentJournal(trust_root=trust_root)
+    revocation_resolver = SeatRevocationResolver(trust_root, clock=lambda: NOW + 4)
     coordinator_runtime = ProductionAssignmentRuntime(
         coordinator_identity=coordinator,
         coordinator_store=coordinator_store,
         receiver_enrollment=enrollment,
         bindings=bindings,
+        trust_root=trust_root,
         mailbox=mailbox,
         assignment_journal=assignment_journal,
         revocation_resolver=revocation_resolver,
@@ -169,20 +180,18 @@ def _case(tmp_path, monkeypatch):
         "assignment_journal": assignment_journal,
         "revocation_resolver": revocation_resolver,
         "launch": launch,
+        "trust_root": trust_root,
         "runtime": coordinator_runtime,
     }
 
 
 def _broker(case, tmp_path, wall, **providers):
-    store = AssignmentStateStore(tmp_path / "seat.sqlite3")
     return SeatAssignmentBroker(
         launch_context=ReceiverLaunchContext(
-            store=store,
+            trust_root=case["trust_root"],
             assignment_journal=case["assignment_journal"],
             mailbox=case["mailbox"],
             revocation_resolver=case["revocation_resolver"],
-            store_path=store.path,
-            store_anchor=SignedLaunchAnchor(tmp_path / "receiver-store.anchor", case["launch"]),
         ),
         seat_identity=case["seat"],
         bindings=case["bindings"],
@@ -304,18 +313,12 @@ def test_mailbox_fork_and_forged_receipt_never_authenticate(tmp_path, monkeypatc
     with pytest.raises(AssignmentReplayError, match="fork"):
         case["mailbox"].publish(fork, channel=case["channel"])
 
-    forged_mailbox = DurableReceiptMailbox(
-        tmp_path / "forged.sqlite3",
-        channel_binding=case["channel"],
-        launch_anchor=SignedLaunchAnchor(tmp_path / "forged.anchor", AgentIdentity.generate("forged-launch")),
-    )
     forged = copy.deepcopy(admission.accepted_receipt)
     forged["signature_b64"] = "Zm9yZ2Vk"
-    forged_mailbox.publish(forged, channel=case["channel"])
     alerts = []
     watchdog = runtime_module.AssignmentWatchdog(
         store=case["coordinator_store"],
-        receipt_reader=forged_mailbox.reader(assignment, channel=case["channel"]),
+        receipt_reader=lambda: forged,
         read_uia=lambda _hwnd: "completed",
         read_ocr=lambda _hwnd: "",
         capture=lambda _hwnd: None,
