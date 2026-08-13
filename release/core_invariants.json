@@ -42,7 +42,8 @@
     "sc_seat_revocation.py",
     "sc_authority_trust.py",
     "sc_trust_anchor.py",
-    "sc_live_ceremony.py"
+    "sc_live_ceremony.py",
+    "sc_event_kinds.py"
   ],
   "core_dependencies": [
     "Pillow",

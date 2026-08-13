@@ -35,6 +35,7 @@ from sc_assignment_protocol import (
 )
 from sc_identity import AgentIdentity
 from sc_seat_identity import key_id, verify_enrollment
+from sc_seat_revocation import _resolve_local_revoked_key_ids
 from sc_tasks import FileLock
 from sc_windows_credentials import read_secret, write_secret
 
@@ -95,6 +96,8 @@ class _FailoverLaunchContext:
     event_log_path: Path
     protected_state_path: Path
     claim_store_path: Path
+    revocation_store_path: Path
+    revocation_trust_path: Path
     claim_store_database_id: str
     saga_store_database_id: str
     root_id: str
@@ -125,6 +128,8 @@ class _FailoverLaunchContext:
             "protected_state_path",
             "claim_store_path",
             "claim_store_database_id",
+            "revocation_store_path",
+            "revocation_trust_path",
             "external_monotonic_authority",
         }
         if set(body) != expected_fields or body.get("schema") != FAILOVER_ROOT_SCHEMA:
@@ -156,6 +161,8 @@ class _FailoverLaunchContext:
                 "event_log",
                 "claim_store",
                 "protected_state",
+                "revocation_store",
+                "revocation_trust",
             )
         }
         if len(set(paths.values())) != len(paths):
@@ -182,6 +189,8 @@ class _FailoverLaunchContext:
         object.__setattr__(self, "event_log_path", paths["event_log"])
         object.__setattr__(self, "protected_state_path", paths["protected_state"])
         object.__setattr__(self, "claim_store_path", paths["claim_store"])
+        object.__setattr__(self, "revocation_store_path", paths["revocation_store"])
+        object.__setattr__(self, "revocation_trust_path", paths["revocation_trust"])
         object.__setattr__(
             self, "claim_store_database_id", str(body["claim_store_database_id"])
         )
@@ -197,6 +206,19 @@ class _FailoverLaunchContext:
             database_id=str(body["claim_store_database_id"]),
         )
         self.verify_protected_state()
+
+    def resolve_revocations(self, now: float) -> frozenset[str]:
+        """Resolve the launch-pinned signed local revocation snapshot."""
+        try:
+            return _resolve_local_revoked_key_ids(
+                self.revocation_store_path,
+                self.revocation_trust_path,
+                now=now,
+            )
+        except Exception as exc:
+            raise AssignmentFailoverError(
+                f"launch-pinned seat revocation resolution failed: {exc}"
+            ) from exc
 
     def require_assurance(self, high_assurance: bool) -> dict[str, Any]:
         if type(high_assurance) is not bool:
@@ -540,6 +562,8 @@ def provision_failover_trust_root(
     registry_path: str | Path,
     claim_store_path: str | Path,
     protected_state_path: str | Path,
+    revocation_store_path: str | Path,
+    revocation_trust_path: str | Path,
 ) -> str:
     """Provision one signed path root and OS-protected failover high-water."""
     target = Path(config_path).resolve(strict=False)
@@ -551,6 +575,8 @@ def provision_failover_trust_root(
         "registry": Path(registry_path).resolve(strict=True),
         "claim_store": Path(claim_store_path).resolve(strict=False),
         "protected_state": Path(protected_state_path).resolve(strict=False),
+        "revocation_store": Path(revocation_store_path).resolve(strict=True),
+        "revocation_trust": Path(revocation_trust_path).resolve(strict=True),
     }
     paths["event_log"] = sc_mesh_registry.default_event_log_path(paths["registry"]).resolve(
         strict=False
@@ -1564,8 +1590,6 @@ def failover_assignment(
     audit_append: Callable[..., Mapping[str, Any]] = sc_mesh_registry.append_event,
     registry_transition: Callable[..., Mapping[str, Any]] = sc_mesh_registry.transition_agent_off_rails_exact,
     high_assurance: bool = False,
-    revoked_coordinator_key_ids: frozenset[str] = frozenset(),
-    revoked_seat_key_ids: frozenset[str] = frozenset(),
     now: float | None = None,
     replacement_ttl_seconds: float = 300.0,
     stage_hook: Callable[[str, dict[str, Any]], None] | None = None,
@@ -1577,12 +1601,26 @@ def failover_assignment(
     separately privileged external monotonic authority, so high assurance is
     refused before any callback can run.
     """
+    if type(high_assurance) is not bool:
+        raise AssignmentFailoverError("high_assurance must be an exact bool")
+    if high_assurance:
+        raise AssignmentFailoverError(
+            "high assurance refuses: no separately privileged external monotonic authority"
+        )
+    assurance = {
+        "mode": "ordinary",
+        "same_user_threat": "excluded",
+        "external_monotonic_authority": "absent",
+        "monotonicity": "local_best_effort",
+        "high_assurance": False,
+    }
     context = _require_launch_context()
-    assurance = context.require_assurance(high_assurance)
     store = context.assignment_store
     saga = context.saga_store
     registry_path = context.registry_path
     current = _finite(now, "failover time")
+    def live_revocations() -> frozenset[str]:
+        return context.resolve_revocations(current)
     if not role.strip() or not mesh.strip():
         raise AssignmentFailoverError("role and mesh are required")
     for boundary in (
@@ -1639,7 +1677,7 @@ def failover_assignment(
         replacement = verify_enrollment(
             replacement_snap,
             authority_public_key_hex=authority_public_key_hex,
-            revoked_key_ids=revoked_seat_key_ids,
+            revoked_key_ids=live_revocations(),
             now=current,
         )
     except (TypeError, ValueError) as exc:
@@ -1667,7 +1705,7 @@ def failover_assignment(
     if new["seat_epoch"] == raw_old["seat_epoch"]:
         raise AssignmentFailoverError("replacement seat epoch must be distinct")
     coordinator_key_id = key_id(str(coordinator_identity.public_key_hex))
-    if coordinator_key_id in revoked_coordinator_key_ids:
+    if coordinator_key_id in live_revocations():
         raise AssignmentFailoverError("failover coordinator key is revoked")
 
     spec = {
@@ -1712,8 +1750,8 @@ def failover_assignment(
                     assignment_snap,
                     store=store,
                     authority_public_key_hex=authority_public_key_hex,
-                    revoked_coordinator_key_ids=revoked_coordinator_key_ids,
-                    revoked_seat_key_ids=revoked_seat_key_ids,
+                    revoked_coordinator_key_ids=live_revocations(),
+                    revoked_seat_key_ids=live_revocations(),
                     now=current,
                     **receipt_verification,
                 )
@@ -1746,8 +1784,8 @@ def failover_assignment(
                     assignment_snap,
                     store=store,
                     authority_public_key_hex=authority_public_key_hex,
-                    revoked_coordinator_key_ids=revoked_coordinator_key_ids,
-                    revoked_seat_key_ids=revoked_seat_key_ids,
+                    revoked_coordinator_key_ids=live_revocations(),
+                    revoked_seat_key_ids=live_revocations(),
                     now=current,
                     **receipt_verification,
                 )
@@ -1770,8 +1808,8 @@ def failover_assignment(
                             assignment_snap,
                             store=store,
                             authority_public_key_hex=authority_public_key_hex,
-                            revoked_coordinator_key_ids=revoked_coordinator_key_ids,
-                            revoked_seat_key_ids=revoked_seat_key_ids,
+                            revoked_coordinator_key_ids=live_revocations(),
+                            revoked_seat_key_ids=live_revocations(),
                             now=current,
                             **receipt_verification,
                         )
@@ -1787,8 +1825,8 @@ def failover_assignment(
                             assignment_snap,
                             store=store,
                             authority_public_key_hex=authority_public_key_hex,
-                            revoked_coordinator_key_ids=revoked_coordinator_key_ids,
-                            revoked_seat_key_ids=revoked_seat_key_ids,
+                                revoked_coordinator_key_ids=live_revocations(),
+                                revoked_seat_key_ids=live_revocations(),
                             now=current,
                             **receipt_verification,
                         )
@@ -1802,8 +1840,8 @@ def failover_assignment(
                             assignment_snap,
                             store=store,
                             authority_public_key_hex=authority_public_key_hex,
-                            revoked_coordinator_key_ids=revoked_coordinator_key_ids,
-                            revoked_seat_key_ids=revoked_seat_key_ids,
+                                revoked_coordinator_key_ids=live_revocations(),
+                                revoked_seat_key_ids=live_revocations(),
                             now=receipt_time,
                             **receipt_verification,
                         )
@@ -1949,8 +1987,8 @@ def failover_assignment(
                     terminal_tab_identity=tab,
                     response_receiver_public_key_hex=replacement_response_receiver_public_key_hex,
                     response_channel=channel,
-                    revoked_coordinator_key_ids=revoked_coordinator_key_ids,
-                    revoked_seat_key_ids=revoked_seat_key_ids,
+                    revoked_coordinator_key_ids=live_revocations(),
+                    revoked_seat_key_ids=live_revocations(),
                     now=current,
                     ttl_seconds=effective_ttl,
                 )
@@ -1978,6 +2016,8 @@ def failover_assignment(
                 replacement_assignment = operation["replacement_assignment"]
                 if continuity is None or replacement_assignment is None:
                     raise AssignmentFailoverError("failover outbox is incomplete")
+                if replacement["seat_key_id"] in live_revocations():
+                    raise AssignmentFailoverError("replacement seat key is revoked")
                 _guard(
                     high_assurance_target_resolver,
                     target=target,
@@ -2005,6 +2045,8 @@ def failover_assignment(
                     require_fresh=True,
                 )
                 context.require_delivery_claim(delivery, replacement_assignment)
+                if replacement["seat_key_id"] in live_revocations():
+                    raise AssignmentFailoverError("replacement seat key is revoked")
                 operation = saga.advance(
                     operation_id,
                     "assignment_issued",

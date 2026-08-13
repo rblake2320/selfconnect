@@ -1048,7 +1048,14 @@ class ReceiverLaunchContext:
         revocation_resolver: SeatRevocationResolver,
         high_assurance: bool = False,
     ) -> None:
-        _require_runtime_assurance(trust_root, high_assurance)
+        if type(trust_root) is not RuntimeTrustRoot:
+            raise TypeError("an exact RuntimeTrustRoot is required")
+        if type(high_assurance) is not bool:
+            raise TypeError("high_assurance must be an exact boolean")
+        if high_assurance:
+            raise AssignmentVerificationError(
+                "high-assurance state authority refuses: local DPAPI is not a same-user monotonic authority"
+            )
         if (
             assignment_journal._trust_root is not trust_root
             or mailbox._trust_root is not trust_root
@@ -1290,9 +1297,16 @@ class ProductionAssignmentRuntime:
         wall_clock: Callable[[], float] = time.time,
         high_assurance: bool = False,
     ) -> None:
+        if type(trust_root) is not RuntimeTrustRoot:
+            raise TypeError("an exact RuntimeTrustRoot is required")
+        if type(high_assurance) is not bool:
+            raise TypeError("high_assurance must be an exact boolean")
+        if high_assurance:
+            raise AssignmentVerificationError(
+                "high-assurance state authority refuses: local DPAPI is not a same-user monotonic authority"
+            )
         if type(terminal_tab_guard) is not TerminalTabGuard:
             raise TypeError("production runtime requires an exact TerminalTabGuard")
-        _require_runtime_assurance(trust_root, high_assurance)
         if (
             mailbox._trust_root is not trust_root
             or assignment_journal._trust_root is not trust_root

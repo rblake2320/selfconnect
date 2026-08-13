@@ -30,9 +30,15 @@ from sc_assignment_protocol import (
     verify_consume_assignment,
     verify_consume_state_receipt,
 )
+from sc_authority_trust import _bootstrap_local_authority_trust_for_test
 from sc_guarded_submit import TargetIdentity
 from sc_identity import AgentIdentity
 from sc_seat_identity import create_enrollment
+from sc_seat_revocation import (
+    apply_revocation_snapshot,
+    create_revocation_snapshot,
+    sign_revocation_snapshot,
+)
 from sc_terminal_tab import RUNTIME_ID_SCOPE, TerminalTabIdentity
 
 NOW = 2_100_000_000.0
@@ -205,6 +211,28 @@ def _case(tmp_path, *, receipt_state="blocked"):
     saga_path = tmp_path / "failover.sqlite3"
     config_path = tmp_path / "failover-root.json"
     claim_store_path = tmp_path / "seat-delivery.sqlite3"
+    revocation_trust_path = _bootstrap_local_authority_trust_for_test(
+        tmp_path / "revocation-trust.json",
+        root_public_keys=[authority.public_key_hex],
+        quorum=1,
+        recovery_public_keys=[authority.public_key_hex],
+        recovery_quorum=1,
+    )
+    revocation_path = tmp_path / "revocations.json"
+    snapshot = create_revocation_snapshot(
+        revocation_path,
+        revocation_trust_path,
+        [],
+        now=NOW,
+        ttl_seconds=300,
+    )
+    apply_revocation_snapshot(
+        revocation_path,
+        revocation_trust_path,
+        snapshot,
+        [sign_revocation_snapshot(snapshot, authority)],
+        now=NOW,
+    )
     pinned = provision_failover_trust_root(
         config_path=config_path,
         provisioning_identity=authority,
@@ -213,6 +241,8 @@ def _case(tmp_path, *, receipt_state="blocked"):
         registry_path=registry_path,
         claim_store_path=claim_store_path,
         protected_state_path=tmp_path / "failover-state.json",
+        revocation_store_path=revocation_path,
+        revocation_trust_path=revocation_trust_path,
     )
     failover_module._LAUNCH_CONFIG_PATH = str(config_path.resolve())
     failover_module._LAUNCH_PUBLIC_KEY_HEX = pinned
@@ -238,6 +268,8 @@ def _case(tmp_path, *, receipt_state="blocked"):
         "pinned": pinned,
         "delivery_store": delivery_store,
         "registry_path": registry_path,
+        "revocation_path": revocation_path,
+        "revocation_trust_path": revocation_trust_path,
         "verification": verification,
     }
 
@@ -366,6 +398,8 @@ def test_public_action_uses_only_pinned_launch_durability_and_fresh_path_rejecte
     assert "store" not in parameters
     assert "saga_path" not in parameters
     assert "registry_path" not in parameters
+    assert "revoked_coordinator_key_ids" not in parameters
+    assert "revoked_seat_key_ids" not in parameters
     assert not inspect.signature(initialize_failover_runtime).parameters
     assert not inspect.signature(open_seat_delivery_claim_store).parameters
     assert not hasattr(failover_module, "_create_launch_context")
@@ -409,6 +443,8 @@ def test_alternate_signed_root_cannot_be_passed_to_public_action(tmp_path):
         registry_path=alternate_registry,
         claim_store_path=alternate_path / "claims.sqlite3",
         protected_state_path=alternate_path / "state.json",
+        revocation_store_path=canonical["revocation_path"],
+        revocation_trust_path=canonical["revocation_trust_path"],
     )
     assert alternate_key == attacker.public_key_hex
     assert "context" not in inspect.signature(failover_assignment).parameters
@@ -461,6 +497,8 @@ def test_provisioning_is_create_once_and_cannot_rebind_existing_state(tmp_path):
             registry_path=case["registry_path"],
             claim_store_path=case["delivery_store"].path,
             protected_state_path=case["context"].protected_state_path,
+            revocation_store_path=case["revocation_path"],
+            revocation_trust_path=case["revocation_trust_path"],
         )
 
 
@@ -883,13 +921,22 @@ def test_wrong_target_channel_guard_and_revocation_fail_closed(tmp_path):
         _run(channel_case, guarded_delivery=wrong_channel_delivery)
 
     revoked_case = _case(tmp_path / "revoked")
+    snapshot = create_revocation_snapshot(
+        revoked_case["revocation_path"],
+        revoked_case["revocation_trust_path"],
+        [revoked_case["new_enrollment"]["seat_key_id"]],
+        now=NOW + 2,
+        ttl_seconds=300,
+    )
+    apply_revocation_snapshot(
+        revoked_case["revocation_path"],
+        revoked_case["revocation_trust_path"],
+        snapshot,
+        [sign_revocation_snapshot(snapshot, revoked_case["authority"])],
+        now=NOW + 2,
+    )
     with pytest.raises(AssignmentFailoverError, match="revoked"):
-        _run(
-            revoked_case,
-            revoked_seat_key_ids=frozenset(
-                {revoked_case["new_enrollment"]["seat_key_id"]}
-            ),
-        )
+        _run(revoked_case)
     assert _pending(revoked_case) == []
 
 
@@ -957,6 +1004,44 @@ def test_ordinary_mode_labels_same_user_gap_and_high_assurance_refuses_first(tmp
     assert result["delivery_receipt"]["assurance"] == expected
     assert "same_user_threat" in result["replacement_assignment"]["payload"]
     assert not hasattr(failover_module, "ORDINARY_ASSURANCE")
+
+
+def test_rebound_context_assurance_method_cannot_bypass_early_refusal(tmp_path, monkeypatch):
+    case = _case(tmp_path)
+    callback_calls = {"guard": 0, "delivery": 0, "audit": 0, "registry": 0}
+
+    monkeypatch.setattr(
+        failover_module._FailoverLaunchContext,
+        "require_assurance",
+        lambda *_args, **_kwargs: {
+            "mode": "high_assurance",
+            "same_user_threat": "covered",
+            "external_monotonic_authority": "present",
+            "monotonicity": "rollback_proof",
+            "high_assurance": True,
+        },
+    )
+
+    def called(name):
+        def callback(*_args, **_kwargs):
+            callback_calls[name] += 1
+            return True
+
+        return callback
+
+    with pytest.raises(
+        AssignmentFailoverError,
+        match="no separately privileged external monotonic authority",
+    ):
+        _run(
+            case,
+            high_assurance=True,
+            high_assurance_target_resolver=called("guard"),
+            guarded_delivery=called("delivery"),
+            audit_append=called("audit"),
+            registry_transition=called("registry"),
+        )
+    assert callback_calls == {"guard": 0, "delivery": 0, "audit": 0, "registry": 0}
 
 
 def test_rebound_module_assurance_name_cannot_change_signed_or_returned_labels(

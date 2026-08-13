@@ -24,6 +24,7 @@ REQUIRED_MODULES = (
     "sc_seat_revocation.py",
     "sc_authority_trust.py",
     "sc_trust_anchor.py",
+    "sc_event_kinds.py",
 )
 CI_WORKFLOW = Path(".github/workflows/ci.yml")
 INVARIANTS = Path("release/core_invariants.json")

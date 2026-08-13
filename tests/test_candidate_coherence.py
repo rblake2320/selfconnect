@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import ast
 import json
+import tomllib
 from pathlib import Path
 
 from tools.candidate_coherence import REQUIRED_MODULES, validate_candidate
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _candidate(tmp_path: Path, *, complete: bool) -> Path:
@@ -62,3 +66,27 @@ def test_claim_hash_drift_is_separate_from_implementation_failure(tmp_path: Path
     assert report["ok"] is True
     findings = {item["code"]: item for item in report["findings"]}
     assert findings["claim_hash_drift"]["status"] == "expected_premerge"
+
+
+def test_wheel_manifest_closes_tracked_local_imports() -> None:
+    manifest = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "tool"
+    ]["hatch"]["build"]["targets"]["wheel"]["include"]
+    packaged = {Path(name).name for name in manifest if name.endswith(".py")}
+    missing: set[str] = set()
+    for name in packaged:
+        source = ROOT / name
+        if not source.is_file():
+            continue
+        for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"), filename=name)):
+            if isinstance(node, ast.Import):
+                modules = [item.name.split(".", 1)[0] for item in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                modules = [node.module.split(".", 1)[0]]
+            else:
+                continue
+            for module in modules:
+                local = f"{module}.py"
+                if (ROOT / local).is_file() and local not in packaged:
+                    missing.add(local)
+    assert missing == set()

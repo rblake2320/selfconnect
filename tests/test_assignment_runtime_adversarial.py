@@ -638,6 +638,34 @@ def test_instance_method_shadow_cannot_bypass_high_assurance_refusal(tmp_path, m
             revocation_resolver=env["revocation_resolver"],
             high_assurance=True,
         )
+
+
+def test_module_assurance_helper_rebinding_cannot_silently_downgrade(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    monkeypatch.setattr(runtime_module, "_require_runtime_assurance", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(AssignmentVerificationError, match="same-user monotonic"):
+        ReceiverLaunchContext(
+            trust_root=env["trust_root"],
+            assignment_journal=env["journal"],
+            mailbox=env["mailbox"],
+            revocation_resolver=env["revocation_resolver"],
+            high_assurance=True,
+        )
+    with pytest.raises(AssignmentVerificationError, match="same-user monotonic"):
+        ProductionAssignmentRuntime(
+            coordinator_identity=env["coordinator"],
+            coordinator_store=env["coordinator_store"],
+            receiver_enrollment=env["enrollment"],
+            bindings=env["bindings"],
+            trust_root=env["trust_root"],
+            mailbox=env["mailbox"],
+            assignment_journal=env["journal"],
+            revocation_resolver=env["revocation_resolver"],
+            terminal_tab_guard=env["runtime"]._terminal_tab_guard,
+            submit_config=env["runtime"]._submit_config,
+            high_assurance=True,
+        )
     with pytest.raises(AssignmentVerificationError, match="same-user monotonic"):
         ProductionAssignmentRuntime(
             coordinator_identity=env["coordinator"],
