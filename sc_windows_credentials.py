@@ -4,6 +4,7 @@ from __future__ import annotations
 import ctypes
 import os
 from ctypes import wintypes
+from typing import ClassVar
 
 _TYPE_GENERIC = 1
 _PERSIST_LOCAL_MACHINE = 2
@@ -11,7 +12,7 @@ _ERROR_NOT_FOUND = 1168
 
 
 class _Credential(ctypes.Structure):
-    _fields_ = [
+    _fields_: ClassVar = [
         ("Flags", wintypes.DWORD), ("Type", wintypes.DWORD),
         ("TargetName", wintypes.LPWSTR), ("Comment", wintypes.LPWSTR),
         ("LastWritten", wintypes.FILETIME), ("CredentialBlobSize", wintypes.DWORD),

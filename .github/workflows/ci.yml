@@ -60,7 +60,7 @@ jobs:
           python -m py_compile self_connect.py sc_assignment_failover.py sc_assignment_protocol.py
           sc_assignment_runtime.py sc_assignment_watchdog.py sc_authority_trust.py
           sc_seat_identity.py sc_seat_pipe.py sc_seat_revocation.py
-          sc_trust_anchor.py
+          sc_trust_anchor.py sc_windows_credentials.py
 
       - name: Cross-language seat canonicalization vectors
         run: node tests/canonical_vectors.mjs

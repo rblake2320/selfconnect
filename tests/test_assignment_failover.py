@@ -5,21 +5,22 @@ import copy
 import inspect
 import json
 import shutil
+import sqlite3
 import tomllib
 from pathlib import Path
 
 import pytest
+import sc_assignment_failover as failover_module
 import sc_mesh_registry
 from sc_assignment_failover import (
     AssignmentFailoverError,
     FailoverConflictError,
-    FailoverLaunchContext,
-    FailoverSagaStore,
-    SeatDeliveryClaimStore,
-    _create_launch_context,
     _create_seat_actuation_proof,
     failover_assignment,
+    initialize_failover_runtime,
     list_pending_failovers,
+    open_seat_delivery_claim_store,
+    provision_failover_trust_root,
 )
 from sc_assignment_protocol import (
     AssignmentStateStore,
@@ -36,6 +37,24 @@ from sc_terminal_tab import RUNTIME_ID_SCOPE, TerminalTabIdentity
 
 NOW = 2_100_000_000.0
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def _protected_credential_backend(monkeypatch):
+    credentials: dict[str, bytes] = {}
+
+    def read(target):
+        value = credentials.get(target)
+        return None if value is None else bytes(value)
+
+    def write(target, value):
+        credentials[target] = bytes(value)
+
+    monkeypatch.setattr(failover_module, "read_secret", read)
+    monkeypatch.setattr(failover_module, "write_secret", write)
+    monkeypatch.setattr(failover_module, "_ACTIVE_CONTEXT", None)
+    yield credentials
+    failover_module._ACTIVE_CONTEXT = None
 
 
 def _canonical(value):
@@ -186,12 +205,23 @@ def _case(tmp_path, *, receipt_state="blocked"):
         registry_path=registry_path,
     )["ok"]
     saga_path = tmp_path / "failover.sqlite3"
-    context = _create_launch_context(
-        assignment_store=coordinator_store,
+    config_path = tmp_path / "failover-root.json"
+    claim_store_path = tmp_path / "seat-delivery.sqlite3"
+    pinned = provision_failover_trust_root(
+        config_path=config_path,
+        provisioning_identity=authority,
+        assignment_store_path=coordinator_store.path,
         saga_path=saga_path,
         registry_path=registry_path,
+        claim_store_path=claim_store_path,
+        protected_state_path=tmp_path / "failover-state.json",
     )
-    delivery_store = SeatDeliveryClaimStore(tmp_path / "seat-delivery.sqlite3")
+    failover_module._LAUNCH_CONFIG_PATH = str(config_path.resolve())
+    failover_module._LAUNCH_PUBLIC_KEY_HEX = pinned
+    failover_module._ACTIVE_CONTEXT = None
+    initialize_failover_runtime()
+    context = failover_module._require_launch_context()
+    delivery_store = open_seat_delivery_claim_store()
     return {
         "authority": authority,
         "coordinator": coordinator,
@@ -224,7 +254,7 @@ def _run(case, *, shared=None, receipt=None, **overrides):
 
     def audit(event_type, **kwargs):
         shared["audit"].append((event_type, kwargs))
-        return {"ok": True, "event": {"event_type": event_type}}
+        return sc_mesh_registry.append_event(event_type, **kwargs)
 
     def guard(**kwargs):
         shared["guard"].append(kwargs)
@@ -255,7 +285,6 @@ def _run(case, *, shared=None, receipt=None, **overrides):
         "replacement_terminal_tab_identity": case["new_tab"],
         "replacement_response_receiver_public_key_hex": case["new_response"].public_key_hex,
         "replacement_response_channel": case["new_channel"],
-        "context": case["context"],
         "high_assurance_target_resolver": guard,
         "guarded_delivery": deliver,
         "audit_append": audit,
@@ -263,9 +292,15 @@ def _run(case, *, shared=None, receipt=None, **overrides):
         **case["verification"],
         **overrides,
     }
+    failover_module._ACTIVE_CONTEXT = case["context"]
     return failover_assignment(
         case["assignment"], receipt or case["receipt"], **args
     ), shared
+
+
+def _pending(case):
+    failover_module._ACTIVE_CONTEXT = case["context"]
+    return list_pending_failovers()
 
 
 def test_saga_delivers_only_after_cas_final_audit_and_signed_seat_receipt(tmp_path):
@@ -314,18 +349,27 @@ def test_package_manifest_and_ci_include_failover_module():
     package = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     modules = package["tool"]["hatch"]["build"]["targets"]["wheel"]["include"]
     assert "sc_assignment_failover.py" in modules
+    assert "sc_windows_credentials.py" in modules
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "ruff check\n" in workflow
-    assert "python -m py_compile self_connect.py sc_assignment_failover.py" in workflow
+    assert (
+        "python -m py_compile self_connect.py sc_assignment_failover.py "
+        "sc_windows_credentials.py"
+    ) in workflow
 
 
 def test_public_action_uses_only_pinned_launch_durability_and_fresh_path_rejected(tmp_path):
     case = _case(tmp_path)
     parameters = inspect.signature(failover_assignment).parameters
-    assert "context" in parameters
+    assert "context" not in parameters
     assert "store" not in parameters
     assert "saga_path" not in parameters
     assert "registry_path" not in parameters
+    assert not inspect.signature(initialize_failover_runtime).parameters
+    assert not inspect.signature(open_seat_delivery_claim_store).parameters
+    assert not hasattr(failover_module, "_create_launch_context")
+    assert not hasattr(failover_module, "_CONTEXT_SEAL")
+    assert not hasattr(failover_module, "SeatDeliveryClaimStore")
 
     fresh_store_path = tmp_path / "fresh-coordinator.sqlite3"
     shutil.copy2(case["store"].path, fresh_store_path)
@@ -337,24 +381,158 @@ def test_public_action_uses_only_pinned_launch_durability_and_fresh_path_rejecte
     with pytest.raises(AssignmentFailoverError, match="verification context"):
         _run(case, store=fresh_store, saga_path=fresh_saga)
     assert not fresh_saga.exists()
-    assert list_pending_failovers(case["saga_path"]) == []
-    with pytest.raises(TypeError, match="runtime-owned"):
-        FailoverLaunchContext(
-            assignment_store=fresh_store,
-            saga_path=fresh_saga,
+    assert _pending(case) == []
+    assert not hasattr(failover_module, "FailoverLaunchContext")
+
+
+def test_alternate_signed_root_cannot_be_passed_to_public_action(tmp_path):
+    canonical = _case(tmp_path / "canonical")
+    alternate_path = tmp_path / "alternate"
+    alternate_path.mkdir()
+    alternate_store = AssignmentStateStore(alternate_path / "coordinator.sqlite3")
+    alternate_registry = alternate_path / "mesh_registry.json"
+    assert sc_mesh_registry.register_virtual_agent(
+        "worker",
+        mesh="test",
+        status="active",
+        birth_id="seat-old-birth",
+        generation=3,
+        registry_path=alternate_registry,
+    )["ok"]
+    attacker = AgentIdentity.generate("attacker-launcher")
+    alternate_key = provision_failover_trust_root(
+        config_path=alternate_path / "root.json",
+        provisioning_identity=attacker,
+        assignment_store_path=alternate_store.path,
+        saga_path=alternate_path / "saga.sqlite3",
+        registry_path=alternate_registry,
+        claim_store_path=alternate_path / "claims.sqlite3",
+        protected_state_path=alternate_path / "state.json",
+    )
+    assert alternate_key == attacker.public_key_hex
+    assert "context" not in inspect.signature(failover_assignment).parameters
+    with pytest.raises(AssignmentFailoverError, match="verification context"):
+        _run(canonical, context=object())
+    with sqlite3.connect(alternate_path / "saga.sqlite3") as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM failover_saga_v1"
+        ).fetchone()[0] == 0
+
+
+def test_post_import_environment_rewrite_cannot_select_an_alternate_root(monkeypatch):
+    failover_module._ACTIVE_CONTEXT = None
+    monkeypatch.setattr(failover_module, "_LAUNCH_CONFIG_PATH", "")
+    monkeypatch.setattr(failover_module, "_LAUNCH_PUBLIC_KEY_HEX", "")
+    monkeypatch.setenv("SELFCONNECT_FAILOVER_ROOT_CONFIG", r"C:\attacker\root.json")
+    monkeypatch.setenv("SELFCONNECT_FAILOVER_ROOT_PUBLIC_KEY_HEX", "f" * 64)
+    with pytest.raises(AssignmentFailoverError, match="not pinned"):
+        initialize_failover_runtime()
+
+
+def test_signed_launch_config_and_database_ids_are_immutable_at_runtime(tmp_path):
+    config_case = _case(tmp_path / "config")
+    config = json.loads(config_case["context"]._config_path.read_text(encoding="utf-8"))
+    config["saga_store_path"] = str((tmp_path / "attacker.sqlite3").resolve())
+    config_case["context"]._config_path.write_text(
+        json.dumps(config, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    with pytest.raises(AssignmentFailoverError, match="config changed"):
+        _run(config_case)
+
+    database_case = _case(tmp_path / "database")
+    with sqlite3.connect(database_case["saga_path"]) as connection:
+        connection.execute(
+            "UPDATE failover_saga_store_meta_v1 SET database_id=? WHERE singleton=1",
+            ("f" * 64,),
+        )
+    with pytest.raises(AssignmentFailoverError, match="database identity mismatch"):
+        _run(database_case)
+
+
+def test_provisioning_is_create_once_and_cannot_rebind_existing_state(tmp_path):
+    case = _case(tmp_path)
+    with pytest.raises(FileExistsError, match="already provisioned"):
+        provision_failover_trust_root(
+            config_path=case["context"]._config_path,
+            provisioning_identity=case["authority"],
+            assignment_store_path=case["store"].path,
+            saga_path=case["saga_path"],
             registry_path=case["registry_path"],
-            seal=object(),
+            claim_store_path=case["delivery_store"].path,
+            protected_state_path=case["context"].protected_state_path,
         )
 
 
 def test_launch_event_head_anchor_rejects_truncated_history(tmp_path):
     case = _case(tmp_path)
-    assert case["context"].event_head_anchor != "0" * 64
+    state = case["context"]._read_state()
+    assert state["event_anchor"]["head_hash"] != "0" * 64
     case["context"].event_log_path.write_text("", encoding="utf-8")
 
-    with pytest.raises(AssignmentFailoverError, match="anchor is absent"):
+    with pytest.raises(AssignmentFailoverError, match="rolled back"):
         _run(case)
-    assert list_pending_failovers(case["saga_path"]) == []
+    with sqlite3.connect(case["saga_path"]) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM failover_saga_v1"
+        ).fetchone()[0] == 0
+
+
+def test_protected_operation_rejects_canonical_saga_rollback(tmp_path):
+    case = _case(tmp_path)
+    pristine = tmp_path / "pristine-saga.sqlite3"
+    shutil.copy2(case["saga_path"], pristine)
+    result, _shared = _run(case)
+    assert result["ok"] is True
+
+    shutil.copy2(pristine, case["saga_path"])
+    with pytest.raises(AssignmentFailoverError, match="operation is absent"):
+        _run(case)
+
+
+def test_credential_head_rejects_protected_state_file_rollback(tmp_path):
+    case = _case(tmp_path)
+    pristine = tmp_path / "pristine-protected-state.json"
+    shutil.copy2(case["context"].protected_state_path, pristine)
+    result, _shared = _run(case)
+    assert result["ok"] is True
+
+    shutil.copy2(pristine, case["context"].protected_state_path)
+    with pytest.raises(AssignmentFailoverError, match="rolled back or diverged"):
+        _run(case)
+
+
+def test_protected_saga_anchor_rejects_mutable_record_rewrite(tmp_path):
+    case = _case(tmp_path)
+    result, _shared = _run(case)
+    assert result["ok"] is True
+    with sqlite3.connect(case["saga_path"]) as connection:
+        connection.execute(
+            "UPDATE failover_saga_v1 SET receipt_commit_sha256=?",
+            ("f" * 64,),
+        )
+    with pytest.raises(AssignmentFailoverError, match="saga provenance mismatch"):
+        _run(case)
+
+
+def test_protected_audit_event_rejects_valid_rewritten_event_chain(tmp_path):
+    case = _case(tmp_path)
+    result, _shared = _run(case)
+    assert result["ok"] is True
+    events = sc_mesh_registry.load_events(
+        event_log_path=case["context"].event_log_path,
+        limit=100,
+    )["events"]
+    initial = events[0]
+    case["context"].event_log_path.write_text(
+        json.dumps(initial, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    assert sc_mesh_registry.verify_events(
+        event_log_path=case["context"].event_log_path
+    )["ok"] is True
+    with pytest.raises(AssignmentFailoverError, match=r"rolled back|anchor is absent"):
+        _run(case)
 
 
 def test_continuity_artifact_binds_predecessor_and_authorizing_receipt(tmp_path):
@@ -371,7 +549,7 @@ def test_continuity_artifact_binds_predecessor_and_authorizing_receipt(tmp_path)
     ).hexdigest()
     assert payload["continuity"] == continuity
     assert payload["predecessor_payload"] == case["assignment"]["payload"]
-    operation = FailoverSagaStore(case["saga_path"]).load(result["operation_id"])
+    operation = case["context"].saga_store.load(result["operation_id"])
     assert operation["spec"]["predecessor_assignment"] == case["assignment"]
     assert operation["spec"]["authorizing_receipt"] == case["receipt"]
     assert operation["spec"]["replacement_enrollment"] == case["new_enrollment"]
@@ -402,14 +580,14 @@ def test_every_crash_boundary_resumes_exact_outbox(checkpoint, tmp_path):
     with pytest.raises(AssignmentFailoverError, match="simulated crash"):
         _run(case, shared=shared, stage_hook=crash_once)
     if checkpoint == "after_delivery":
-        assert list_pending_failovers(case["saga_path"]) == []
+        assert _pending(case) == []
     else:
-        assert list_pending_failovers(case["saga_path"])
+        assert _pending(case)
 
     result, _shared = _run(case, shared=shared)
     assert result["ok"] is True
     assert result["resumed"] is True
-    assert FailoverSagaStore(case["saga_path"]).pending() == []
+    assert case["context"].saga_store.pending() == []
     if checkpoint == "after_delivery":
         assert len(shared["delivery"]) == 1
 
@@ -423,7 +601,7 @@ def test_prepared_saga_recovers_unconsumed_receipt_after_freshness_window(tmp_pa
 
     with pytest.raises(AssignmentFailoverError, match="before receipt consumption"):
         _run(case, stage_hook=crash_after_prepare)
-    operation = list_pending_failovers(case["saga_path"])[0]
+    operation = _pending(case)[0]
     assert operation["stage"] == "prepared"
     with pytest.raises(AssignmentVerificationError, match="durably consumed"):
         case["store"].require_receipt("consumed", case["receipt"])
@@ -458,7 +636,7 @@ def test_receipt_consumed_outside_saga_cannot_authorize_new_failover(tmp_path):
     )
     with pytest.raises(FailoverConflictError, match="outside a durable failover saga"):
         _run(case)
-    assert list_pending_failovers(case["saga_path"]) == []
+    assert _pending(case) == []
 
 
 def test_unsigned_echo_zero_and_wrong_signed_delivery_never_go(tmp_path):
@@ -474,8 +652,8 @@ def test_unsigned_echo_zero_and_wrong_signed_delivery_never_go(tmp_path):
         case = _case(tmp_path / f"unsigned-{index}")
         with pytest.raises(AssignmentFailoverError, match="delivery receipt"):
             _run(case, guarded_delivery=boundary)
-        assert FailoverSagaStore(case["saga_path"]).load(
-            list_pending_failovers(case["saga_path"])[0]["operation_id"]
+        assert case["context"].saga_store.load(
+            _pending(case)[0]["operation_id"]
         )["stage"] == "assignment_issued"
 
     case = _case(tmp_path / "wrong-signer")
@@ -486,7 +664,7 @@ def test_unsigned_echo_zero_and_wrong_signed_delivery_never_go(tmp_path):
         assignment["receiver_key_id"] = __import__("hashlib").sha256(
             bytes.fromhex(wrong.public_key_hex)
         ).hexdigest()
-        return SeatDeliveryClaimStore(tmp_path / "wrong-signer.sqlite3").deliver_exact(
+        return case["delivery_store"].deliver_exact(
             operation_id=kwargs["operation_id"],
             continuity=kwargs["continuity"],
             replacement_assignment=assignment,
@@ -536,7 +714,7 @@ def test_seat_claim_persists_before_actuation_and_response_loss_never_reacts(tmp
     with pytest.raises(AssignmentFailoverError, match="response lost"):
         _run(case, guarded_delivery=delivery_with_response_loss)
     assert len(actions) == 1
-    assert list_pending_failovers(case["saga_path"])[0]["stage"] == "assignment_issued"
+    assert _pending(case)[0]["stage"] == "assignment_issued"
 
     result, _shared = _run(case, guarded_delivery=delivery_with_response_loss)
     assert result["ok"] is True
@@ -544,9 +722,40 @@ def test_seat_claim_persists_before_actuation_and_response_loss_never_reacts(tmp
     assert result["delivery_receipt"]["delivery_claim_id"] == actions[0]["claim_id"]
 
 
+def test_protected_claim_highwater_rejects_claim_database_rollback(tmp_path):
+    case = _case(tmp_path)
+    pristine = tmp_path / "pristine-claims.sqlite3"
+    shutil.copy2(case["delivery_store"].path, pristine)
+    actions = []
+
+    def response_lost(**kwargs):
+        def actuator(claim):
+            actions.append(claim)
+            return _actuation_proof(case, claim, result_sha256="e" * 64)
+
+        return case["delivery_store"].deliver_exact(
+            operation_id=kwargs["operation_id"],
+            continuity=kwargs["continuity"],
+            replacement_assignment=kwargs["assignment"],
+            seat_identity=case["new_seat"],
+            actuator=actuator,
+            delivered_at=NOW + 3,
+            after_commit=lambda: (_ for _ in ()).throw(OSError("response lost")),
+        )
+
+    with pytest.raises(AssignmentFailoverError, match="response lost"):
+        _run(case, guarded_delivery=response_lost)
+    assert len(actions) == 1
+    shutil.copy2(pristine, case["delivery_store"].path)
+
+    with pytest.raises(AssignmentFailoverError, match="claim store rolled back"):
+        _run(case, guarded_delivery=response_lost)
+    assert len(actions) == 1
+
+
 def test_crash_after_claim_before_proof_is_ambiguous_and_never_reacts(tmp_path):
-    store = SeatDeliveryClaimStore(tmp_path / "seat-claim.sqlite3")
     case = _case(tmp_path / "case")
+    store = case["delivery_store"]
     actions = []
 
     def broken_actuator(claim):
@@ -569,8 +778,8 @@ def test_crash_after_claim_before_proof_is_ambiguous_and_never_reacts(tmp_path):
 
 
 def test_unsigned_echo_callback_cannot_complete_claim_or_go(tmp_path):
-    store = SeatDeliveryClaimStore(tmp_path / "seat-claim.sqlite3")
     case = _case(tmp_path / "case")
+    store = case["delivery_store"]
     calls = []
 
     def unsigned_echo(claim):
@@ -602,7 +811,7 @@ def test_cas_drift_has_intent_only_and_restart_reconciles_after_restore(tmp_path
     with pytest.raises(AssignmentFailoverError, match="registry birth drift"):
         _run(case, shared=shared)
     assert [item[0] for item in shared["audit"]] == ["assignment_failover_intent"]
-    assert list_pending_failovers(case["saga_path"])[0]["stage"] == "intent_audited"
+    assert _pending(case)[0]["stage"] == "intent_audited"
 
     registry["agents"][0]["birth_id"] = "seat-old-birth"
     case["registry_path"].write_text(json.dumps(registry), encoding="utf-8")
@@ -627,15 +836,15 @@ def test_audit_failure_is_durable_and_exact_retry_resumes(
     case = _case(tmp_path)
     failed = {"done": False}
 
-    def flaky_audit(event_type, **_kwargs):
+    def flaky_audit(event_type, **kwargs):
         if event_type == failed_event and not failed["done"]:
             failed["done"] = True
             raise OSError("audit unavailable")
-        return {"ok": True}
+        return sc_mesh_registry.append_event(event_type, **kwargs)
 
     with pytest.raises(AssignmentFailoverError, match="audit unavailable"):
         _run(case, audit_append=flaky_audit)
-    assert list_pending_failovers(case["saga_path"])[0]["stage"] == expected_stage
+    assert _pending(case)[0]["stage"] == expected_stage
     if failed_event == "assignment_failover_intent":
         assert sc_mesh_registry.load_registry_strict(case["registry_path"])["agents"][0]["status"] == "active"
 
@@ -647,7 +856,7 @@ def test_wrong_target_channel_guard_and_revocation_fail_closed(tmp_path):
     guard_case = _case(tmp_path / "guard")
     with pytest.raises(AssignmentFailoverError, match="resolver refused"):
         _run(guard_case, high_assurance_target_resolver=lambda **_kwargs: False)
-    assert list_pending_failovers(guard_case["saga_path"])[0]["stage"] == "assignment_issued"
+    assert _pending(guard_case)[0]["stage"] == "assignment_issued"
 
     channel_case = _case(tmp_path / "channel")
 
@@ -681,7 +890,7 @@ def test_wrong_target_channel_guard_and_revocation_fail_closed(tmp_path):
                 {revoked_case["new_enrollment"]["seat_key_id"]}
             ),
         )
-    assert list_pending_failovers(revoked_case["saga_path"]) == []
+    assert _pending(revoked_case) == []
 
 
 def test_forged_stale_wrong_seat_and_noncanonical_receipt_never_create_saga(tmp_path):
@@ -705,4 +914,4 @@ def test_forged_stale_wrong_seat_and_noncanonical_receipt_never_create_saga(tmp_
     for case, receipt, verification_time in variants:
         with pytest.raises(AssignmentFailoverError):
             _run(case, receipt=receipt, now=verification_time)
-        assert not case["saga_path"].exists() or list_pending_failovers(case["saga_path"]) == []
+        assert not case["saga_path"].exists() or _pending(case) == []

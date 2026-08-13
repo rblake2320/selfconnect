@@ -11,6 +11,7 @@ import base64
 import hashlib
 import json
 import math
+import os
 import secrets
 import sqlite3
 import time
@@ -31,6 +32,7 @@ from sc_assignment_protocol import (
 from sc_identity import AgentIdentity
 from sc_seat_identity import key_id, verify_enrollment
 from sc_tasks import FileLock
+from sc_windows_credentials import read_secret, write_secret
 
 FAILOVER_STATES = frozenset({"blocked", "rejected"})
 CONTINUITY_SCHEMA = "selfconnect-assignment-continuity-v1"
@@ -62,8 +64,15 @@ _RECEIPT_VERIFICATION_FIELDS = frozenset(
         "expected_response_channel",
     }
 )
-_CONTEXT_SEAL = object()
 _SEAT_CLAIM_SEAL = object()
+FAILOVER_ROOT_SCHEMA = "selfconnect-assignment-failover-root-v1"
+FAILOVER_PROTECTED_STATE_SCHEMA = "selfconnect-assignment-failover-protected-state-v1"
+FAILOVER_PROTECTED_ANCHOR_SCHEMA = "selfconnect-assignment-failover-protected-anchor-v1"
+FAILOVER_ROOT_CONFIG_ENV = "SELFCONNECT_FAILOVER_ROOT_CONFIG"
+FAILOVER_ROOT_PUBLIC_KEY_ENV = "SELFCONNECT_FAILOVER_ROOT_PUBLIC_KEY_HEX"
+_LAUNCH_CONFIG_PATH = os.environ.get(FAILOVER_ROOT_CONFIG_ENV, "")
+_LAUNCH_PUBLIC_KEY_HEX = os.environ.get(FAILOVER_ROOT_PUBLIC_KEY_ENV, "")
+_ACTIVE_CONTEXT: _FailoverLaunchContext | None = None
 
 
 class AssignmentFailoverError(AssignmentVerificationError):
@@ -75,83 +84,504 @@ class FailoverConflictError(AssignmentFailoverError):
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class FailoverLaunchContext:
-    """Trusted immutable durability capability created once at runtime launch."""
+class _FailoverLaunchContext:
+    """Verified immutable launch root; never accepted by an action API."""
 
     assignment_store: AssignmentStateStore
     assignment_store_path: Path
-    saga_store: FailoverSagaStore
+    saga_store: _FailoverSagaStore
     saga_store_path: Path
     registry_path: Path
     event_log_path: Path
-    event_head_anchor: str
-    _seal: object
+    protected_state_path: Path
+    claim_store_path: Path
+    claim_store_database_id: str
+    saga_store_database_id: str
+    root_id: str
+    credential_target: str
+    config_sha256: str
+    _config_path: Path
 
     def __init__(
         self,
         *,
-        assignment_store: AssignmentStateStore,
-        saga_path: str | Path,
-        registry_path: str | Path,
-        seal: object,
+        config_path: str | Path,
+        pinned_public_key_hex: str,
     ) -> None:
-        if seal is not _CONTEXT_SEAL or type(assignment_store) is not AssignmentStateStore:
-            raise TypeError("FailoverLaunchContext is runtime-owned")
-        resolved_registry = Path(registry_path).resolve(strict=True)
-        resolved_saga = Path(saga_path).resolve(strict=False)
-        if resolved_saga == resolved_registry:
-            raise ValueError("saga and registry paths must be distinct")
-        verified = sc_mesh_registry.verify_events(registry_path=resolved_registry)
-        if verified.get("ok") is not True:
-            raise AssignmentFailoverError("event log is not valid at launch")
-        object.__setattr__(self, "assignment_store", assignment_store)
-        object.__setattr__(self, "assignment_store_path", assignment_store.path.resolve())
-        saga_store = FailoverSagaStore(resolved_saga)
+        target = Path(config_path).resolve(strict=True)
+        record, body = _verified_body(
+            target.read_bytes(), pinned_public_key_hex, "failover root config"
+        )
+        expected_fields = {
+            "schema",
+            "root_id",
+            "credential_target",
+            "assignment_store_path",
+            "assignment_store_database_id",
+            "saga_store_path",
+            "saga_store_database_id",
+            "registry_path",
+            "event_log_path",
+            "protected_state_path",
+            "claim_store_path",
+            "claim_store_database_id",
+        }
+        if set(body) != expected_fields or body.get("schema") != FAILOVER_ROOT_SCHEMA:
+            raise AssignmentFailoverError("failover root config fields are invalid")
+        for field in (
+            "root_id",
+            "assignment_store_database_id",
+            "saga_store_database_id",
+            "claim_store_database_id",
+        ):
+            _require_hex64(body.get(field), f"failover root {field}")
+        root_id = str(body["root_id"])
+        credential_target = body.get("credential_target")
+        if (
+            type(credential_target) is not str
+            or credential_target != f"SelfConnect/Failover/{root_id}"
+        ):
+            raise AssignmentFailoverError("failover protected-state target is invalid")
+        paths = {
+            name: _canonical_absolute_path(body.get(f"{name}_path"), name)
+            for name in (
+                "assignment_store",
+                "saga_store",
+                "registry",
+                "event_log",
+                "claim_store",
+                "protected_state",
+            )
+        }
+        if len(set(paths.values())) != len(paths):
+            raise AssignmentFailoverError("failover root paths must be distinct")
+        expected_event = sc_mesh_registry.default_event_log_path(paths["registry"]).resolve(
+            strict=False
+        )
+        if paths["event_log"] != expected_event:
+            raise AssignmentFailoverError("failover event-log path is not derived from the registry")
+        assignment_store = AssignmentStateStore(paths["assignment_store"])
+        _verify_database_id(
+            paths["assignment_store"],
+            "failover_assignment_store_meta_v1",
+            str(body["assignment_store_database_id"]),
+        )
+        saga_store = _FailoverSagaStore(
+            paths["saga_store"], database_id=str(body["saga_store_database_id"])
+        )
         object.__setattr__(self, "saga_store", saga_store)
         object.__setattr__(self, "saga_store_path", saga_store.path)
-        object.__setattr__(self, "registry_path", resolved_registry)
+        object.__setattr__(self, "assignment_store", assignment_store)
+        object.__setattr__(self, "assignment_store_path", assignment_store.path.resolve())
+        object.__setattr__(self, "registry_path", paths["registry"])
+        object.__setattr__(self, "event_log_path", paths["event_log"])
+        object.__setattr__(self, "protected_state_path", paths["protected_state"])
+        object.__setattr__(self, "claim_store_path", paths["claim_store"])
         object.__setattr__(
-            self,
-            "event_log_path",
-            sc_mesh_registry.default_event_log_path(resolved_registry).resolve(strict=False),
+            self, "claim_store_database_id", str(body["claim_store_database_id"])
         )
-        object.__setattr__(self, "event_head_anchor", str(verified["head_hash"]))
-        object.__setattr__(self, "_seal", seal)
+        object.__setattr__(
+            self, "saga_store_database_id", str(body["saga_store_database_id"])
+        )
+        object.__setattr__(self, "root_id", root_id)
+        object.__setattr__(self, "credential_target", credential_target)
+        object.__setattr__(self, "config_sha256", _digest(record))
+        object.__setattr__(self, "_config_path", target)
+        _SeatDeliveryClaimStore(
+            self,
+            database_id=str(body["claim_store_database_id"]),
+        )
+        self.verify_protected_state()
 
+    def _read_state(self) -> dict[str, Any]:
+        raw = read_secret(self.credential_target)
+        if raw is None:
+            raise AssignmentFailoverError("failover protected anchor is absent")
+        anchor = _snapshot(raw, "failover protected anchor")
+        if (
+            set(anchor)
+            != {"schema", "root_id", "config_sha256", "revision", "state_sha256"}
+            or anchor.get("schema") != FAILOVER_PROTECTED_ANCHOR_SCHEMA
+            or anchor.get("root_id") != self.root_id
+            or anchor.get("config_sha256") != self.config_sha256
+            or type(anchor.get("revision")) is not int
+            or int(anchor["revision"]) < 1
+        ):
+            raise AssignmentFailoverError("failover protected anchor is invalid")
+        _require_hex64(anchor.get("state_sha256"), "failover protected state hash")
+        try:
+            state_raw = self.protected_state_path.read_bytes()
+        except OSError as exc:
+            raise AssignmentFailoverError("failover protected state is absent") from exc
+        if not secrets.compare_digest(
+            hashlib.sha256(state_raw).hexdigest(), str(anchor["state_sha256"])
+        ):
+            raise AssignmentFailoverError("failover protected state rolled back or diverged")
+        state = _snapshot(state_raw, "failover protected state")
+        if (
+            set(state) != {"schema", "root_id", "config_sha256", "revision", "event_anchor", "operations", "seat_claims"}
+            or state.get("schema") != FAILOVER_PROTECTED_STATE_SCHEMA
+            or state.get("root_id") != self.root_id
+            or state.get("config_sha256") != self.config_sha256
+            or type(state.get("revision")) is not int
+            or int(state["revision"]) < 1
+            or state.get("revision") != anchor.get("revision")
+            or type(state.get("operations")) is not dict
+            or type(state.get("seat_claims")) is not dict
+        ):
+            raise AssignmentFailoverError("failover protected state is invalid")
+        return state
 
-def _create_launch_context(
+    def _write_state(self, state: dict[str, Any]) -> None:
+        current = self._read_state()
+        expected = int(current["revision"]) + 1
+        if state.get("revision") != expected:
+            raise AssignmentFailoverError("failover protected-state revision conflicted")
+        raw = _canonical(state)
+        staged = self.protected_state_path.with_suffix(
+            self.protected_state_path.suffix + ".tmp"
+        )
+        with staged.open("wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        staged.replace(self.protected_state_path)
+        anchor = {
+            "schema": FAILOVER_PROTECTED_ANCHOR_SCHEMA,
+            "root_id": self.root_id,
+            "config_sha256": self.config_sha256,
+            "revision": state["revision"],
+            "state_sha256": hashlib.sha256(raw).hexdigest(),
+        }
+        write_secret(self.credential_target, _canonical(anchor))
+        if self._read_state() != state:
+            raise AssignmentFailoverError("failover protected-state write did not verify")
+
+    def verify_protected_state(self) -> dict[str, Any]:
+        state = self._read_state()
+        config = _snapshot(self._config_path.read_bytes(), "failover root config")
+        _verify_database_id(
+            self.assignment_store_path,
+            "failover_assignment_store_meta_v1",
+            str(config["assignment_store_database_id"]),
+        )
+        _verify_database_id(
+            self.saga_store_path,
+            "failover_saga_store_meta_v1",
+            self.saga_store_database_id,
+        )
+        _verify_event_anchor(self.event_log_path, state["event_anchor"])
+        for operation_id, protected in state["operations"].items():
+            _require_hex64(operation_id, "protected operation id")
+            if type(protected) is not dict:
+                raise AssignmentFailoverError("protected failover operation is invalid")
+            operation = self.saga_store.find_by_receipt(str(protected.get("receipt_sha256", "")))
+            if operation is None:
+                raise AssignmentFailoverError("protected failover operation is absent from the canonical saga")
+            if (
+                operation["operation_id"] != operation_id
+                or not secrets.compare_digest(
+                    _digest(operation["spec"]), str(protected.get("spec_sha256", ""))
+                )
+            ):
+                raise AssignmentFailoverError("protected failover operation binding mismatch")
+            protected_stage = protected.get("stage")
+            if protected_stage not in _STAGE_INDEX or operation["stage"] != protected_stage:
+                raise AssignmentFailoverError("canonical failover saga differs from protected high-water")
+            protected_saga = protected.get("saga_sha256")
+            if protected_saga is not None and not secrets.compare_digest(
+                str(protected_saga), _operation_anchor(operation)
+            ):
+                raise AssignmentFailoverError("canonical failover saga provenance mismatch")
+            for event in protected.get("events", {}).values():
+                _verify_event_anchor(self.event_log_path, event)
+        _verify_database_id(
+            self.claim_store_path,
+            "failover_claim_store_meta_v1",
+            self.claim_store_database_id,
+        )
+        with sqlite3.connect(self.claim_store_path) as connection:
+            for assignment_sha256, protected in state["seat_claims"].items():
+                _require_hex64(assignment_sha256, "protected seat assignment hash")
+                if (
+                    type(protected) is not dict
+                    or protected.get("claim_store_database_id")
+                    != self.claim_store_database_id
+                    or protected.get("status") not in {"reserved", "claimed", "completed"}
+                ):
+                    raise AssignmentFailoverError("protected seat claim is invalid")
+                row = connection.execute(
+                    "SELECT idempotency_key,claim_id,state,receipt_json "
+                    "FROM delivery_claim_v1 WHERE assignment_sha256=?",
+                    (assignment_sha256,),
+                ).fetchone()
+                if row is None:
+                    raise AssignmentFailoverError(
+                        "seat delivery claim store rolled back below protected high-water"
+                    )
+                if (
+                    row[0] != protected.get("idempotency_key")
+                    or row[1] != protected.get("claim_id")
+                ):
+                    raise AssignmentFailoverError("protected seat claim database binding mismatch")
+                if protected["status"] == "completed":
+                    if row[2] != "completed" or row[3] is None:
+                        raise AssignmentFailoverError(
+                            "seat delivery completion rolled back below protected high-water"
+                        )
+                    receipt = _snapshot(bytes(row[3]), "stored seat delivery receipt")
+                    if not secrets.compare_digest(
+                        _digest(receipt), str(protected.get("receipt_sha256", ""))
+                    ):
+                        raise AssignmentFailoverError("protected seat receipt integrity failed")
+                elif protected["status"] == "claimed" and row[2] not in {"claimed", "completed"}:
+                    raise AssignmentFailoverError("protected seat claim state is invalid")
+        return state
+
+    def reserve_operation(self, operation_id: str, receipt_sha256: str, spec_sha256: str) -> bool:
+        state = self._read_state()
+        existing = state["operations"].get(operation_id)
+        exact = {
+            "receipt_sha256": receipt_sha256,
+            "spec_sha256": spec_sha256,
+            "stage": "prepared",
+            "saga_sha256": None,
+            "events": {},
+        }
+        if existing is not None:
+            if existing.get("receipt_sha256") != receipt_sha256 or existing.get("spec_sha256") != spec_sha256:
+                raise FailoverConflictError("protected failover operation conflicts")
+            return False
+        if any(item.get("receipt_sha256") == receipt_sha256 for item in state["operations"].values()):
+            raise FailoverConflictError("protected authorizing receipt was reused")
+        state["operations"][operation_id] = exact
+        state["revision"] += 1
+        self._write_state(state)
+        return True
+
+    def advance_operation(self, operation_id: str, saga_operation: Mapping[str, Any]) -> None:
+        state = self._read_state()
+        operation = state["operations"].get(operation_id)
+        stage = saga_operation.get("stage")
+        if type(operation) is not dict or stage not in _STAGE_INDEX:
+            raise AssignmentFailoverError("protected failover operation is invalid")
+        prior = operation.get("stage")
+        if prior not in _STAGE_INDEX or _STAGE_INDEX[stage] < _STAGE_INDEX[prior]:
+            raise AssignmentFailoverError("protected failover high-water cannot move backward")
+        saga_sha256 = _operation_anchor(saga_operation)
+        if stage == prior and operation.get("saga_sha256") == saga_sha256:
+            return
+        operation["stage"] = stage
+        operation["saga_sha256"] = saga_sha256
+        state["revision"] += 1
+        self._write_state(state)
+
+    def record_event(self, operation_id: str, name: str, result: Mapping[str, Any]) -> None:
+        event = result.get("event") if isinstance(result, Mapping) else None
+        event_data = event.get("data") if type(event) is dict else None
+        expected_type = {
+            "intent": "assignment_failover_intent",
+            "off_rails": "assignment_failover_off_rails",
+        }.get(name)
+        if (
+            expected_type is None
+            or type(event) is not dict
+            or event.get("event_type") != expected_type
+            or type(event_data) is not dict
+            or event_data.get("operation_id") != operation_id
+        ):
+            raise AssignmentFailoverError("failover audit did not return the exact durable event")
+        anchor = {
+            "events_checked": _event_position(self.event_log_path, str(event.get("event_hash", ""))),
+            "head_hash": str(event.get("event_hash", "")),
+        }
+        _verify_event_anchor(self.event_log_path, anchor)
+        state = self._read_state()
+        operation = state["operations"].get(operation_id)
+        if type(operation) is not dict:
+            raise AssignmentFailoverError("protected failover operation is absent")
+        prior = operation["events"].get(name)
+        if prior is not None and prior != anchor:
+            raise AssignmentFailoverError("protected failover event provenance conflicted")
+        if prior == anchor:
+            return
+        operation["events"][name] = anchor
+        state["revision"] += 1
+        self._write_state(state)
+
+    def reserve_seat_claim(
+        self,
+        assignment_sha256: str,
+        *,
+        operation_id: str,
+        idempotency_key: str,
+        claim_id: str,
+    ) -> tuple[dict[str, Any], bool]:
+        state = self._read_state()
+        exact = {
+            "operation_id": operation_id,
+            "idempotency_key": idempotency_key,
+            "claim_id": claim_id,
+            "claim_store_database_id": self.claim_store_database_id,
+            "status": "reserved",
+            "receipt_sha256": None,
+        }
+        existing = state["seat_claims"].get(assignment_sha256)
+        if existing is not None:
+            for field in ("operation_id", "idempotency_key", "claim_store_database_id"):
+                if existing.get(field) != exact[field]:
+                    raise FailoverConflictError("protected seat claim conflicts")
+            return existing, False
+        state["seat_claims"][assignment_sha256] = exact
+        state["revision"] += 1
+        self._write_state(state)
+        return exact, True
+
+    def advance_seat_claim(
+        self,
+        assignment_sha256: str,
+        *,
+        claim_id: str,
+        status: str,
+        receipt_sha256: str | None = None,
+    ) -> None:
+        if status not in {"claimed", "completed"}:
+            raise AssignmentFailoverError("protected seat-claim status is invalid")
+        state = self._read_state()
+        claim = state["seat_claims"].get(assignment_sha256)
+        if type(claim) is not dict or claim.get("claim_id") != claim_id:
+            raise AssignmentFailoverError("protected seat claim binding mismatch")
+        current = claim.get("status")
+        order = {"reserved": 0, "claimed": 1, "completed": 2}
+        if current not in order or order[status] < order[current]:
+            raise AssignmentFailoverError("protected seat-claim high-water moved backward")
+        if status == "completed":
+            _require_hex64(receipt_sha256, "protected seat receipt hash")
+        if current == status:
+            if status == "completed" and claim.get("receipt_sha256") != receipt_sha256:
+                raise AssignmentFailoverError("protected seat receipt hash conflicts")
+            return
+        claim["status"] = status
+        claim["receipt_sha256"] = receipt_sha256
+        state["revision"] += 1
+        self._write_state(state)
+
+def provision_failover_trust_root(
     *,
-    assignment_store: AssignmentStateStore,
+    config_path: str | Path,
+    provisioning_identity: Any,
+    assignment_store_path: str | Path,
     saga_path: str | Path,
     registry_path: str | Path,
-) -> FailoverLaunchContext:
-    """Trusted launcher hook; action APIs accept only the resulting capability."""
-    return FailoverLaunchContext(
-        assignment_store=assignment_store,
-        saga_path=saga_path,
-        registry_path=registry_path,
-        seal=_CONTEXT_SEAL,
+    claim_store_path: str | Path,
+    protected_state_path: str | Path,
+) -> str:
+    """Provision one signed path root and OS-protected failover high-water."""
+    target = Path(config_path).resolve(strict=False)
+    if target.exists():
+        raise FileExistsError("failover trust root is already provisioned")
+    paths = {
+        "assignment_store": Path(assignment_store_path).resolve(strict=True),
+        "saga_store": Path(saga_path).resolve(strict=False),
+        "registry": Path(registry_path).resolve(strict=True),
+        "claim_store": Path(claim_store_path).resolve(strict=False),
+        "protected_state": Path(protected_state_path).resolve(strict=False),
+    }
+    paths["event_log"] = sc_mesh_registry.default_event_log_path(paths["registry"]).resolve(
+        strict=False
     )
+    if len(set(paths.values())) != len(paths):
+        raise ValueError("failover trust-root paths must be distinct")
+    if paths["protected_state"].exists():
+        raise FileExistsError("failover protected state is already provisioned")
+    for name in ("saga_store", "claim_store"):
+        if paths[name].exists():
+            raise FileExistsError(f"failover {name} is already provisioned")
+    verified = sc_mesh_registry.verify_events(event_log_path=paths["event_log"])
+    if verified.get("ok") is not True:
+        raise AssignmentFailoverError("event log is invalid at failover provisioning")
+    root_id = secrets.token_hex(32)
+    database_ids = {name: secrets.token_hex(32) for name in ("assignment_store", "saga_store", "claim_store")}
+    _initialize_database_id(paths["assignment_store"], "failover_assignment_store_meta_v1", database_ids["assignment_store"])
+    _FailoverSagaStore(paths["saga_store"], database_id=database_ids["saga_store"])
+    _initialize_claim_database(paths["claim_store"], database_ids["claim_store"])
+    body = {
+        "schema": FAILOVER_ROOT_SCHEMA,
+        "root_id": root_id,
+        "credential_target": f"SelfConnect/Failover/{root_id}",
+        **{f"{name}_path": str(path) for name, path in paths.items()},
+        **{f"{name}_database_id": value for name, value in database_ids.items()},
+    }
+    signed = _signed(body, provisioning_identity)
+    config_hash = _digest(signed)
+    credential_target = str(body["credential_target"])
+    if read_secret(credential_target) is not None:
+        raise FileExistsError("failover protected state already exists")
+    state = {
+        "schema": FAILOVER_PROTECTED_STATE_SCHEMA,
+        "root_id": root_id,
+        "config_sha256": config_hash,
+        "revision": 1,
+        "event_anchor": {
+            "events_checked": int(verified["events_checked"]),
+            "head_hash": str(verified["head_hash"]),
+        },
+        "operations": {},
+        "seat_claims": {},
+    }
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("xb") as handle:
+        handle.write(_canonical(signed))
+        handle.flush()
+        os.fsync(handle.fileno())
+    state_path = paths["protected_state"]
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    with state_path.open("xb") as handle:
+        state_raw = _canonical(state)
+        handle.write(state_raw)
+        handle.flush()
+        os.fsync(handle.fileno())
+    anchor = {
+        "schema": FAILOVER_PROTECTED_ANCHOR_SCHEMA,
+        "root_id": root_id,
+        "config_sha256": config_hash,
+        "revision": state["revision"],
+        "state_sha256": hashlib.sha256(state_raw).hexdigest(),
+    }
+    write_secret(credential_target, _canonical(anchor))
+    return str(provisioning_identity.public_key_hex)
 
 
-def _require_launch_context(context: Any) -> FailoverLaunchContext:
-    if type(context) is not FailoverLaunchContext or context._seal is not _CONTEXT_SEAL:
-        raise AssignmentFailoverError("trusted immutable failover launch context is required")
+def initialize_failover_runtime() -> None:
+    """Load the one launch-pinned root; no mutable capability is returned."""
+    global _ACTIVE_CONTEXT
+    if _ACTIVE_CONTEXT is not None:
+        return
+    if not _LAUNCH_CONFIG_PATH or not _LAUNCH_PUBLIC_KEY_HEX:
+        raise AssignmentFailoverError("failover launch root is not pinned by the process environment")
+    context = _FailoverLaunchContext(
+        config_path=_LAUNCH_CONFIG_PATH,
+        pinned_public_key_hex=_LAUNCH_PUBLIC_KEY_HEX,
+    )
+    _ACTIVE_CONTEXT = context
+
+
+def _require_launch_context() -> _FailoverLaunchContext:
+    initialize_failover_runtime()
+    context = _ACTIVE_CONTEXT
+    if type(context) is not _FailoverLaunchContext:
+        raise AssignmentFailoverError("verified failover launch context is required")
     if context.assignment_store.path.resolve() != context.assignment_store_path:
         raise AssignmentFailoverError("launch assignment store path drifted")
     if context.saga_store.path.resolve() != context.saga_store_path:
         raise AssignmentFailoverError("launch saga path drifted")
-    verified = sc_mesh_registry.verify_events(event_log_path=context.event_log_path)
-    if verified.get("ok") is not True:
-        raise AssignmentFailoverError("event log failed launch-anchor verification")
-    anchor = context.event_head_anchor
-    if anchor != sc_mesh_registry.EVENT_GENESIS_HASH:
-        events = sc_mesh_registry.load_events(
-            event_log_path=context.event_log_path,
-            limit=max(1, int(verified["events_checked"])),
-        )["events"]
-        if not any(secrets.compare_digest(str(item.get("event_hash", "")), anchor) for item in events):
-            raise AssignmentFailoverError("launch event-head anchor is absent")
+    try:
+        live_config = _snapshot(context._config_path.read_bytes(), "failover root config")
+    except OSError as exc:
+        raise AssignmentFailoverError("failover root config is unavailable") from exc
+    if not secrets.compare_digest(_digest(live_config), context.config_sha256):
+        raise AssignmentFailoverError("failover root config changed after launch")
+    context.verify_protected_state()
     return context
 
 
@@ -213,6 +643,125 @@ def _snapshot(value: Any, label: str, *, require_canonical_wire: bool = True) ->
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def _operation_anchor(operation: Mapping[str, Any]) -> str:
+    fields = (
+        "operation_id",
+        "receipt_sha256",
+        "spec",
+        "stage",
+        "receipt_commit_sha256",
+        "continuity",
+        "replacement_assignment",
+        "delivery_receipt",
+        "created_at",
+    )
+    if not all(field in operation for field in fields):
+        raise AssignmentFailoverError("canonical failover saga record is incomplete")
+    return _digest({field: operation[field] for field in fields})
+
+
+def _require_hex64(value: Any, label: str) -> str:
+    if (
+        type(value) is not str
+        or len(value) != 64
+        or any(ch not in "0123456789abcdef" for ch in value)
+    ):
+        raise AssignmentFailoverError(f"{label} is invalid")
+    return value
+
+
+def _canonical_absolute_path(value: Any, label: str) -> Path:
+    if type(value) is not str or not value:
+        raise AssignmentFailoverError(f"failover {label} path is invalid")
+    candidate = Path(value)
+    resolved = candidate.resolve(strict=False)
+    if not candidate.is_absolute() or str(resolved) != value:
+        raise AssignmentFailoverError(f"failover {label} path is not canonical absolute")
+    return resolved
+
+
+def _initialize_database_id(path: Path, table: str, database_id: str) -> None:
+    _require_hex64(database_id, f"{table} database id")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            f"CREATE TABLE IF NOT EXISTS {table} "
+            "(singleton INTEGER PRIMARY KEY CHECK(singleton=1), database_id TEXT NOT NULL)"
+        )
+        row = connection.execute(
+            f"SELECT database_id FROM {table} WHERE singleton=1"
+        ).fetchone()
+        if row is None:
+            connection.execute(f"INSERT INTO {table} VALUES(1,?)", (database_id,))
+        elif not secrets.compare_digest(str(row[0]), database_id):
+            raise AssignmentFailoverError(f"{table} database id conflicts")
+
+
+def _verify_database_id(path: Path, table: str, expected: str) -> None:
+    try:
+        with sqlite3.connect(path) as connection:
+            row = connection.execute(
+                f"SELECT database_id FROM {table} WHERE singleton=1"
+            ).fetchone()
+    except sqlite3.Error as exc:
+        raise AssignmentFailoverError(f"{table} database identity is absent") from exc
+    if row is None or not secrets.compare_digest(str(row[0]), expected):
+        raise AssignmentFailoverError(f"{table} database identity mismatch")
+
+
+def _initialize_claim_database(path: Path, database_id: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS delivery_claim_v1 (
+                assignment_sha256 TEXT PRIMARY KEY,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                claim_id TEXT NOT NULL UNIQUE,
+                state TEXT NOT NULL CHECK(state IN ('claimed','completed')),
+                receipt_json BLOB,
+                created_at REAL NOT NULL,
+                completed_at REAL
+            )
+            """
+        )
+    _initialize_database_id(path, "failover_claim_store_meta_v1", database_id)
+
+
+def _event_position(path: Path, event_hash: str) -> int:
+    _require_hex64(event_hash, "event anchor hash")
+    try:
+        events = sc_mesh_registry.load_events(
+            event_log_path=path,
+            limit=max(1, int(sc_mesh_registry.verify_events(event_log_path=path)["events_checked"])),
+        )["events"]
+    except Exception as exc:
+        raise AssignmentFailoverError("event log could not be read for provenance") from exc
+    for index, event in enumerate(events, start=1):
+        if secrets.compare_digest(str(event.get("event_hash", "")), event_hash):
+            return index
+    raise AssignmentFailoverError("protected event anchor is absent")
+
+
+def _verify_event_anchor(path: Path, anchor: Any) -> None:
+    if type(anchor) is not dict or set(anchor) != {"events_checked", "head_hash"}:
+        raise AssignmentFailoverError("protected event anchor is invalid")
+    count = anchor.get("events_checked")
+    head = anchor.get("head_hash")
+    if type(count) is not int or count < 0:
+        raise AssignmentFailoverError("protected event anchor count is invalid")
+    _require_hex64(head, "protected event anchor hash")
+    verified = sc_mesh_registry.verify_events(event_log_path=path)
+    if verified.get("ok") is not True or int(verified.get("events_checked", -1)) < count:
+        raise AssignmentFailoverError("event log rolled back below protected provenance")
+    if count == 0:
+        if head != sc_mesh_registry.EVENT_GENESIS_HASH:
+            raise AssignmentFailoverError("event genesis anchor is invalid")
+        return
+    if _event_position(path, str(head)) != count:
+        raise AssignmentFailoverError("protected event provenance is absent or reordered")
 
 
 def _finite(value: float | None, name: str) -> float:
@@ -297,11 +846,11 @@ def _verify_seat_actuation_proof(
     return snap, body
 
 
-class FailoverSagaStore:
+class _FailoverSagaStore:
     """SQLite saga/outbox keyed by the authorizing receipt and exact intent."""
 
-    def __init__(self, path: str | Path) -> None:
-        self.path = Path(path)
+    def __init__(self, path: str | Path, *, database_id: str | None = None) -> None:
+        self.path = Path(path).resolve(strict=False)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as connection:
             connection.executescript(
@@ -324,6 +873,13 @@ class FailoverSagaStore:
                     updated_at REAL NOT NULL
                 );
                 """
+            )
+        if database_id is not None:
+            _initialize_database_id(
+                self.path, "failover_saga_store_meta_v1", database_id
+            )
+            _verify_database_id(
+                self.path, "failover_saga_store_meta_v1", database_id
             )
 
     def _connect(self) -> sqlite3.Connection:
@@ -461,16 +1017,24 @@ class FailoverSagaStore:
         return [self.load(str(row[0])) for row in rows]
 
 
-def list_pending_failovers(path: str | Path) -> list[dict[str, Any]]:
-    """List durable intents which an owner can reconcile after restart."""
-    return FailoverSagaStore(path).pending()
+def list_pending_failovers() -> list[dict[str, Any]]:
+    """List intents only from the launch-pinned canonical saga."""
+    return _require_launch_context().saga_store.pending()
 
 
-class SeatDeliveryClaimStore:
+class _SeatDeliveryClaimStore:
     """Seat-side claim/dedupe authority committed before remote actuation."""
 
-    def __init__(self, path: str | Path) -> None:
-        self.path = Path(path).resolve(strict=False)
+    def __init__(
+        self,
+        context: _FailoverLaunchContext,
+        *,
+        database_id: str | None = None,
+    ) -> None:
+        if type(context) is not _FailoverLaunchContext:
+            raise TypeError("seat delivery claims require the verified failover launch root")
+        self._context = context
+        self.path = context.claim_store_path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as connection:
             connection.executescript(
@@ -486,6 +1050,13 @@ class SeatDeliveryClaimStore:
                 );
                 """
             )
+        if database_id is not None:
+            _initialize_database_id(
+                self.path, "failover_claim_store_meta_v1", database_id
+            )
+        expected = context.claim_store_database_id
+        _verify_database_id(self.path, "failover_claim_store_meta_v1", expected)
+        self.database_id = expected
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5.0, isolation_level=None)
@@ -518,6 +1089,14 @@ class SeatDeliveryClaimStore:
         )
         assignment_hash = _digest(assignment)
         idempotency_key = f"failover-delivery:{operation_id}"
+        proposed_claim_id = secrets.token_hex(32)
+        protected_claim, newly_reserved = self._context.reserve_seat_claim(
+            assignment_hash,
+            operation_id=operation_id,
+            idempotency_key=idempotency_key,
+            claim_id=proposed_claim_id,
+        )
+        claim_id = str(protected_claim["claim_id"])
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -526,23 +1105,43 @@ class SeatDeliveryClaimStore:
                 (assignment_hash,),
             ).fetchone()
             if row is not None:
-                if row[0] != idempotency_key:
+                if row[0] != idempotency_key or row[1] != claim_id:
                     connection.rollback()
                     raise FailoverConflictError("delivery assignment has a conflicting idempotency key")
                 if row[2] == "completed" and row[3] is not None:
                     receipt = _snapshot(bytes(row[3]), "stored seat delivery receipt")
                     connection.commit()
+                    receipt_hash = _digest(receipt)
+                    if protected_claim.get("status") == "completed" and not secrets.compare_digest(
+                        str(protected_claim.get("receipt_sha256", "")), receipt_hash
+                    ):
+                        raise AssignmentFailoverError("protected completed seat receipt conflicts")
+                    self._context.advance_seat_claim(
+                        assignment_hash,
+                        claim_id=claim_id,
+                        status="completed",
+                        receipt_sha256=receipt_hash,
+                    )
                     return receipt
                 connection.rollback()
                 raise AssignmentFailoverError(
                     "seat delivery claim is ambiguous; second actuation refused"
                 )
-            claim_id = secrets.token_hex(32)
+            if not newly_reserved:
+                connection.rollback()
+                raise AssignmentFailoverError(
+                    "seat delivery claim store rolled back below protected high-water"
+                )
             connection.execute(
                 "INSERT INTO delivery_claim_v1 VALUES(?,?,?,'claimed',NULL,?,NULL)",
                 (assignment_hash, idempotency_key, claim_id, time.time()),
             )
             connection.commit()
+        self._context.advance_seat_claim(
+            assignment_hash,
+            claim_id=claim_id,
+            status="claimed",
+        )
 
         claim_body = {
             "schema": "selfconnect-seat-delivery-claim-v1",
@@ -551,6 +1150,8 @@ class SeatDeliveryClaimStore:
             "operation_id": operation_id,
             "replacement_assignment_sha256": assignment_hash,
             "continuity_sha256": _digest(continuity),
+            "failover_root_id": self._context.root_id,
+            "claim_store_database_id": self.database_id,
         }
         claim = {
             **claim_body,
@@ -574,6 +1175,8 @@ class SeatDeliveryClaimStore:
             delivery_claim_id=claim_id,
             delivery_idempotency_key=idempotency_key,
             delivery_claim_commit_sha256=claim["claim_commit_sha256"],
+            failover_root_id=self._context.root_id,
+            claim_store_database_id=self.database_id,
             actuation_proof=verified_proof,
             result_sha256=result_hash,
             delivered_at=(
@@ -594,9 +1197,20 @@ class SeatDeliveryClaimStore:
                 connection.rollback()
                 raise AssignmentFailoverError("seat delivery claim completion conflicted")
             connection.commit()
+        self._context.advance_seat_claim(
+            assignment_hash,
+            claim_id=claim_id,
+            status="completed",
+            receipt_sha256=_digest(receipt),
+        )
         if after_commit is not None:
             after_commit()
         return receipt
+
+
+def open_seat_delivery_claim_store() -> _SeatDeliveryClaimStore:
+    """Open only the claim store pinned by the verified process launch root."""
+    return _SeatDeliveryClaimStore(_require_launch_context())
 
 
 def _create_delivery_receipt(
@@ -608,6 +1222,8 @@ def _create_delivery_receipt(
     delivery_claim_id: str,
     delivery_idempotency_key: str,
     delivery_claim_commit_sha256: str,
+    failover_root_id: str,
+    claim_store_database_id: str,
     actuation_proof: Mapping[str, Any],
     result_sha256: str,
     delivered_at: float | None = None,
@@ -641,6 +1257,8 @@ def _create_delivery_receipt(
         "delivery_claim_id": delivery_claim_id,
         "delivery_idempotency_key": delivery_idempotency_key,
         "delivery_claim_commit_sha256": delivery_claim_commit_sha256,
+        "failover_root_id": failover_root_id,
+        "claim_store_database_id": claim_store_database_id,
         "actuation_proof": _snapshot(
             actuation_proof,
             "seat actuation proof",
@@ -660,6 +1278,8 @@ def _verify_delivery_receipt(
     continuity: Mapping[str, Any],
     assignment: Mapping[str, Any],
     replacement: Mapping[str, Any],
+    failover_root_id: str,
+    claim_store_database_id: str,
     now: float,
     require_fresh: bool,
 ) -> dict[str, Any]:
@@ -678,6 +1298,8 @@ def _verify_delivery_receipt(
         "terminal_tab_identity_sha256": assignment["terminal_tab_identity_sha256"],
         "response_channel_sha256": assignment["response_channel_sha256"],
         "delivery_idempotency_key": f"failover-delivery:{operation_id}",
+        "failover_root_id": failover_root_id,
+        "claim_store_database_id": claim_store_database_id,
     }
     expected_fields = set(exact) | {
         "actuation_proof",
@@ -709,6 +1331,8 @@ def _verify_delivery_receipt(
         "operation_id": operation_id,
         "replacement_assignment_sha256": body["replacement_assignment_sha256"],
         "continuity_sha256": body["continuity_sha256"],
+        "failover_root_id": body["failover_root_id"],
+        "claim_store_database_id": body["claim_store_database_id"],
     }
     claim["claim_commit_sha256"] = _digest(claim)
     if not secrets.compare_digest(
@@ -767,7 +1391,6 @@ def failover_assignment(
     assignment: Any,
     receipt: Any,
     *,
-    context: FailoverLaunchContext,
     role: str,
     mesh: str,
     coordinator_identity: Any,
@@ -789,7 +1412,7 @@ def failover_assignment(
     **receipt_verification: Any,
 ) -> dict[str, Any]:
     """Run or resume one exact receipt-authorized failover saga."""
-    context = _require_launch_context(context)
+    context = _require_launch_context()
     store = context.assignment_store
     saga = context.saga_store
     registry_path = context.registry_path
@@ -903,11 +1526,13 @@ def failover_assignment(
             replacement_response_receiver_public_key_hex
         ),
         "receipt_verification": recovery_verification,
-        "launch_event_head_anchor": context.event_head_anchor,
+        "failover_root_id": context.root_id,
+        "saga_store_database_id": context.saga_store_database_id,
         "launch_event_log_path_sha256": hashlib.sha256(
             str(context.event_log_path).encode("utf-8")
         ).hexdigest(),
     }
+    operation_id = _digest(spec)
     lock_path = saga.path.with_name(f"{saga.path.name}.run.lock")
     with FileLock(lock_path):
         preverified: dict[str, Any] | None = None
@@ -933,8 +1558,16 @@ def failover_assignment(
                 raise FailoverConflictError(
                     "receipt was consumed outside a durable failover saga"
                 )
+        protected_created = context.reserve_operation(
+            operation_id,
+            receipt_hash,
+            operation_id,
+        )
         operation, created = saga.prepare(spec)
+        if created is not protected_created:
+            raise AssignmentFailoverError("protected failover reservation and canonical saga differ")
         operation_id = operation["operation_id"]
+        context.advance_operation(operation_id, operation)
         try:
             if created:
                 _checkpoint(stage_hook, "after_saga_prepare", operation)
@@ -1026,6 +1659,7 @@ def failover_assignment(
                     "authorized",
                     receipt_commit_sha256=commit_hash,
                 )
+                context.advance_operation(operation_id, operation)
 
             common_audit = {
                 "operation_id": operation_id,
@@ -1053,8 +1687,10 @@ def failover_assignment(
                 )
                 if not isinstance(result, Mapping) or result.get("ok") is not True:
                     raise AssignmentFailoverError("strict failover intent audit failed")
+                context.record_event(operation_id, "intent", result)
                 _checkpoint(stage_hook, "after_intent_audit", operation)
                 operation = saga.advance(operation_id, "authorized", "intent_audited")
+                context.advance_operation(operation_id, operation)
 
             if operation["stage"] == "intent_audited":
                 transition = registry_transition(
@@ -1071,6 +1707,7 @@ def failover_assignment(
                     raise AssignmentFailoverError(f"exact old-seat registry CAS failed: {error}")
                 _checkpoint(stage_hook, "after_registry_cas", operation)
                 operation = saga.advance(operation_id, "intent_audited", "off_rails")
+                context.advance_operation(operation_id, operation)
 
             if operation["stage"] == "off_rails":
                 result = audit_append(
@@ -1088,8 +1725,10 @@ def failover_assignment(
                 )
                 if not isinstance(result, Mapping) or result.get("ok") is not True:
                     raise AssignmentFailoverError("strict off-rails audit failed")
+                context.record_event(operation_id, "off_rails", result)
                 _checkpoint(stage_hook, "after_off_rails_audit", operation)
                 operation = saga.advance(operation_id, "off_rails", "off_rails_audited")
+                context.advance_operation(operation_id, operation)
 
             if operation["stage"] == "off_rails_audited":
                 continuity_body = {
@@ -1143,6 +1782,7 @@ def failover_assignment(
                     continuity_json=continuity,
                     replacement_assignment_json=replacement_assignment,
                 )
+                context.advance_operation(operation_id, operation)
                 _checkpoint(stage_hook, "after_assignment_build", operation)
 
             if operation["stage"] == "assignment_built":
@@ -1152,6 +1792,7 @@ def failover_assignment(
                 store.ensure_assignment("issued", replacement_assignment)
                 _checkpoint(stage_hook, "after_assignment_issue", operation)
                 operation = saga.advance(operation_id, "assignment_built", "assignment_issued")
+                context.advance_operation(operation_id, operation)
 
             if operation["stage"] == "assignment_issued":
                 continuity = operation["continuity"]
@@ -1179,6 +1820,8 @@ def failover_assignment(
                     continuity=continuity,
                     assignment=replacement_assignment,
                     replacement=replacement,
+                    failover_root_id=context.root_id,
+                    claim_store_database_id=context.claim_store_database_id,
                     now=current,
                     require_fresh=True,
                 )
@@ -1188,6 +1831,7 @@ def failover_assignment(
                     "delivered",
                     delivery_receipt_json=delivery,
                 )
+                context.advance_operation(operation_id, operation)
                 _checkpoint(stage_hook, "after_delivery", operation)
 
             if operation["stage"] != "delivered":
@@ -1203,6 +1847,8 @@ def failover_assignment(
                 continuity=continuity,
                 assignment=replacement_assignment,
                 replacement=replacement,
+                failover_root_id=context.root_id,
+                claim_store_database_id=context.claim_store_database_id,
                 now=current,
                 require_fresh=False,
             )
@@ -1230,12 +1876,14 @@ def failover_assignment(
 __all__ = [
     "CONTINUITY_SCHEMA",
     "DELIVERY_RECEIPT_SCHEMA",
+    "FAILOVER_ROOT_CONFIG_ENV",
+    "FAILOVER_ROOT_PUBLIC_KEY_ENV",
     "FAILOVER_STATES",
     "AssignmentFailoverError",
     "FailoverConflictError",
-    "FailoverLaunchContext",
-    "FailoverSagaStore",
-    "SeatDeliveryClaimStore",
     "failover_assignment",
+    "initialize_failover_runtime",
     "list_pending_failovers",
+    "open_seat_delivery_claim_store",
+    "provision_failover_trust_root",
 ]
