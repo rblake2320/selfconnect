@@ -37,8 +37,20 @@ def _digest(value):
 def _run(*, checkouts, route, ports, evidence_signer=_SIGNER, evidence_path=None):
     if evidence_path is None:
         evidence_path = checkouts[0].worktree.parent / "ceremony-evidence.json"
-    return ceremony.run_live_ceremony(
-        checkouts=checkouts,
+    checkout_evidence = ceremony.verify_reviewed_checkouts(checkouts)
+    module_files = {item["component"]: item["module_file"] for item in checkout_evidence}
+    port_evidence = [
+        {
+            "port": port,
+            "component": component,
+            "symbol": symbol,
+            "module_file": module_files[component],
+        }
+        for port, (component, symbol) in ceremony._PORT_ENTRYPOINTS.items()
+    ]
+    return ceremony._run_verified_ceremony(
+        checkout_evidence=checkout_evidence,
+        port_evidence=port_evidence,
         route=route,
         ports=ports,
         evidence_signer=evidence_signer,
@@ -165,6 +177,92 @@ def route():
 @pytest.fixture
 def pins(tmp_path, monkeypatch):
     items = []
+    sources = {
+        "runtime": """
+import hashlib
+import json
+
+class LiveCeremonyProtocolError(ValueError):
+    pass
+
+_sequences = {}
+
+def _digest(value):
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("ascii")
+    return hashlib.sha256(raw).hexdigest()
+
+def _assignment(case, birth_id, generation, key_id, epoch):
+    return {
+        "assignment_id": f"assignment-{case}-{birth_id}",
+        "payload": f"signed inline payload for {case}",
+        "receiver_birth_id": birth_id,
+        "receiver_generation": generation,
+        "receiver_key_id": key_id,
+        "receiver_seat_epoch": epoch,
+    }
+
+def live_ceremony_dispatch(case, trigger):
+    return {
+        "assignment": _assignment(case, "seat-old", 3, "old-key", "old-epoch"),
+        "submit_result": {
+            "ok": True, "state": "acknowledged", "delivery_verified": True,
+            "peer_acknowledged": True, "decision": "accepted", "trigger": trigger,
+            "execution_mode": "live", "dry_run": False, "stub": False,
+        },
+    }
+
+def live_ceremony_seat_transition(assignment, state):
+    key = assignment["assignment_id"]
+    sequence = _sequences.get(key, 0) + 1
+    _sequences[key] = sequence
+    return {"assignment_id": key, "state": state, "sequence": sequence, "nonce": f"receipt-{key}-{sequence}"}
+
+def live_ceremony_replacement_transition(assignment, state):
+    return live_ceremony_seat_transition(assignment, state)
+
+def live_ceremony_acknowledge_receipt(receipt):
+    return {"assignment_id": receipt["assignment_id"], "sequence": receipt["sequence"], "receipt_sha256": _digest(receipt)}
+""",
+        "trust_pipe": """
+class LiveCeremonyProtocolError(ValueError):
+    pass
+
+def live_ceremony_verify_receipt(assignment, receipt):
+    if receipt["assignment_id"] != assignment["assignment_id"]:
+        raise LiveCeremonyProtocolError("wrong assignment")
+    return dict(receipt)
+
+def live_ceremony_negative_probe(probe):
+    raise LiveCeremonyProtocolError(f"{probe} rejected")
+""",
+        "failover": """
+import hashlib
+import json
+
+class LiveCeremonyProtocolError(ValueError):
+    pass
+
+def _digest(value):
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("ascii")
+    return hashlib.sha256(raw).hexdigest()
+
+def live_ceremony_failover(assignment, receipt):
+    replacement = {
+        "assignment_id": f"assignment-{receipt['state']}-seat-new",
+        "payload": f"signed inline payload for {receipt['state']}",
+        "receiver_birth_id": "seat-new", "receiver_generation": 4,
+        "receiver_key_id": "new-key", "receiver_seat_epoch": "new-epoch",
+    }
+    return {
+        "ok": True, "stage": "delivered", "operation_id": f"failover-{assignment['assignment_id']}",
+        "old_seat": {"birth_id": "seat-old", "generation": 3, "seat_key_id": "old-key", "seat_epoch": "old-epoch"},
+        "replacement_seat": {"birth_id": "seat-new", "generation": 4, "seat_key_id": "new-key", "seat_epoch": "new-epoch"},
+        "replacement_assignment": replacement,
+        "delivery_receipt": {"replacement_assignment_sha256": _digest(replacement)},
+        "process_action": "none",
+    }
+""",
+    }
     for component, filename, char in (
         ("runtime", "sc_assignment_runtime.py", "a"),
         ("trust_pipe", "sc_seat_pipe.py", "b"),
@@ -172,7 +270,7 @@ def pins(tmp_path, monkeypatch):
     ):
         path = tmp_path / component
         path.mkdir()
-        (path / filename).write_text(f"COMPONENT = {component!r}\n", encoding="utf-8")
+        (path / filename).write_text(sources[component], encoding="utf-8")
         items.append(ceremony.ReviewedCheckout(component, path, char * 40))
 
     monkeypatch.setattr(ceremony.os, "name", "nt")
@@ -185,24 +283,6 @@ def pins(tmp_path, monkeypatch):
         raise AssertionError(args)
 
     monkeypatch.setattr(ceremony, "_git", git)
-    module_paths = {
-        item.component: (item.worktree / ceremony._REQUIRED_COMPONENTS[item.component]).resolve() for item in items
-    }
-    callback_components = {
-        "dispatch": "runtime",
-        "transition": "runtime",
-        "verify": "trust_pipe",
-        "acknowledge": "runtime",
-        "failover": "failover",
-        "negative": "runtime",
-        "<lambda>": "runtime",
-        "gap": "runtime",
-    }
-    monkeypatch.setattr(
-        ceremony,
-        "_callable_module_file",
-        lambda callback: module_paths[callback_components[callback.__name__]],
-    )
     monkeypatch.setattr(ceremony, "_apply_private_dacl", lambda _path: None)
     return items
 
@@ -447,6 +527,10 @@ def test_signed_bundle_pin_tampering_and_expiry_reject(route, pins):
     forged["body"]["pinned_shas"]["runtime"] = "f" * 40
     with pytest.raises(ceremony.CeremonyError, match="pinned SHA binding"):
         ceremony.verify_evidence_bundle(forged, trust=_TRUST)
+    forged = deepcopy(bundle)
+    forged["body"]["port_bindings"][0]["symbol"] = "caller_stub"
+    with pytest.raises(ceremony.CeremonyError, match="port binding mismatch"):
+        ceremony.verify_evidence_bundle(forged, trust=_TRUST)
     expires = datetime.strptime(bundle["body"]["expires_at_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     with pytest.raises(ceremony.CeremonyError, match="outside its validity window"):
         ceremony.verify_evidence_bundle(bundle, trust=_TRUST, now=expires + timedelta(seconds=6))
@@ -505,19 +589,102 @@ def test_dacl_failure_leaves_no_evidence(route, pins, monkeypatch):
     assert not destination.exists()
 
 
-def test_port_outside_exact_imported_module_rejects_before_evidence(route, pins, monkeypatch):
-    destination = pins[0].worktree.parent / "wrong-port-evidence.json"
-    original = ceremony._callable_module_file
+def test_public_harness_fetches_exact_pinned_symbols_and_constructs_ports(route, pins):
+    destination = pins[0].worktree.parent / "public-evidence.json"
+    bundle = ceremony.run_live_ceremony(
+        checkouts=pins,
+        route=route,
+        evidence_signer=_SIGNER,
+        evidence_path=destination,
+    )
+    bindings = bundle["body"]["port_bindings"]
+    assert [item["symbol"] for item in bindings] == [
+        ceremony._PORT_ENTRYPOINTS[port][1] for port in ceremony._PORT_NAMES
+    ]
+    module_files = {
+        item.component: str((item.worktree / ceremony._REQUIRED_COMPONENTS[item.component]).resolve()) for item in pins
+    }
+    assert all(item["module_file"] == module_files[item["component"]] for item in bindings)
+    assert bundle["body"]["pinned_shas"] == {item.component: item.commit_sha for item in pins}
+    assert destination.exists()
 
-    def origin(callback):
-        if callback.__name__ == "dispatch":
-            return Path(__file__).resolve()
-        return original(callback)
 
-    monkeypatch.setattr(ceremony, "_callable_module_file", origin)
-    with pytest.raises(ceremony.CeremonyError, match="not bound to its pinned module: dispatch"):
-        _run(checkouts=pins, route=route, ports=Driver().ports(), evidence_path=destination)
+def test_stub_module_missing_production_entrypoint_fails_before_action(route, pins):
+    runtime_path = pins[0].worktree / "sc_assignment_runtime.py"
+    runtime_path.write_text(
+        runtime_path.read_text(encoding="utf-8").replace(
+            "def live_ceremony_dispatch", "def stub_dispatch_not_a_production_entrypoint"
+        ),
+        encoding="utf-8",
+    )
+    destination = pins[0].worktree.parent / "missing-entrypoint.json"
+    with pytest.raises(ceremony.CeremonyError, match="lacks production entry point: live_ceremony_dispatch"):
+        ceremony.run_live_ceremony(
+            checkouts=pins,
+            route=route,
+            evidence_signer=_SIGNER,
+            evidence_path=destination,
+        )
     assert not destination.exists()
+
+
+def test_pinned_module_dry_run_marker_fails_before_evidence(route, pins):
+    runtime_path = pins[0].worktree / "sc_assignment_runtime.py"
+    runtime_path.write_text(
+        runtime_path.read_text(encoding="utf-8").replace('"execution_mode": "live"', '"execution_mode": "dry-run"'),
+        encoding="utf-8",
+    )
+    destination = pins[0].worktree.parent / "module-dry-run.json"
+    with pytest.raises(ceremony.CeremonyError, match="authenticate assignment processing"):
+        ceremony.run_live_ceremony(
+            checkouts=pins,
+            route=route,
+            evidence_signer=_SIGNER,
+            evidence_path=destination,
+        )
+    assert not destination.exists()
+
+
+def test_wrapped_partial_callable_and_fake_port_bypasses_reject(route, pins):
+    import functools
+
+    evidence, modules = ceremony._verified_reviewed_components(pins)
+    runtime = modules["runtime"]
+    original = runtime.live_ceremony_dispatch
+
+    def stub(*_args):
+        return {"stub": True}
+
+    attempts = []
+    original.__wrapped__ = stub
+    attempts.append(original)
+
+    @functools.wraps(original)
+    def wrapped(*args, **kwargs):
+        return stub(*args, **kwargs)
+
+    attempts.extend((wrapped, functools.partial(stub)))
+
+    class CallableStub:
+        __wrapped__ = original
+
+        def __call__(self, *_args, **_kwargs):
+            return {"stub": True}
+
+    attempts.append(CallableStub())
+    for bypass in attempts:
+        runtime.live_ceremony_dispatch = bypass
+        with pytest.raises(ceremony.CeremonyError, match="not a direct pinned-module function"):
+            ceremony._build_ceremony_ports(modules, evidence)
+
+    with pytest.raises(TypeError, match="unexpected keyword argument 'ports'"):
+        ceremony.run_live_ceremony(
+            checkouts=pins,
+            route=route,
+            evidence_signer=_SIGNER,
+            evidence_path=pins[0].worktree.parent / "fake-ports.json",
+            ports=Driver().ports(),
+        )
 
 
 @pytest.mark.parametrize(
@@ -544,7 +711,7 @@ def test_authority_surface_has_no_screen_or_postmessage_inputs():
     import inspect
 
     parameters = set(inspect.signature(ceremony.run_live_ceremony).parameters)
-    assert parameters == {"checkouts", "route", "ports", "evidence_signer", "evidence_path"}
+    assert parameters == {"checkouts", "route", "evidence_signer", "evidence_path"}
     names = {str(name).lower() for name in ceremony.run_live_ceremony.__code__.co_names}
     assert all(term not in names for term in ("uia", "ocr", "composer", "postmessage"))
     assert len(ceremony.missing_live_prerequisites()) == 8

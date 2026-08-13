@@ -46,6 +46,20 @@ _PORT_NAMES = (
     "replacement_transition",
     "negative_probe",
 )
+_PORT_ENTRYPOINTS = {
+    "dispatch": ("runtime", "live_ceremony_dispatch"),
+    "seat_transition": ("runtime", "live_ceremony_seat_transition"),
+    "verify_receipt": ("trust_pipe", "live_ceremony_verify_receipt"),
+    "acknowledge_receipt": ("runtime", "live_ceremony_acknowledge_receipt"),
+    "failover": ("failover", "live_ceremony_failover"),
+    "replacement_transition": ("runtime", "live_ceremony_replacement_transition"),
+    "negative_probe": ("trust_pipe", "live_ceremony_negative_probe"),
+}
+_PROTOCOL_ERROR_ENTRYPOINTS = {
+    "runtime": "LiveCeremonyProtocolError",
+    "trust_pipe": "LiveCeremonyProtocolError",
+    "failover": "LiveCeremonyProtocolError",
+}
 _TRIGGERS = ("blocked", "rejected")
 _NEGATIVE_PROBES = (
     "wrong_seat",
@@ -260,8 +274,9 @@ def verify_evidence_bundle(
     bound = {item.get("port"): item for item in port_bindings if isinstance(item, Mapping)}
     if set(bound) != set(_PORT_NAMES) or any(
         item.get("component") not in _REQUIRED_COMPONENTS
+        or (item.get("component"), item.get("symbol")) != _PORT_ENTRYPOINTS[port]
         or item.get("module_file") != module_files.get(item.get("component"))
-        for item in bound.values()
+        for port, item in bound.items()
     ):
         raise CeremonyError("evidence port binding mismatch")
     if body.get("execution_mode") != "live" or body.get("dry_run") is not False or body.get("stub") is not False:
@@ -325,35 +340,59 @@ def _load_reviewed_module(checkout: ReviewedCheckout) -> tuple[Any, Path]:
     return module, actual
 
 
-def _callable_module_file(callback: Callable[..., Any]) -> Path:
-    target = inspect.unwrap(callback)
-    if inspect.ismethod(target):
-        target = target.__func__
-    module = inspect.getmodule(target)
-    origin = getattr(module, "__file__", None)
-    source = inspect.getsourcefile(target)
-    if not isinstance(origin, str) or not origin or not isinstance(source, str) or not source:
-        raise CeremonyError("ceremony port has no importable module origin")
-    resolved = Path(origin).resolve()
-    if Path(source).resolve() != resolved:
-        raise CeremonyError("ceremony port source/module origin mismatch")
-    return resolved
+def _direct_function(module: Any, symbol_name: str, module_file: Path) -> Callable[..., Any]:
+    try:
+        symbol = getattr(module, symbol_name)
+    except AttributeError as exc:
+        raise CeremonyError(f"reviewed module lacks production entry point: {symbol_name}") from exc
+    if (
+        not inspect.isfunction(symbol)
+        or getattr(symbol, "__module__", None) != module.__name__
+        or hasattr(symbol, "__wrapped__")
+        or Path(symbol.__code__.co_filename).resolve() != module_file
+    ):
+        raise CeremonyError(f"production entry point is not a direct pinned-module function: {symbol_name}")
+    return symbol
 
 
-def verify_port_bindings(
-    ports: CeremonyPorts,
+def _build_ceremony_ports(
+    modules: Mapping[str, Any],
     checkout_evidence: Sequence[Mapping[str, str]],
-) -> list[dict[str, str]]:
-    """Bind every callable to the exact module imported from a reviewed SHA."""
-    expected = {item["component"]: Path(item["module_file"]).resolve() for item in checkout_evidence}
+) -> tuple[CeremonyPorts, list[dict[str, str]]]:
+    """Fetch fixed production symbols from freshly imported pinned modules."""
+    module_files = {item["component"]: Path(item["module_file"]).resolve() for item in checkout_evidence}
+    callbacks: dict[str, Callable[..., Any]] = {}
+    bindings: dict[str, str] = {}
     evidence = []
-    for name in _PORT_NAMES:
-        component = ports.bindings[name]
-        actual = _callable_module_file(getattr(ports, name))
-        if actual != expected[component]:
-            raise CeremonyError(f"ceremony port is not bound to its pinned module: {name}")
-        evidence.append({"port": name, "component": component, "module_file": str(actual)})
-    return evidence
+    for port, (component, symbol_name) in _PORT_ENTRYPOINTS.items():
+        callback = _direct_function(modules[component], symbol_name, module_files[component])
+        callbacks[port] = callback
+        bindings[port] = component
+        evidence.append(
+            {
+                "port": port,
+                "component": component,
+                "symbol": symbol_name,
+                "module_file": str(module_files[component]),
+            }
+        )
+    errors = []
+    for component, symbol_name in _PROTOCOL_ERROR_ENTRYPOINTS.items():
+        try:
+            error = getattr(modules[component], symbol_name)
+        except AttributeError as exc:
+            raise CeremonyError(f"reviewed module lacks protocol error: {component}.{symbol_name}") from exc
+        if (
+            not isinstance(error, type)
+            or not issubclass(error, Exception)
+            or error in {Exception, RuntimeError, NotImplementedError, AttributeError}
+            or error.__module__ != modules[component].__name__
+            or not isinstance(inspect.getsourcefile(error), str)
+            or Path(inspect.getsourcefile(error)).resolve() != module_files[component]
+        ):
+            raise CeremonyError(f"reviewed module protocol error is invalid: {component}.{symbol_name}")
+        errors.append(error)
+    return CeremonyPorts(**callbacks, protocol_errors=tuple(errors), bindings=bindings), evidence
 
 
 def _apply_private_dacl(path: Path) -> None:
@@ -396,14 +435,16 @@ def persist_evidence_bundle(bundle: Mapping[str, Any], path: Path) -> Path:
     return destination
 
 
-def verify_reviewed_checkouts(checkouts: Sequence[ReviewedCheckout]) -> list[dict[str, str]]:
-    """Require Windows, canonical components, clean SHAs, and imported origins."""
+def _verified_reviewed_components(
+    checkouts: Sequence[ReviewedCheckout],
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
     if os.name != "nt":
         raise CeremonyError("live ceremony is Windows-only")
     by_component = {item.component: item for item in checkouts}
     if len(checkouts) != len(_REQUIRED_COMPONENTS) or set(by_component) != set(_REQUIRED_COMPONENTS):
         raise CeremonyError("runtime, pipe/trust, and failover reviewed checkouts are required")
     evidence = []
+    modules = {}
     for component in _REQUIRED_COMPONENTS:
         checkout = by_component[component]
         if not checkout.worktree.is_dir():
@@ -413,7 +454,8 @@ def verify_reviewed_checkouts(checkouts: Sequence[ReviewedCheckout]) -> list[dic
             raise CeremonyError(f"reviewed checkout SHA mismatch: {component}")
         if _git(checkout.worktree, "status", "--porcelain"):
             raise CeremonyError(f"reviewed checkout is dirty: {component}")
-        _module, module_file = _load_reviewed_module(checkout)
+        module, module_file = _load_reviewed_module(checkout)
+        modules[component] = module
         evidence.append(
             {
                 "component": component,
@@ -422,6 +464,12 @@ def verify_reviewed_checkouts(checkouts: Sequence[ReviewedCheckout]) -> list[dic
                 "module_file": str(module_file),
             }
         )
+    return evidence, modules
+
+
+def verify_reviewed_checkouts(checkouts: Sequence[ReviewedCheckout]) -> list[dict[str, str]]:
+    """Require Windows, canonical components, clean SHAs, and imported origins."""
+    evidence, _modules = _verified_reviewed_components(checkouts)
     return evidence
 
 
@@ -554,24 +602,18 @@ def _run_trigger_case(ports: CeremonyPorts, route: ExactRoute, trigger: str) -> 
     }
 
 
-def run_live_ceremony(
+def _run_verified_ceremony(
     *,
-    checkouts: Sequence[ReviewedCheckout],
+    checkout_evidence: Sequence[Mapping[str, str]],
+    port_evidence: Sequence[Mapping[str, str]],
     route: ExactRoute,
     ports: CeremonyPorts,
     evidence_signer: EvidenceSigner,
     evidence_path: Path,
 ) -> dict[str, Any]:
-    """Run both terminal-failure paths and fixed adversarial probes.
-
-    The caller must supply ports bound to reviewed production APIs.  UIA, OCR,
-    composer text, HWND/PID/title observations, and PostMessage queue acceptance
-    are intentionally absent from the authority surface.
-    """
+    """Execute after pinned modules and their direct symbols are verified."""
     if not isinstance(evidence_signer, EvidenceSigner):
         raise TypeError("a pinned coordinator evidence signer is required")
-    checkout_evidence = verify_reviewed_checkouts(checkouts)
-    port_evidence = verify_port_bindings(ports, checkout_evidence)
     cases = [_run_trigger_case(ports, route, trigger) for trigger in _TRIGGERS]
     rejected = []
     for probe in _NEGATIVE_PROBES:
@@ -643,12 +685,37 @@ def run_live_ceremony(
     return bundle
 
 
+def run_live_ceremony(
+    *,
+    checkouts: Sequence[ReviewedCheckout],
+    route: ExactRoute,
+    evidence_signer: EvidenceSigner,
+    evidence_path: Path,
+) -> dict[str, Any]:
+    """Load pinned modules, fetch fixed production symbols, and run the ceremony.
+
+    No caller-supplied execution callback is accepted. UIA, OCR, composer text,
+    HWND/PID/title observations, and PostMessage queue acceptance remain absent
+    from the authority surface.
+    """
+    checkout_evidence, modules = _verified_reviewed_components(checkouts)
+    ports, port_evidence = _build_ceremony_ports(modules, checkout_evidence)
+    return _run_verified_ceremony(
+        checkout_evidence=checkout_evidence,
+        port_evidence=port_evidence,
+        route=route,
+        ports=ports,
+        evidence_signer=evidence_signer,
+        evidence_path=evidence_path,
+    )
+
+
 def missing_live_prerequisites() -> tuple[str, ...]:
     """Exact external prerequisites intentionally not fabricated by this branch."""
     return (
-        "reviewed merged runtime SHA exposing production dispatch/receiver/watchdog APIs",
-        "reviewed Windows seat-pipe/trust SHA with OS-derived SID/process/pipe evidence",
-        "reviewed failover SHA with fresh-birth delivery receipt and no process kill",
+        "reviewed runtime SHA exporting the four fixed live_ceremony runtime entry points and protocol error",
+        "reviewed seat-pipe/trust SHA exporting fixed receipt/negative entry points with OS-derived evidence",
+        "reviewed failover SHA exporting live_ceremony_failover with fresh-birth delivery and no process kill",
         "pinned coordinator/authority/seat/response-receiver public keys and signed enrollments",
         "fresh signed durable revocation resolver used at every verification boundary",
         "two live Windows Terminal seats with exact TargetIdentity and TerminalTabIdentity",
@@ -659,7 +726,6 @@ def missing_live_prerequisites() -> tuple[str, ...]:
 
 __all__ = [
     "CeremonyError",
-    "CeremonyPorts",
     "EvidenceSigner",
     "EvidenceTrust",
     "ExactRoute",
@@ -669,6 +735,5 @@ __all__ = [
     "persist_evidence_bundle",
     "run_live_ceremony",
     "verify_evidence_bundle",
-    "verify_port_bindings",
     "verify_reviewed_checkouts",
 ]
