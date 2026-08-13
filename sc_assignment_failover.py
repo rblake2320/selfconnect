@@ -4,6 +4,10 @@ The authorizing receipt is verified cryptographically before a durable saga is
 prepared.  Exact retries resume the persisted outbox; conflicting use of the
 same receipt is rejected.  Registry state remains a compare-and-set routing
 mirror, never proof.  This module has no process-termination capability.
+Local files and same-user Credential Manager state provide ordinary-mode
+consistency only; they do not resist a same-user paired rollback.  This build
+therefore refuses high-assurance execution until a separately privileged
+external monotonic authority is configured.
 """
 from __future__ import annotations
 
@@ -19,6 +23,7 @@ from collections.abc import Callable, Mapping
 from contextlib import closing
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import sc_mesh_registry
@@ -64,7 +69,6 @@ _RECEIPT_VERIFICATION_FIELDS = frozenset(
         "expected_response_channel",
     }
 )
-_SEAT_CLAIM_SEAL = object()
 FAILOVER_ROOT_SCHEMA = "selfconnect-assignment-failover-root-v1"
 FAILOVER_PROTECTED_STATE_SCHEMA = "selfconnect-assignment-failover-protected-state-v1"
 FAILOVER_PROTECTED_ANCHOR_SCHEMA = "selfconnect-assignment-failover-protected-anchor-v1"
@@ -72,7 +76,13 @@ FAILOVER_ROOT_CONFIG_ENV = "SELFCONNECT_FAILOVER_ROOT_CONFIG"
 FAILOVER_ROOT_PUBLIC_KEY_ENV = "SELFCONNECT_FAILOVER_ROOT_PUBLIC_KEY_HEX"
 _LAUNCH_CONFIG_PATH = os.environ.get(FAILOVER_ROOT_CONFIG_ENV, "")
 _LAUNCH_PUBLIC_KEY_HEX = os.environ.get(FAILOVER_ROOT_PUBLIC_KEY_ENV, "")
-_ACTIVE_CONTEXT: _FailoverLaunchContext | None = None
+ORDINARY_ASSURANCE = MappingProxyType({
+    "mode": "ordinary",
+    "same_user_threat": "excluded",
+    "external_monotonic_authority": "absent",
+    "monotonicity": "local_best_effort",
+    "high_assurance": False,
+})
 
 
 class AssignmentFailoverError(AssignmentVerificationError):
@@ -125,9 +135,14 @@ class _FailoverLaunchContext:
             "protected_state_path",
             "claim_store_path",
             "claim_store_database_id",
+            "external_monotonic_authority",
         }
         if set(body) != expected_fields or body.get("schema") != FAILOVER_ROOT_SCHEMA:
             raise AssignmentFailoverError("failover root config fields are invalid")
+        if body.get("external_monotonic_authority") is not None:
+            raise AssignmentFailoverError(
+                "unsupported external monotonic authority configuration"
+            )
         for field in (
             "root_id",
             "assignment_store_database_id",
@@ -192,6 +207,58 @@ class _FailoverLaunchContext:
             database_id=str(body["claim_store_database_id"]),
         )
         self.verify_protected_state()
+
+    def require_assurance(self, high_assurance: bool) -> dict[str, Any]:
+        if type(high_assurance) is not bool:
+            raise AssignmentFailoverError("high_assurance must be an exact bool")
+        if high_assurance:
+            raise AssignmentFailoverError(
+                "high-assurance failover refused: no separately privileged "
+                "external monotonic authority is configured"
+            )
+        return dict(ORDINARY_ASSURANCE)
+
+    def require_delivery_claim(
+        self,
+        delivery: Mapping[str, Any],
+        replacement_assignment: Mapping[str, Any],
+    ) -> None:
+        """Require the receipt to exist in the launch-pinned completed claim row.
+
+        Receipt construction helpers and signatures are not claim authority.
+        In ordinary mode this is a same-user-local consistency check only.
+        """
+        receipt = _snapshot(
+            delivery,
+            "delivery receipt",
+            require_canonical_wire=False,
+        )
+        assignment = _snapshot(
+            replacement_assignment,
+            "replacement assignment",
+            require_canonical_wire=False,
+        )
+        assignment_hash = _digest(assignment)
+        state = self.verify_protected_state()
+        protected = state["seat_claims"].get(assignment_hash)
+        if (
+            type(protected) is not dict
+            or protected.get("status") != "completed"
+            or protected.get("operation_id") != receipt.get("operation_id")
+            or protected.get("claim_id") != receipt.get("delivery_claim_id")
+            or protected.get("idempotency_key")
+            != receipt.get("delivery_idempotency_key")
+            or protected.get("claim_store_database_id") != self.claim_store_database_id
+            or receipt.get("failover_root_id") != self.root_id
+            or receipt.get("claim_store_database_id") != self.claim_store_database_id
+            or not secrets.compare_digest(
+                str(protected.get("receipt_sha256", "")),
+                _digest(receipt),
+            )
+        ):
+            raise AssignmentFailoverError(
+                "delivery receipt has no launch-pinned completed seat claim authority"
+            )
 
     def _read_state(self) -> dict[str, Any]:
         raw = read_secret(self.credential_target)
@@ -511,6 +578,7 @@ def provision_failover_trust_root(
         "credential_target": f"SelfConnect/Failover/{root_id}",
         **{f"{name}_path": str(path) for name, path in paths.items()},
         **{f"{name}_database_id": value for name, value in database_ids.items()},
+        "external_monotonic_authority": None,
     }
     signed = _signed(body, provisioning_identity)
     config_hash = _digest(signed)
@@ -553,24 +621,24 @@ def provision_failover_trust_root(
 
 
 def initialize_failover_runtime() -> None:
-    """Load the one launch-pinned root; no mutable capability is returned."""
-    global _ACTIVE_CONTEXT
-    if _ACTIVE_CONTEXT is not None:
-        return
+    """Verify the launch-pinned root; no in-process object is an authority."""
     if not _LAUNCH_CONFIG_PATH or not _LAUNCH_PUBLIC_KEY_HEX:
         raise AssignmentFailoverError("failover launch root is not pinned by the process environment")
+    _FailoverLaunchContext(
+        config_path=_LAUNCH_CONFIG_PATH,
+        pinned_public_key_hex=_LAUNCH_PUBLIC_KEY_HEX,
+    )
+
+
+def _require_launch_context() -> _FailoverLaunchContext:
+    if not _LAUNCH_CONFIG_PATH or not _LAUNCH_PUBLIC_KEY_HEX:
+        raise AssignmentFailoverError(
+            "failover launch root is not pinned by the process environment"
+        )
     context = _FailoverLaunchContext(
         config_path=_LAUNCH_CONFIG_PATH,
         pinned_public_key_hex=_LAUNCH_PUBLIC_KEY_HEX,
     )
-    _ACTIVE_CONTEXT = context
-
-
-def _require_launch_context() -> _FailoverLaunchContext:
-    initialize_failover_runtime()
-    context = _ACTIVE_CONTEXT
-    if type(context) is not _FailoverLaunchContext:
-        raise AssignmentFailoverError("verified failover launch context is required")
     if context.assignment_store.path.resolve() != context.assignment_store_path:
         raise AssignmentFailoverError("launch assignment store path drifted")
     if context.saga_store.path.resolve() != context.saga_store_path:
@@ -772,6 +840,20 @@ def _finite(value: float | None, name: str) -> float:
     if not math.isfinite(result):
         raise AssignmentFailoverError(f"invalid {name}")
     return result
+
+
+def _require_ordinary_assurance(value: Any) -> dict[str, Any]:
+    assurance = _snapshot(
+        value,
+        "failover assurance",
+        require_canonical_wire=False,
+    )
+    expected = dict(ORDINARY_ASSURANCE)
+    if assurance != expected or set(assurance) != set(expected):
+        raise AssignmentFailoverError("failover assurance label is invalid")
+    if type(assurance.get("high_assurance")) is not bool:
+        raise AssignmentFailoverError("failover assurance high_assurance must be an exact bool")
+    return assurance
 
 
 def _signed(body: dict[str, Any], identity: Any) -> dict[str, Any]:
@@ -1179,12 +1261,18 @@ class _SeatDeliveryClaimStore:
             claim_store_database_id=self.database_id,
             actuation_proof=verified_proof,
             result_sha256=result_hash,
+            assurance=_require_ordinary_assurance(
+                _snapshot(
+                    continuity,
+                    "continuity artifact",
+                    require_canonical_wire=False,
+                ).get("assurance")
+            ),
             delivered_at=(
                 float(proof_body["acted_at"])
                 if delivered_at is None
                 else delivered_at
             ),
-            _claim_seal=_SEAT_CLAIM_SEAL,
         )
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -1226,18 +1314,15 @@ def _create_delivery_receipt(
     claim_store_database_id: str,
     actuation_proof: Mapping[str, Any],
     result_sha256: str,
+    assurance: Mapping[str, Any],
     delivered_at: float | None = None,
-    _claim_seal: object | None = None,
 ) -> dict[str, Any]:
-    """Seat-side helper: sign proof that the exact replacement was received.
+    """Format and sign a seat delivery receipt.
 
-    The failover coordinator never calls this helper.  A guarded delivery
-    implementation must obtain this proof from the enrolled replacement seat.
+    This helper is intentionally not an authorization or durable-claim
+    boundary.  The coordinator separately verifies the receipt against the
+    launch-pinned completed claim row.
     """
-    if _claim_seal is not _SEAT_CLAIM_SEAL:
-        raise AssignmentFailoverError(
-            "delivery receipts require a durable seat-side claim store"
-        )
     assignment = _snapshot(replacement_assignment, "replacement assignment", require_canonical_wire=False)
     if key_id(str(seat_identity.public_key_hex)) != assignment.get("receiver_key_id"):
         raise AssignmentFailoverError("delivery receipt signer is not the replacement seat")
@@ -1259,6 +1344,7 @@ def _create_delivery_receipt(
         "delivery_claim_commit_sha256": delivery_claim_commit_sha256,
         "failover_root_id": failover_root_id,
         "claim_store_database_id": claim_store_database_id,
+        "assurance": _require_ordinary_assurance(assurance),
         "actuation_proof": _snapshot(
             actuation_proof,
             "seat actuation proof",
@@ -1280,6 +1366,7 @@ def _verify_delivery_receipt(
     replacement: Mapping[str, Any],
     failover_root_id: str,
     claim_store_database_id: str,
+    assurance: Mapping[str, Any],
     now: float,
     require_fresh: bool,
 ) -> dict[str, Any]:
@@ -1300,6 +1387,7 @@ def _verify_delivery_receipt(
         "delivery_idempotency_key": f"failover-delivery:{operation_id}",
         "failover_root_id": failover_root_id,
         "claim_store_database_id": claim_store_database_id,
+        "assurance": _require_ordinary_assurance(assurance),
     }
     expected_fields = set(exact) | {
         "actuation_proof",
@@ -1377,9 +1465,46 @@ def _guard(
             stage="before_delivery",
         )
     except Exception as exc:
-        raise AssignmentFailoverError("high-assurance target resolver failed") from exc
+        raise AssignmentFailoverError("operational target resolver failed") from exc
     if result is not True:
-        raise AssignmentFailoverError("high-assurance target resolver refused")
+        raise AssignmentFailoverError("operational target resolver refused")
+
+
+def _require_registry_off_rails(
+    registry_path: Path,
+    *,
+    role: str,
+    mesh: str,
+    old_seat: Mapping[str, Any],
+) -> None:
+    """Check the routing mirror postcondition; the registry is not authority."""
+    try:
+        registry = sc_mesh_registry.load_registry_strict(registry_path)
+    except Exception as exc:
+        raise AssignmentFailoverError(
+            "ordinary/no_external_anchor registry postcondition is unreadable"
+        ) from exc
+    rows = [
+        row
+        for row in registry["agents"]
+        if row.get("role") == role and row.get("mesh") == mesh
+    ]
+    expected_identity = {
+        "birth_id": old_seat["birth_id"],
+        "generation": old_seat["generation"],
+        "seat_key_id": old_seat["seat_key_id"],
+        "seat_epoch": old_seat["seat_epoch"],
+    }
+    if (
+        len(rows) != 1
+        or rows[0].get("status") != "off_rails"
+        or rows[0].get("birth_id") != old_seat["birth_id"]
+        or rows[0].get("generation") != old_seat["generation"]
+        or rows[0].get("off_rails_identity") != expected_identity
+    ):
+        raise AssignmentFailoverError(
+            "ordinary/no_external_anchor registry postcondition mismatch"
+        )
 
 
 def _checkpoint(hook: Callable[[str, dict[str, Any]], None] | None, name: str, operation: dict[str, Any]) -> None:
@@ -1404,6 +1529,7 @@ def failover_assignment(
     guarded_delivery: Callable[..., Any],
     audit_append: Callable[..., Mapping[str, Any]] = sc_mesh_registry.append_event,
     registry_transition: Callable[..., Mapping[str, Any]] = sc_mesh_registry.transition_agent_off_rails_exact,
+    high_assurance: bool = False,
     revoked_coordinator_key_ids: frozenset[str] = frozenset(),
     revoked_seat_key_ids: frozenset[str] = frozenset(),
     now: float | None = None,
@@ -1411,8 +1537,14 @@ def failover_assignment(
     stage_hook: Callable[[str, dict[str, Any]], None] | None = None,
     **receipt_verification: Any,
 ) -> dict[str, Any]:
-    """Run or resume one exact receipt-authorized failover saga."""
+    """Run or resume one exact receipt-authorized ordinary-mode failover saga.
+
+    Operational callbacks are not security boundaries.  This build has no
+    separately privileged external monotonic authority, so high assurance is
+    refused before any callback can run.
+    """
     context = _require_launch_context()
+    assurance = context.require_assurance(high_assurance)
     store = context.assignment_store
     saga = context.saga_store
     registry_path = context.registry_path
@@ -1426,7 +1558,9 @@ def failover_assignment(
         registry_transition,
     ):
         if not callable(boundary):
-            raise AssignmentFailoverError("failover high-assurance boundaries are required")
+            raise AssignmentFailoverError(
+                "failover operational callbacks are required and are not authority"
+            )
 
     assignment_snap = _snapshot(assignment, "predecessor assignment")
     receipt_snap = _snapshot(receipt, "authorizing receipt")
@@ -1504,6 +1638,7 @@ def failover_assignment(
 
     spec = {
         "schema": "selfconnect-assignment-failover-operation-v1",
+        "assurance": assurance,
         "receipt_sha256": receipt_hash,
         "predecessor_assignment_sha256": _digest(assignment_snap),
         "role": role,
@@ -1670,6 +1805,7 @@ def failover_assignment(
                 "old_seat_epoch": raw_old["seat_epoch"],
                 "replacement_seat": new,
                 "process_action": "none",
+                "assurance": assurance,
             }
             if operation["stage"] == "authorized":
                 result = audit_append(
@@ -1708,6 +1844,12 @@ def failover_assignment(
                 _checkpoint(stage_hook, "after_registry_cas", operation)
                 operation = saga.advance(operation_id, "intent_audited", "off_rails")
                 context.advance_operation(operation_id, operation)
+                _require_registry_off_rails(
+                    registry_path,
+                    role=role,
+                    mesh=mesh,
+                    old_seat=raw_old,
+                )
 
             if operation["stage"] == "off_rails":
                 result = audit_append(
@@ -1744,6 +1886,7 @@ def failover_assignment(
                     "terminal_tab_identity_sha256": spec["terminal_tab_identity_sha256"],
                     "response_channel_sha256": spec["response_channel_sha256"],
                     "coordinator_key_id": coordinator_key_id,
+                    "assurance": assurance,
                     "issued_at": current,
                 }
                 continuity = _signed(continuity_body, coordinator_identity)
@@ -1822,9 +1965,11 @@ def failover_assignment(
                     replacement=replacement,
                     failover_root_id=context.root_id,
                     claim_store_database_id=context.claim_store_database_id,
+                    assurance=assurance,
                     now=current,
                     require_fresh=True,
                 )
+                context.require_delivery_claim(delivery, replacement_assignment)
                 operation = saga.advance(
                     operation_id,
                     "assignment_issued",
@@ -1849,8 +1994,16 @@ def failover_assignment(
                 replacement=replacement,
                 failover_root_id=context.root_id,
                 claim_store_database_id=context.claim_store_database_id,
+                assurance=assurance,
                 now=current,
                 require_fresh=False,
+            )
+            context.require_delivery_claim(delivery, replacement_assignment)
+            _require_registry_off_rails(
+                registry_path,
+                role=role,
+                mesh=mesh,
+                old_seat=raw_old,
             )
             return {
                 "ok": True,
@@ -1862,6 +2015,7 @@ def failover_assignment(
                 "replacement_assignment": replacement_assignment,
                 "delivery_receipt": delivery,
                 "process_action": "none",
+                "assurance": assurance,
                 "resumed": not created,
             }
         except Exception as exc:

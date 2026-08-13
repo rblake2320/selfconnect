@@ -52,9 +52,7 @@ def _protected_credential_backend(monkeypatch):
 
     monkeypatch.setattr(failover_module, "read_secret", read)
     monkeypatch.setattr(failover_module, "write_secret", write)
-    monkeypatch.setattr(failover_module, "_ACTIVE_CONTEXT", None)
     yield credentials
-    failover_module._ACTIVE_CONTEXT = None
 
 
 def _canonical(value):
@@ -218,7 +216,6 @@ def _case(tmp_path, *, receipt_state="blocked"):
     )
     failover_module._LAUNCH_CONFIG_PATH = str(config_path.resolve())
     failover_module._LAUNCH_PUBLIC_KEY_HEX = pinned
-    failover_module._ACTIVE_CONTEXT = None
     initialize_failover_runtime()
     context = failover_module._require_launch_context()
     delivery_store = open_seat_delivery_claim_store()
@@ -237,6 +234,8 @@ def _case(tmp_path, *, receipt_state="blocked"):
         "store": coordinator_store,
         "saga_path": saga_path,
         "context": context,
+        "config_path": config_path.resolve(),
+        "pinned": pinned,
         "delivery_store": delivery_store,
         "registry_path": registry_path,
         "verification": verification,
@@ -262,7 +261,7 @@ def _run(case, *, shared=None, receipt=None, **overrides):
 
     def deliver(**kwargs):
         shared["delivery"].append(kwargs)
-        return case["delivery_store"].deliver_exact(
+        return open_seat_delivery_claim_store().deliver_exact(
             operation_id=kwargs["operation_id"],
             continuity=kwargs["continuity"],
             replacement_assignment=kwargs["assignment"],
@@ -292,14 +291,16 @@ def _run(case, *, shared=None, receipt=None, **overrides):
         **case["verification"],
         **overrides,
     }
-    failover_module._ACTIVE_CONTEXT = case["context"]
+    failover_module._LAUNCH_CONFIG_PATH = str(case["config_path"])
+    failover_module._LAUNCH_PUBLIC_KEY_HEX = case["pinned"]
     return failover_assignment(
         case["assignment"], receipt or case["receipt"], **args
     ), shared
 
 
 def _pending(case):
-    failover_module._ACTIVE_CONTEXT = case["context"]
+    failover_module._LAUNCH_CONFIG_PATH = str(case["config_path"])
+    failover_module._LAUNCH_PUBLIC_KEY_HEX = case["pinned"]
     return list_pending_failovers()
 
 
@@ -420,7 +421,6 @@ def test_alternate_signed_root_cannot_be_passed_to_public_action(tmp_path):
 
 
 def test_post_import_environment_rewrite_cannot_select_an_alternate_root(monkeypatch):
-    failover_module._ACTIVE_CONTEXT = None
     monkeypatch.setattr(failover_module, "_LAUNCH_CONFIG_PATH", "")
     monkeypatch.setattr(failover_module, "_LAUNCH_PUBLIC_KEY_HEX", "")
     monkeypatch.setenv("SELFCONNECT_FAILOVER_ROOT_CONFIG", r"C:\attacker\root.json")
@@ -437,7 +437,7 @@ def test_signed_launch_config_and_database_ids_are_immutable_at_runtime(tmp_path
         json.dumps(config, sort_keys=True, separators=(",", ":")),
         encoding="utf-8",
     )
-    with pytest.raises(AssignmentFailoverError, match="config changed"):
+    with pytest.raises(AssignmentFailoverError, match=r"signature is invalid|config changed"):
         _run(config_case)
 
     database_case = _case(tmp_path / "database")
@@ -446,7 +446,7 @@ def test_signed_launch_config_and_database_ids_are_immutable_at_runtime(tmp_path
             "UPDATE failover_saga_store_meta_v1 SET database_id=? WHERE singleton=1",
             ("f" * 64,),
         )
-    with pytest.raises(AssignmentFailoverError, match="database identity mismatch"):
+    with pytest.raises(AssignmentFailoverError, match=r"database id conflicts|database identity mismatch"):
         _run(database_case)
 
 
@@ -915,3 +915,164 @@ def test_forged_stale_wrong_seat_and_noncanonical_receipt_never_create_saga(tmp_
         with pytest.raises(AssignmentFailoverError):
             _run(case, receipt=receipt, now=verification_time)
         assert not case["saga_path"].exists() or _pending(case) == []
+
+
+def test_ordinary_mode_labels_same_user_gap_and_high_assurance_refuses_first(tmp_path):
+    case = _case(tmp_path / "ordinary")
+    callback_calls = {"guard": 0, "delivery": 0, "audit": 0, "registry": 0}
+
+    def called(name):
+        def callback(*_args, **_kwargs):
+            callback_calls[name] += 1
+            return True
+
+        return callback
+
+    with pytest.raises(
+        AssignmentFailoverError,
+        match="no separately privileged external monotonic authority",
+    ):
+        _run(
+            case,
+            high_assurance=True,
+            high_assurance_target_resolver=called("guard"),
+            guarded_delivery=called("delivery"),
+            audit_append=called("audit"),
+            registry_transition=called("registry"),
+        )
+    assert callback_calls == {"guard": 0, "delivery": 0, "audit": 0, "registry": 0}
+    with pytest.raises(AssignmentFailoverError, match="exact bool"):
+        _run(case, high_assurance=1)
+
+    result, _shared = _run(case)
+    expected = {
+        "mode": "ordinary",
+        "same_user_threat": "excluded",
+        "external_monotonic_authority": "absent",
+        "monotonicity": "local_best_effort",
+        "high_assurance": False,
+    }
+    assert result["assurance"] == expected
+    assert result["continuity"]["assurance"] == expected
+    assert result["delivery_receipt"]["assurance"] == expected
+    assert "same_user_threat" in result["replacement_assignment"]["payload"]
+    with pytest.raises(TypeError):
+        failover_module.ORDINARY_ASSURANCE["mode"] = "high"
+
+
+def test_paired_same_user_rollback_can_readmit_only_in_labeled_ordinary_mode(
+    tmp_path,
+    _protected_credential_backend,
+):
+    case = _case(tmp_path)
+    context = case["context"]
+    paths = (
+        context.assignment_store_path,
+        context.saga_store_path,
+        context.registry_path,
+        context.event_log_path,
+        context.claim_store_path,
+        context.protected_state_path,
+    )
+    before = {path: path.read_bytes() for path in paths}
+    credential_before = bytes(_protected_credential_backend[context.credential_target])
+    shared = {"audit": [], "guard": [], "delivery": [], "delivery_receipts": {}}
+
+    first, _shared = _run(case, shared=shared)
+    assert first["assurance"]["same_user_threat"] == "excluded"
+    assert len(shared["delivery"]) == 1
+
+    for path, data in before.items():
+        path.write_bytes(data)
+    _protected_credential_backend[context.credential_target] = credential_before
+
+    second, _shared = _run(case, shared=shared)
+    assert second["assurance"]["external_monotonic_authority"] == "absent"
+    assert len(shared["delivery"]) == 2
+
+
+def test_private_receipt_helpers_without_claim_rows_cannot_complete_failover(tmp_path):
+    case = _case(tmp_path)
+    assert not hasattr(failover_module, "_SEAT_CLAIM_SEAL")
+
+    def forge_without_claim(**kwargs):
+        assignment = kwargs["assignment"]
+        continuity = kwargs["continuity"]
+        claim_body = {
+            "schema": "selfconnect-seat-delivery-claim-v1",
+            "claim_id": "a" * 64,
+            "idempotency_key": f"failover-delivery:{kwargs['operation_id']}",
+            "operation_id": kwargs["operation_id"],
+            "replacement_assignment_sha256": failover_module._digest(assignment),
+            "continuity_sha256": failover_module._digest(continuity),
+            "failover_root_id": case["context"].root_id,
+            "claim_store_database_id": case["context"].claim_store_database_id,
+        }
+        claim = {**claim_body, "claim_commit_sha256": failover_module._digest(claim_body)}
+        proof = _create_seat_actuation_proof(
+            claim,
+            seat_identity=case["new_seat"],
+            result_sha256="d" * 64,
+            acted_at=NOW + 3,
+        )
+        return failover_module._create_delivery_receipt(
+            operation_id=kwargs["operation_id"],
+            continuity=continuity,
+            replacement_assignment=assignment,
+            seat_identity=case["new_seat"],
+            delivery_claim_id=claim["claim_id"],
+            delivery_idempotency_key=claim["idempotency_key"],
+            delivery_claim_commit_sha256=claim["claim_commit_sha256"],
+            failover_root_id=case["context"].root_id,
+            claim_store_database_id=case["context"].claim_store_database_id,
+            actuation_proof=proof,
+            result_sha256="d" * 64,
+            assurance=dict(failover_module.ORDINARY_ASSURANCE),
+            delivered_at=NOW + 3,
+        )
+
+    with pytest.raises(AssignmentFailoverError, match="no launch-pinned completed seat claim"):
+        _run(case, guarded_delivery=forge_without_claim)
+    with sqlite3.connect(case["delivery_store"].path) as connection:
+        assert connection.execute("SELECT count(*) FROM delivery_claim_v1").fetchone()[0] == 0
+    assert case["context"]._read_state()["seat_claims"] == {}
+    assert _pending(case)[0]["stage"] == "assignment_issued"
+
+
+def test_mutated_cached_context_object_cannot_rebind_the_launch_root(tmp_path):
+    canonical = _case(tmp_path / "canonical")
+    alternate = _case(tmp_path / "alternate")
+    stale = canonical["context"]
+    object.__setattr__(stale, "assignment_store", alternate["context"].assignment_store)
+    object.__setattr__(stale, "assignment_store_path", alternate["context"].assignment_store_path)
+    object.__setattr__(stale, "saga_store", alternate["context"].saga_store)
+    object.__setattr__(stale, "saga_store_path", alternate["context"].saga_store_path)
+    object.__setattr__(stale, "registry_path", alternate["context"].registry_path)
+    object.__setattr__(stale, "event_log_path", alternate["context"].event_log_path)
+    object.__setattr__(stale, "claim_store_path", alternate["context"].claim_store_path)
+    object.__setattr__(stale, "root_id", alternate["context"].root_id)
+
+    result, _shared = _run(canonical)
+    launch_root = failover_module._require_launch_context().root_id
+    assert result["delivery_receipt"]["failover_root_id"] == launch_root
+    assert result["delivery_receipt"]["failover_root_id"] != stale.root_id
+    assert alternate["context"].saga_store.pending() == []
+
+
+def test_registry_only_rollback_cannot_return_delivered_on_resume(tmp_path):
+    case = _case(tmp_path)
+    active_registry = case["registry_path"].read_bytes()
+    shared = {"audit": [], "guard": [], "delivery": [], "delivery_receipts": {}}
+    first, _shared = _run(case, shared=shared)
+    assert first["ok"] is True
+    assert len(shared["delivery"]) == 1
+
+    case["registry_path"].write_bytes(active_registry)
+    with pytest.raises(
+        AssignmentFailoverError,
+        match="ordinary/no_external_anchor registry postcondition mismatch",
+    ):
+        _run(case, shared=shared)
+    row = sc_mesh_registry.load_registry_strict(case["registry_path"])["agents"][0]
+    assert row["status"] == "active"
+    assert len(shared["delivery"]) == 1
