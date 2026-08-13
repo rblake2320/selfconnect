@@ -33,7 +33,7 @@ from sc_assignment_protocol import (
 from sc_authority_trust import _bootstrap_local_authority_trust_for_test
 from sc_guarded_submit import TargetIdentity
 from sc_identity import AgentIdentity
-from sc_seat_identity import create_enrollment
+from sc_seat_identity import create_enrollment, key_id
 from sc_seat_revocation import (
     apply_revocation_snapshot,
     create_revocation_snapshot,
@@ -938,6 +938,34 @@ def test_wrong_target_channel_guard_and_revocation_fail_closed(tmp_path):
     with pytest.raises(AssignmentFailoverError, match="revoked"):
         _run(revoked_case)
     assert _pending(revoked_case) == []
+
+
+def test_mid_saga_coordinator_revocation_blocks_delivery(tmp_path):
+    case = _case(tmp_path)
+    shared = {"audit": [], "guard": [], "delivery": [], "delivery_receipts": {}}
+
+    def revoke_after_build(stage, _operation):
+        if stage != "after_assignment_build":
+            return
+        snapshot = create_revocation_snapshot(
+            case["revocation_path"],
+            case["revocation_trust_path"],
+            [key_id(case["coordinator"].public_key_hex)],
+            now=NOW + 3,
+            ttl_seconds=300,
+        )
+        apply_revocation_snapshot(
+            case["revocation_path"],
+            case["revocation_trust_path"],
+            snapshot,
+            [sign_revocation_snapshot(snapshot, case["authority"])],
+            now=NOW + 3,
+        )
+
+    with pytest.raises(AssignmentFailoverError, match="coordinator key is revoked"):
+        _run(case, shared=shared, stage_hook=revoke_after_build)
+    assert shared["guard"] == []
+    assert shared["delivery"] == []
 
 
 def test_forged_stale_wrong_seat_and_noncanonical_receipt_never_create_saga(tmp_path):

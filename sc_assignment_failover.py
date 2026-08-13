@@ -2016,8 +2016,14 @@ def failover_assignment(
                 replacement_assignment = operation["replacement_assignment"]
                 if continuity is None or replacement_assignment is None:
                     raise AssignmentFailoverError("failover outbox is incomplete")
-                if replacement["seat_key_id"] in live_revocations():
-                    raise AssignmentFailoverError("replacement seat key is revoked")
+                revoked_now = live_revocations()
+                for label, participant_key_id in (
+                    ("coordinator", coordinator_key_id),
+                    ("authorizing seat", raw_old["seat_key_id"]),
+                    ("replacement seat", replacement["seat_key_id"]),
+                ):
+                    if participant_key_id in revoked_now:
+                        raise AssignmentFailoverError(f"{label} key is revoked")
                 _guard(
                     high_assurance_target_resolver,
                     target=target,
@@ -2045,8 +2051,14 @@ def failover_assignment(
                     require_fresh=True,
                 )
                 context.require_delivery_claim(delivery, replacement_assignment)
-                if replacement["seat_key_id"] in live_revocations():
-                    raise AssignmentFailoverError("replacement seat key is revoked")
+                revoked_now = live_revocations()
+                for label, participant_key_id in (
+                    ("coordinator", coordinator_key_id),
+                    ("authorizing seat", raw_old["seat_key_id"]),
+                    ("replacement seat", replacement["seat_key_id"]),
+                ):
+                    if participant_key_id in revoked_now:
+                        raise AssignmentFailoverError(f"{label} key is revoked")
                 operation = saga.advance(
                     operation_id,
                     "assignment_issued",
