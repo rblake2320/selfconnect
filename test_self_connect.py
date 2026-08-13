@@ -374,34 +374,75 @@ def test_layer4_continuity():
     check("on_migrate not called below threshold", len(fired) == 0)
 
     # MigrationCoordinator — triggers at threshold
-    coord2 = MigrationCoordinator(own_hwnd=2820438, role="B", registry=reg,
-                                   checkpoint_path=os.path.join(tempfile.gettempdir(),
-                                                                "sc_test_mc2.json"),
-                                   capacity=100, threshold=0.70)
+    from sc_identity import AgentIdentity
+    from sc_migration import (
+        enroll_migration_signer,
+        verify_migration_manifest,
+    )
+    identity = AgentIdentity.generate(label="migration-test")
+    trust_path = os.path.join(tempfile.gettempdir(), "sc_test_migration_trust.json")
+    replay_path = os.path.join(tempfile.gettempdir(), "sc_test_migration_replay.sqlite3")
+    seat_replay_path = os.path.join(tempfile.gettempdir(), "sc_test_migration_seat.sqlite3")
+    manifest_path = os.path.join(tempfile.gettempdir(), "sc_test_mc2.manifest.json")
+    for cleanup in (trust_path, replay_path, seat_replay_path, manifest_path):
+        if os.path.exists(cleanup):
+            os.unlink(cleanup)
+    enroll_migration_signer(identity, trust_path)
+    target_binding = {
+        "hwnd": 22610408, "pid": 7001, "exe_name": "cmd.exe",
+        "class_name": "ConsoleWindowClass", "process_started_at": 1.0,
+        "binding_sha256": "test-binding",
+    }
+
+    def terminal_factory():
+        return target_binding["hwnd"]
+
+    def briefing_sender(hwnd, briefing):
+        check("migration notification targets successor", hwnd == target_binding["hwnd"])
+        check("migration notification is one physical line", "\n" not in briefing and "\r" not in briefing)
+        marker = "--manifest "
+        path = briefing.split(marker, 1)[1].split(" --expected-hwnd", 1)[0]
+        import json
+        path = json.loads(path)
+        try:
+            verify_migration_manifest(
+                path, expected_hwnd=hwnd, trust_store=trust_path,
+                replay_store=replay_path, consume=True,
+                target_resolver=lambda _hwnd: dict(target_binding),
+            )
+        except ValueError as exc:
+            check("actionable migration refuses without seat authority", "per-seat channel proof is required" in str(exc))
+        else:
+            check("actionable migration refuses without seat authority", False)
+
+    coord2 = MigrationCoordinator(
+        own_hwnd=2820438, role="B", registry=reg,
+        checkpoint_path=os.path.join(tempfile.gettempdir(), "sc_test_mc2.json"),
+        capacity=100, threshold=0.70, migration_identity=identity,
+        migration_trust_store=trust_path, migration_replay_store=replay_path,
+        terminal_factory=terminal_factory, briefing_sender=briefing_sender,
+        target_resolver=lambda _hwnd: dict(target_binding),
+        verification_wait_seconds=0,
+    )
     fired2 = []
     coord2.on_migrate(lambda cp, path: fired2.append((cp.role, path)))
     result2 = coord2.tick(current=75, pending={"status": "migrating"}, meta={"sess": 9})
-    check("tick at threshold returns True", result2 is True)
-    check("has_migrated True after trigger", coord2.has_migrated)
-    check("on_migrate fired once", len(fired2) == 1)
-    check("on_migrate got correct role", fired2[0][0] == "B")
-    cp_path = fired2[0][1]
-    check("checkpoint file written", os.path.exists(cp_path))
-    if os.path.exists(cp_path):
-        cp_read = read_checkpoint(cp_path)
-        check("checkpoint role correct", cp_read.role == "B")
-        check("checkpoint pending preserved", cp_read.pending == {"status": "migrating"})
-        os.unlink(cp_path)
+    check("tick at threshold refuses unauthenticated successor", result2 is False)
+    check("has_migrated remains False after refusal", not coord2.has_migrated)
+    check("on_migrate not called for refused successor", len(fired2) == 0)
 
     # Second tick after migration is idempotent
     result3 = coord2.tick(current=90)
-    check("second tick after migration returns False", result3 is False)
-    check("on_migrate not called twice", len(fired2) == 1)
+    check("second unauthenticated migration attempt returns False", result3 is False)
+    check("on_migrate remains uncalled", len(fired2) == 0)
 
     # Clean up mc.json if it exists
     mc1 = os.path.join(tempfile.gettempdir(), "sc_test_mc.json")
     if os.path.exists(mc1):
         os.unlink(mc1)
+    for cleanup in (trust_path, replay_path, seat_replay_path, manifest_path):
+        if os.path.exists(cleanup):
+            os.unlink(cleanup)
 
 
 if __name__ == "__main__":

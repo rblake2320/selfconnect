@@ -9,10 +9,15 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import hashlib
+import itertools
 import json
 import os
 import platform
+import re
 import sys
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -240,7 +245,17 @@ def verify_target(
     }
 
 
-def doctor_report(include_windows: bool = False, query: str = "", limit: int = 20) -> dict[str, Any]:
+def doctor_report(
+    include_windows: bool = False,
+    query: str = "",
+    limit: int = 20,
+    *,
+    terminal_hwnd: int | None = None,
+    terminal_seconds: float = 3.0,
+    terminal_interval: float = 0.5,
+    terminal_log: str = "",
+    capture_on_risk: bool = False,
+) -> dict[str, Any]:
     sc = _load_sc()
     windows = sc.list_windows()
     report: dict[str, Any] = {
@@ -256,6 +271,14 @@ def doctor_report(include_windows: bool = False, query: str = "", limit: int = 2
         report["windows"] = [
             window_to_dict(w) for w in _filter_windows(windows, query, limit)
         ]
+    if terminal_hwnd is not None:
+        report["terminal_health"] = terminal_health(
+            terminal_hwnd,
+            seconds=terminal_seconds,
+            interval=terminal_interval,
+            log_path=terminal_log,
+            capture_on_risk=capture_on_risk,
+        )
     return report
 
 
@@ -331,6 +354,192 @@ def capture_window(hwnd: int, path: str = "", crop: bool = True) -> dict[str, An
     target_path = path or str(Path.cwd() / f"selfconnect_capture_{hwnd}.png")
     saved = sc.save_capture(hwnd, path=target_path, crop=crop)
     return {"ok": bool(saved), "hwnd": hwnd, "path": saved}
+
+
+_ACTIVE_TUI_RE = re.compile(
+    r"(working\s*\(|esc to interrupt|ctrl\+c to interrupt|thinking|press esc)",
+    re.IGNORECASE,
+)
+
+
+def analyze_terminal_samples(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Classify terminal usability from timestamped UIA text snapshots."""
+    hashes = [str(item.get("sha256", "")) for item in samples]
+    transitions = sum(a != b for a, b in itertools.pairwise(hashes))
+    texts = [str(item.get("text", "")) for item in samples]
+    active_tui = any(_ACTIVE_TUI_RE.search(text) for text in texts)
+    read_failures = sum(not item.get("read_ok", False) for item in samples)
+    rapidly_redrawing = transitions >= 2 and active_tui
+    reasons: list[str] = []
+    if read_failures:
+        reasons.append(f"uia_read_failed={read_failures}/{len(samples)}")
+    if rapidly_redrawing:
+        reasons.append("active_tui_repeatedly_redrawing")
+    return {
+        "ok": not read_failures and not rapidly_redrawing,
+        "state": (
+            "tui_redraw_risk"
+            if rapidly_redrawing
+            else "read_failure"
+            if read_failures
+            else "stable_or_idle"
+        ),
+        "sample_count": len(samples),
+        "text_transitions": transitions,
+        "active_tui_marker": active_tui,
+        "read_failures": read_failures,
+        "scroll_selection_risk": rapidly_redrawing,
+        "reasons": reasons,
+        "remediation": (
+            "No verified repair. Capture evidence and use the agent's static "
+            "transcript view as an operator workaround. Codex 0.145.0 still "
+            "reproduced this with no-alt-screen, raw output, and animations disabled."
+            if rapidly_redrawing
+            else ""
+        ),
+    }
+
+
+def terminal_health(
+    hwnd: int,
+    *,
+    seconds: float = 3.0,
+    interval: float = 0.5,
+    log_path: str = "",
+    capture_on_risk: bool = False,
+) -> dict[str, Any]:
+    """Sample a terminal and persist evidence of redraw/usability failures."""
+    hwnd = parse_hwnd(hwnd)
+    interval = max(0.1, float(interval))
+    sample_total = max(2, int(max(interval, float(seconds)) / interval) + 1)
+    samples: list[dict[str, Any]] = []
+    for index in range(sample_total):
+        observed_at = datetime.now(UTC).isoformat()
+        try:
+            reading = read_window(hwnd)
+            text = str(reading.get("text", ""))
+            samples.append({
+                "observed_at": observed_at,
+                "read_ok": bool(reading.get("method") != "none"),
+                "method": reading.get("method", "none"),
+                "characters": len(text),
+                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "text": text,
+            })
+        except Exception as exc:
+            samples.append({
+                "observed_at": observed_at,
+                "read_ok": False,
+                "method": "error",
+                "characters": 0,
+                "sha256": "",
+                "text": "",
+                "error": str(exc),
+            })
+        if index + 1 < sample_total:
+            time.sleep(interval)
+
+    report = {
+        "kind": "terminal_health",
+        "hwnd": hwnd,
+        "observed_at": datetime.now(UTC).isoformat(),
+        **analyze_terminal_samples(samples),
+        "samples": [
+            {key: value for key, value in item.items() if key != "text"}
+            for item in samples
+        ],
+    }
+    if capture_on_risk and not report["ok"]:
+        proof_dir = Path(log_path).parent if log_path else Path.cwd() / "proofs"
+        proof_dir.mkdir(parents=True, exist_ok=True)
+        report["capture"] = capture_window(
+            hwnd, str(proof_dir / f"terminal_health_{hwnd}_{int(time.time())}.png")
+        )
+    if log_path:
+        destination = Path(log_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(report, sort_keys=True) + "\n")
+    return report
+
+
+def stable_terminal_text(text: str) -> str:
+    """Remove volatile activity glyphs from repeated Windows Terminal titles."""
+    lines = text.replace("\r\n", "\n").splitlines()
+    normalized = [
+        re.sub(r"^[\u2800-\u28ff]\s+", "", line)
+        for line in lines
+    ]
+    return "\n".join(normalized)
+
+
+def common_prefix_length(left: str, right: str) -> int:
+    limit = min(len(left), len(right))
+    index = 0
+    while index < limit and left[index] == right[index]:
+        index += 1
+    return index
+
+
+def terminal_mirror(hwnd: int, interval: float = 0.5) -> int:
+    """Open a stable, read-only companion transcript for a redraw-heavy TUI."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    hwnd = parse_hwnd(hwnd)
+    root = tk.Tk()
+    root.title(f"SelfConnect Stable Transcript - HWND {hwnd}")
+    root.geometry("1100x800")
+
+    toolbar = ttk.Frame(root)
+    toolbar.pack(fill="x")
+    follow = tk.BooleanVar(value=True)
+    ttk.Checkbutton(toolbar, text="Follow output", variable=follow).pack(side="left", padx=8, pady=6)
+    status = tk.StringVar(value="Connecting...")
+    ttk.Label(toolbar, textvariable=status).pack(side="right", padx=8)
+
+    frame = ttk.Frame(root)
+    frame.pack(fill="both", expand=True)
+    text_widget = tk.Text(
+        frame,
+        wrap="word",
+        font=("Cascadia Mono", 10),
+        undo=False,
+        exportselection=True,
+    )
+    scrollbar = ttk.Scrollbar(frame, orient="vertical", command=text_widget.yview)
+    text_widget.configure(yscrollcommand=scrollbar.set)
+    text_widget.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    current = ""
+
+    def refresh() -> None:
+        nonlocal current
+        try:
+            reading = read_window(hwnd)
+            incoming = stable_terminal_text(str(reading.get("text", "")))
+            prefix = common_prefix_length(current, incoming)
+            was_at_bottom = text_widget.yview()[1] >= 0.995
+            prior_view = text_widget.yview()
+            text_widget.delete(f"1.0+{prefix}c", "end")
+            text_widget.insert("end", incoming[prefix:])
+            current = incoming
+            if follow.get() and was_at_bottom:
+                text_widget.see("end")
+            elif not follow.get():
+                text_widget.yview_moveto(prior_view[0])
+            status.set(
+                f"{reading.get('method', 'none')} | {len(incoming):,} chars | "
+                f"{datetime.now().strftime('%H:%M:%S')}"
+            )
+        except Exception as exc:
+            status.set(f"Read failed: {exc}")
+        root.after(max(100, int(interval * 1000)), refresh)
+
+    refresh()
+    root.mainloop()
+    return 0
 
 
 def input_allowed(explicit: bool = False, env_name: str = "SELFCONNECT_ALLOW_INPUT") -> bool:
@@ -475,6 +684,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--windows", action="store_true", help="include a window sample")
     p.add_argument("--query", default="", help="filter included windows")
     p.add_argument("--limit", type=int, default=20)
+    p.add_argument(
+        "--terminal-hwnd",
+        type=parse_hwnd,
+        default=None,
+        help="also run the bounded terminal usability/redraw diagnostic",
+    )
+    p.add_argument("--terminal-seconds", type=float, default=3.0)
+    p.add_argument("--terminal-interval", type=float, default=0.5)
+    p.add_argument("--terminal-log", default="", help="append terminal evidence as JSONL")
+    p.add_argument("--capture-on-risk", action="store_true")
 
     p = sub.add_parser("windows", help="list visible windows")
     p.add_argument("--query", default="", help="filter by title, exe, or class")
@@ -489,6 +708,23 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--hwnd", required=True, type=parse_hwnd)
     p.add_argument("--path", default="")
     p.add_argument("--no-crop", action="store_true")
+
+    p = sub.add_parser(
+        "terminal-health",
+        help="sample UIA text for redraw, scroll, and selection usability risk",
+    )
+    p.add_argument("--hwnd", required=True, type=parse_hwnd)
+    p.add_argument("--seconds", type=float, default=3.0)
+    p.add_argument("--interval", type=float, default=0.5)
+    p.add_argument("--log", default="", help="append durable JSONL evidence here")
+    p.add_argument("--capture-on-risk", action="store_true")
+
+    p = sub.add_parser(
+        "mirror",
+        help="open a stable read-only transcript companion for a terminal",
+    )
+    p.add_argument("--hwnd", required=True, type=parse_hwnd)
+    p.add_argument("--interval", type=float, default=0.5)
 
     p = sub.add_parser("guard", help="verify an HWND still points at the expected target")
     p.add_argument("--hwnd", required=True, type=parse_hwnd)
@@ -537,7 +773,16 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "doctor":
-            report = doctor_report(args.windows, args.query, args.limit)
+            report = doctor_report(
+                args.windows,
+                args.query,
+                args.limit,
+                terminal_hwnd=args.terminal_hwnd,
+                terminal_seconds=args.terminal_seconds,
+                terminal_interval=args.terminal_interval,
+                terminal_log=args.terminal_log,
+                capture_on_risk=args.capture_on_risk,
+            )
             if args.json:
                 return _print_json(report)
             print(f"selfconnect {report['version']} on {report['platform']}")
@@ -548,6 +793,12 @@ def main(argv: list[str] | None = None) -> int:
             if args.windows:
                 print()
                 return _print_windows(report["windows"])
+            if args.terminal_hwnd is not None:
+                health = report["terminal_health"]
+                print(f"terminal health: {health['state']}")
+                print(f"scroll/selection risk: {health['scroll_selection_risk']}")
+                if health["remediation"]:
+                    print(f"remediation: {health['remediation']}")
             return 0
 
         if args.command == "windows":
@@ -559,6 +810,18 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "capture":
             return _print_json(capture_window(args.hwnd, args.path, crop=not args.no_crop))
+
+        if args.command == "terminal-health":
+            return _print_json(terminal_health(
+                args.hwnd,
+                seconds=args.seconds,
+                interval=args.interval,
+                log_path=args.log,
+                capture_on_risk=args.capture_on_risk,
+            ))
+
+        if args.command == "mirror":
+            return terminal_mirror(args.hwnd, args.interval)
 
         if args.command == "guard":
             return _print_json(verify_target(

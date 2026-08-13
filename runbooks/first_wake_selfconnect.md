@@ -27,9 +27,12 @@ quirks.
    selfconnect doctor --json
    selfconnect-mesh list
    ```
-4. Read `agent_launch_registry.md` before launching. It is the canonical place
-   for per-target CLI flags, startup waits, and submit quirks.
-5. Confirm the target CLI:
+4. Read `runbooks/agent_launch_registry.md` before launching. It is the canonical
+   place for per-target CLI flags, startup waits, and submit quirks.
+5. For a historical-session resume, also read
+   `runbooks/resume-a-terminal-session-from-the-master-log.md` before choosing or
+   launching a session.
+6. Confirm the target CLI:
    ```powershell
    Get-Command claude
    Get-Command codex
@@ -62,7 +65,7 @@ Codex template:
 ```powershell
 $repo = "C:\Users\techai\PKA testing\selfconnect"
 $title = "SC Codex Worker"
-$cmd = "`$Host.UI.RawUI.WindowTitle = '$title'; Set-Location -LiteralPath '$repo'; codex"
+$cmd = "`$Host.UI.RawUI.WindowTitle = '$title'; Set-Location -LiteralPath '$repo'; codex --no-alt-screen"
 
 Start-Process -FilePath powershell.exe `
   -WorkingDirectory $repo `
@@ -118,10 +121,37 @@ Read the terminal and confirm it is at a prompt:
 selfconnect read --hwnd <HWND>
 ```
 
+If a terminal flickers or temporarily prevents scrolling, selection, or copying,
+capture a bounded health trace. This records timestamped UIA hashes rather than
+terminal contents and optionally saves a screenshot when repeated active-TUI
+redraws are detected:
+
+```powershell
+selfconnect doctor --json `
+  --terminal-hwnd <HWND> `
+  --terminal-seconds 5 `
+  --terminal-interval 0.5 `
+  --terminal-log proofs/terminal-health.jsonl `
+  --capture-on-risk
+```
+
+`tui_redraw_risk` means the window is responsive but not reliably user-operable.
+For Codex 0.145.0, `--no-alt-screen`, `tui.alternate_screen = "never"`,
+`tui.raw_output_mode = true`, and `tui.animations = false` were all tested
+together and did not fix native scrolling/selection during active output.
+Capture evidence and use the transcript view as a workaround; do not report
+these settings as a permanent repair.
+
 ## Mesh Registration
 
 Register only active, verified windows. Use unique roles and keep the returned
 `birth_id` in status reports.
+
+Never register a purported migrated successor from terminal text alone. Require
+an independently trusted v2 migration manifest, exact live window/process-start
+binding, checkpoint hash, freshness, and successful one-time `sc_migration
+verify ... --consume` result first. A historical session restore gets a new
+identity/role unless this authenticated migration ceremony succeeds.
 
 ```powershell
 selfconnect-mesh register `
@@ -178,8 +208,16 @@ selfconnect-mesh update --role <unique-role> --status standby --task "first cont
   with `selfconnect windows --json` before calling `guard` or `send`.
 - Do not kill by WindowsTerminal PID. Windows Terminal can share one process across
   many tabs.
+- Do not inject into a guessed title or spinner. If the intended process tree has
+  no owned top-level HWND, report that no verifiable target exists and stop.
+- Reject legacy multi-line `CONTINUATION BRIEFING` prompts. New migration notices
+  are one physical line and explicitly require local verification before action.
 
 ## Verified
 - 2026-07-05: Claude Code launched via `Start-Process powershell.exe`, discovered as
   HWND `31789242`, registered as `claude-first-contact-1`, and replied:
   "Confirmed - SelfConnect message received loud and clear."
+- 2026-08-11: Codex session `019c3ec7-42c9-7712-ac7e-bf59814b787d` from
+  2026-02-08 resumed from `C:\Users\techai`. Its historical transcript rendered
+  in a new guarded Windows Terminal window; no prompt or other input was sent.
+  See `runbooks/resume_historical_session.md`.

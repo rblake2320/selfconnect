@@ -5,6 +5,10 @@ All notable changes to SelfConnect are documented here.
 ## [Unreleased]
 
 ### Added
+- Added a durable role-migration behavior timeline comparing local Claude Code
+  2.1.183/Sonnet 4.6 acceptance with 2.1.216/Sonnet 5 and 2.1.222 refusal. The
+  record separates confirmed transcript evidence from causal inference and
+  links the exact local sessions and upstream release notes.
 - Added 24 stable public README claim blocks bound to scoped
   `release/claims.json` entries and exact excerpt hashes.
 - Added an explicit release claim/package audit step to the Windows CI workflow.
@@ -18,6 +22,9 @@ All notable changes to SelfConnect are documented here.
   line-ending-normalized text digest used for text artifacts.
 
 ### Changed
+- Classified legacy terminal continuation text as an untrusted notification,
+  not role authority. Historical resume records can locate evidence but cannot
+  authorize peer announcements or successor identity.
 - Replaced the legal-conclusion-style novelty heading with a bounded transport
   distinction and narrowed historical demonstrations to
   implemented-and-exercised records.
@@ -28,6 +35,14 @@ All notable changes to SelfConnect are documented here.
   30 focused repetitions and two subsequent full-suite runs passed.
 
 ### Fixed
+- Prevented ordinary migration tests from opening an interactive terminal or
+  starting Claude. Live successor spawning now requires explicit opt-in and a
+  pre-enrolled migration identity; regression tests use injected factories.
+- Replaced the legacy multi-line actionable continuation briefing in the core
+  checkout with a one-physical-line verification notice. The authenticated v2
+  implementation remains release-blocked pending closure of independent
+  WRAITH/CRUCIBLE findings for acceptance receipts, trust enrollment, HWND
+  reuse, custom stores, and stale SDK mirrors.
 - `send_string(mode="auto")` now selects `WriteConsoleInputW` for
   `ConsoleWindowClass` and retains exact-HWND `WM_CHAR` only for the tested
   CASCADIA surface. It no longer treats a successful `PostMessageW` call as

@@ -112,6 +112,7 @@ include = [
     "sc_mcp.py",
     "sc_mesh_registry.py",
     "sc_mesh_lease.py",
+    "sc_migration.py",
     "sc_fleet_guard.py",
     "sc_fabric_benchmark.py",
     "sc_fabric_host.py",
@@ -120,10 +121,25 @@ include = [
     "sc_fabric_v2.py",
     "sc_fabric_windows_svc.py",
     "sc_guarded_submit.py",
+    "sc_assignment_watchdog.py",
+    "sc_assignment_protocol.py",
+    "sc_assignment_runtime.py",
+    "sc_assignment_failover.py",
+    "sc_live_ceremony.py",
+    "sc_event_kinds.py",
+    "sc_windows_credentials.py",
+    "sc_seat_identity.py",
+    "sc_seat_pipe.py",
+    "sc_seat_revocation.py",
+    "sc_trust_anchor.py",
+    "sc_authority_trust.py",
     "sc_terminal_tab.py",
     "sc_hook_emit.py",
     "sc_hooks.py",
     "sc_local_model_role.py",
+    "sc_local_agent_runtime.py",
+    "sc_local_agent_harness.py",
+    "sc_qwen_core.py",
     "sc_echo_filter.py",
     "sc_identity.py",
     "sc_firewall.py",
@@ -226,6 +242,7 @@ selfconnect-fabric-host = "sc_fabric_host:main"
 selfconnect-fabric-router = "sc_fabric_router:main"
 selfconnect-fabric-service = "sc_fabric_service:main"
 selfconnect-local-model = "sc_local_model_role:main"
+selfconnect-local-agent = "sc_local_agent_runtime:main"
 selfconnect-tpm-attestation = "sc_tpm_attestation:main"
 
 [tool.pytest.ini_options]

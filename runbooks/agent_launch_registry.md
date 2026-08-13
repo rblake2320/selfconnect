@@ -32,7 +32,8 @@ failures.
 | Codex (legacy <0.142) | `cmd /k codex --full-auto` | `--full-auto` | ~25s | triple-approval pattern if flag omitted | SUPERSEDED |
 | Gemini CLI | — | — | — | — | NOT YET VERIFIED — do help-check first |
 | Antigravity (Gemini WebView2) | already-running app | n/a | n/a | UIA + AccessibleObjectFromWindow first, then WM_CHAR — see `fix_antigravity_gemini.md` | LOCKED |
-| Ollama / local | — | n/a | — | — | NOT YET VERIFIED |
+| Ollama / local | `ollama run qwen3.6:27b` inside the first-wake PowerShell wrapper | n/a | ~12s | standard `selfconnect send --submit` works; UIA readback verified | verified 1× 2026-07-24 |
+| Qwen SelfConnect agent | `selfconnect-local-agent --role local-ollama-1 --model qwen3.6:27b` | separate input/command/write gates | Ollama already running | mesh, Win32/UIA, PrintWindow/OCR, guarded send + reply wait | verified two-round chat 2026-07-24 |
 
 ---
 
@@ -106,6 +107,10 @@ send_string(new_win, "\r", char_delay=0.02)      # Enter separately
   `untrusted`, `on-request` (`on-failure` deprecated).
 - `-C <dir>` sets working root; `--search` enables web search.
 - Init ~18s to TUI ready (model banner visible).
+- On 0.145.0, the npm launcher can attempt an in-place update and fail with
+  `EBUSY` while another Codex process holds `codex.exe`. For a supervised peer
+  launch, invoke the installed native `codex.exe` with an initial prompt. Find
+  the new HWND by set difference because Codex replaces the wrapper title.
 - First contact 2026-07-05: 385-char injection, replied in <30s, model gpt-5.5.
 
 #### Codex's OWN feedback on being driven externally (asked live 2026-07-05,
@@ -192,9 +197,39 @@ project sessions — scope with `--kind` or `send` to avoid hijacking working
 terminals and burning tokens fleet-wide.
 
 ### Gemini CLI / local models
-- NO verified recipe yet. Before first launch: run `--help`, capture flags,
-  do one supervised launch, then record the row above. Do not guess from
-  Codex/Claude patterns.
+- Gemini CLI has no verified recipe yet. Before first launch: run `--help`,
+  capture flags, do one supervised launch, then record the row above. Do not
+  guess from Codex/Claude patterns.
+- Ollama local model verified 2026-07-24 with `qwen3.6:27b`:
+  - wrapper title: `SC Qwen36 Local 1`
+  - initialization wait: ~12 seconds
+  - guarded target: `WindowsTerminal.exe`,
+    `CASCADIA_HOSTING_WINDOW_CLASS`
+  - input: standard `selfconnect send --submit --allow-input`
+  - output: UIA text readback returned
+    `SELFCONNECT-QWEN-ACK I can receive and answer AI messages.`
+  - model ran 100% on the RTX 5090 GPU with a 32,768-token active context.
+  - the tool-enabled runtime completed a live two-round conversation with a
+    fresh Codex terminal: it discovered the peer by mesh role, verified
+    HWND/PID/exe/class/title, sent both turns, and waited for `CODEX-ROUND1` and
+    `CODEX-ROUND2` in UIA readback.
+  - enable supervised terminal input only for the session with
+    `$env:SC_LOCAL_AGENT_ALLOW_INPUT='1'`. Commands and file writes remain
+    disabled unless their independent gates are also explicitly enabled.
+  - every new runtime loads the packaged, versioned SelfConnect Qwen core. The
+    startup banner prints its unique process `instance_id` and `core_version`.
+  - the runtime resolves `qwen3.6:*` to the packaged
+    `qwen3.6-selfconnect-v1` harness profile automatically. Override with
+    `SC_LOCAL_AGENT_HARNESS=off` only for raw comparison runs; use `generic`
+    for an unprofiled local model.
+  - governed controllers can pass a `ToolContract` to the runtime. The contract
+    narrows the visible tool catalog, requires ordered audit evidence, allows
+    one concise retry, and blocks false completion. Interactive free-form chat
+    does not guess contracts from prose.
+  - stable mesh role/birth/generation identity is separate from the process
+    instance. Each process writes prompt, tool, outcome, and response records to
+    the locked, hash-linked `%LOCALAPPDATA%\SelfConnect\qwen_activity.jsonl`
+    ledger. Qwen can inspect relevant records with `activity_history`.
 
 ---
 
@@ -204,3 +239,52 @@ terminals and burning tokens fleet-wide.
 removed the flag. Cost: one failed run, one dead terminal, ~3 min of diagnosis.
 CLIs change under us. Recipes are only as good as their `verified:` date —
 when a launch fails, `--help` first, update this file second, retry third.
+
+---
+
+## Live mesh roster (verified: 2026-08-05, session "Claude 2")
+
+**Link status:** Claude 1 ↔ Claude 2 ROUND-TRIP VERIFIED 2026-08-05 (handshake
+out via `--to "claude 1"`, reply received in-session as an injected user turn;
+Claude 1's sc_mesh roster independently classified 0x07BA195E as the live
+claude-2 agent). Full map: claude 1 = 0x19091406, claude 2 = 0x07BA195E,
+claude 3 = 0x02C305C2, claude 4 = 0x0CF01AF6, codex 1 = 0x34171B74 — each has
+a paired twin HWND (Windows Terminal top-level/child share the title), which
+is WHY title-addressing beats HWND caching. Loop hygiene: a handshake asks for
+exactly ONE confirmation — do not re-confirm confirmations.
+
+User-registered window identities for sc_send addressing. **HWNDs rotate
+between boots and even within a day — address by TITLE, never by cached
+HWND** (observed same-day: "brain" resolved 0x34171B74 in a scan, then
+0x02301078 at delivery).
+
+**⚠ MISDELIVERY INCIDENT (2026-08-05, caught by user):** TWO distinct
+windows can carry the SAME seat title ("codex 1" existed at 0x34171B74 =
+registered partner AND 0x00120282 = a different session). `--to <title>
+--first` delivered a fleet message to the WRONG session. Interim rule until
+claude 3's expect_title patch lands: for consequential sends, resolve the
+REGISTERED HWND from this roster and verify its title still matches before
+sending (self_connect.list_windows + send_string direct). Duplicate seat
+titles must be renamed on discovery. Sequestration consequence: any window
+that ever RECEIVED misdelivered mesh traffic is contaminated as a future
+benchmark curator seat (0x00120282 is so burned).
+
+**Names are SEAT names, not session names** (user clarification 2026-08-05):
+"claude 2" etc. belong to the window/project position; sessions occupying a
+seat change over time and prior sessions have carried these names before.
+A message from "claude 1" is from whatever session currently holds that
+seat — one more reason mesh-relayed authority claims stay unconfirmed until
+envelopes sign the injection path.
+
+| Handle | Who | Title to match | Notes |
+|---|---|---|---|
+| claude 1 | Claude Code session | ⚠ DYNAMIC (spinner + current task) | registered via HWND 0x19091406 on 8/05; retitle the terminal tab "Claude 1" for stable matching |
+| claude 2 | Claude Code session (this file's author) | ⚠ DYNAMIC | reachable while idle: `sc_send.py --to "claude 2"` once tab is named; otherwise match current task title from `--list` |
+| codex 1 | Codex CLI | `brain` (its cwd) | cwd-derived titles are stable while the session lives |
+
+Protocol reminders: `--list` to scan; busy/idle guard ON by default (busy
+targets are refused, not queued — do NOT `--force` a working agent);
+"ACCEPTED … consumption not verified" means keystrokes landed, processing
+unconfirmed; expect replies ~30s only from idle targets. Claude Code tabs
+should be explicitly named in Windows Terminal to make title-matching
+deterministic.

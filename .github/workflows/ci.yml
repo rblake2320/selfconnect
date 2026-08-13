@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[service]" ruff pytest pytest-asyncio python-dotenv python-telegram-bot fastapi uvicorn httpx cryptography dilithium-py
+          python -m pip install -e ".[service]" "ruff==0.14.8" pytest pytest-asyncio python-dotenv python-telegram-bot fastapi uvicorn httpx cryptography dilithium-py
 
       - name: Verify Windows service dependency
         run: python -c "import pywintypes, win32file, win32pipe, winerror; print('pywin32 service dependency available')"
@@ -36,12 +36,42 @@ jobs:
           antigravity_controller.py
           approval_partner.py
           approval_telegram.py
+          sc_authority_trust.py
+          sc_assignment_failover.py
+          sc_assignment_protocol.py
+          sc_assignment_runtime.py
+          sc_assignment_watchdog.py
+          sc_live_ceremony.py
+          sc_event_kinds.py
+          sc_seat_identity.py
+          sc_seat_pipe.py
+          sc_seat_revocation.py
+          sc_trust_anchor.py
           claudego/
           tools/release_gate.py
+          tests/test_authority_revocation.py
+          tests/test_assignment_failover.py
+          tests/test_assignment_runtime.py
+          tests/test_assignment_runtime_adversarial.py
+          tests/test_assignment_watchdog.py
+          tests/test_live_ceremony.py
           tests/test_release_gate.py
+          tests/test_seat_canonicalization.py
+          tests/test_seat_pipe.py
 
       - name: Syntax check
-        run: python -m py_compile self_connect.py
+        run: >
+          python -m py_compile self_connect.py sc_assignment_failover.py sc_assignment_protocol.py
+          sc_assignment_runtime.py sc_assignment_watchdog.py sc_live_ceremony.py sc_authority_trust.py
+          sc_event_kinds.py
+          sc_seat_identity.py sc_seat_pipe.py sc_seat_revocation.py
+          sc_trust_anchor.py sc_windows_credentials.py
+
+      - name: Cross-language seat canonicalization vectors
+        run: node tests/canonical_vectors.mjs
+
+      - name: Candidate package and release coherence
+        run: python tools/candidate_coherence.py --root .
 
       - name: Import check (no Win32 display needed)
         run: |
@@ -79,6 +109,20 @@ jobs:
 
       - name: Unit tests (no Win32 desktop needed)
         run: python -m pytest tests/ -v --tb=short
+
+      - name: Signed assignment runtime security gate
+        run: >
+          python -m pytest
+          tests/test_guarded_submit.py
+          tests/test_assignment_protocol.py
+          tests/test_assignment_watchdog.py
+          tests/test_assignment_runtime.py
+          tests/test_terminal_tab_guard.py
+          tests/test_assignment_runtime_adversarial.py
+          tests/test_authority_revocation.py
+          tests/test_seat_canonicalization.py
+          tests/test_seat_pipe.py
+          -q
 
       - name: Release claim and package audit
         run: python tools/release_gate.py audit --root .

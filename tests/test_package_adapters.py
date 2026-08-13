@@ -852,3 +852,50 @@ def test_doctor_report_shape_on_windows():
     }
     assert "capability_scope" in report
     assert "platform probe" in report["capability_scope"]["tpm_identity"]
+
+
+def test_terminal_health_classifies_active_redraw_risk():
+    samples = [
+        {"read_ok": True, "sha256": "a", "text": "Working (1s · esc to interrupt)"},
+        {"read_ok": True, "sha256": "b", "text": "Working (2s · esc to interrupt)"},
+        {"read_ok": True, "sha256": "c", "text": "Working (3s · esc to interrupt)"},
+    ]
+    report = sc_cli.analyze_terminal_samples(samples)
+    assert report["ok"] is False
+    assert report["state"] == "tui_redraw_risk"
+    assert report["scroll_selection_risk"] is True
+    assert "No verified repair" in report["remediation"]
+
+
+def test_terminal_health_does_not_call_stable_terminal_frozen():
+    samples = [
+        {"read_ok": True, "sha256": "same", "text": "ready"},
+        {"read_ok": True, "sha256": "same", "text": "ready"},
+        {"read_ok": True, "sha256": "same", "text": "ready"},
+    ]
+    report = sc_cli.analyze_terminal_samples(samples)
+    assert report["ok"] is True
+    assert report["state"] == "stable_or_idle"
+    assert report["scroll_selection_risk"] is False
+
+
+def test_doctor_can_include_terminal_health(monkeypatch):
+    expected = {
+        "ok": False,
+        "state": "tui_redraw_risk",
+        "scroll_selection_risk": True,
+        "remediation": "restart inline",
+    }
+    monkeypatch.setattr(sc_cli, "terminal_health", lambda *_args, **_kwargs: expected)
+    report = sc_cli.doctor_report(terminal_hwnd=123)
+    assert report["terminal_health"] == expected
+
+
+def test_stable_terminal_text_removes_only_braille_activity_prefix():
+    source = "\u2839 techai\nnormal \u2839 content\n\u280b worker"
+    assert sc_cli.stable_terminal_text(source) == "techai\nnormal \u2839 content\nworker"
+
+
+def test_common_prefix_length_supports_tail_only_mirror_updates():
+    assert sc_cli.common_prefix_length("stable old tail", "stable new tail") == len("stable ")
+    assert sc_cli.common_prefix_length("", "new") == 0

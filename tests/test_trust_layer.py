@@ -84,7 +84,7 @@ class TestAgentIdentity:
         assert not self.b.verify(b"hello", sig)
 
     def test_pem_roundtrip(self):
-        pem = self.a.private_pem()
+        pem = self.a.private_pem(allow_private_export=True)
         restored = AgentIdentity.from_private_pem(pem, label="Agent-A")
         assert restored.did == self.a.did
         sig = restored.sign(b"roundtrip")
@@ -662,7 +662,7 @@ class TestHybridIdentity:
         assert card["mldsa_level"] == "ML-DSA-65"
 
     def test_export_import_bundle(self):
-        bundle = self.hi.export_bundle()
+        bundle = self.hi.export_bundle(allow_private_export=True)
         hi2 = HybridIdentity.from_bundle(bundle)
         assert hi2.did == self.hi.did
         msg = b"bundle roundtrip"

@@ -86,6 +86,88 @@ def resource_snapshot() -> dict[str, Any]:
     return snapshot
 
 
+def live_state_snapshot(
+    *,
+    registry_path: str | Path | None = None,
+    event_log_path: str | Path | None = None,
+    local_models_active: bool = False,
+) -> dict[str, Any]:
+    """Build fleet safety input without treating registry rows as process proof.
+
+    Registry status and the local hash chain are operational observations.  The
+    chain can detect later mutation, but it does not authenticate who asserted
+    ``status=working``.  Resource safety still acts conservatively on those
+    observations via ``resource_guard_active``.
+    """
+    try:
+        registry = sc_mesh_registry.load_registry_strict(registry_path)
+        registry_ok = True
+        registry_error = ""
+    except (FileNotFoundError, ValueError) as exc:
+        registry = {"agents": []}
+        registry_ok = False
+        registry_error = str(exc)
+    verification = sc_mesh_registry.verify_events(
+        registry_path=registry_path,
+        event_log_path=event_log_path,
+    )
+    agents = []
+    inferred_local_models_active = False
+    now = time.time()
+    actionable_statuses = {
+        "active", "working", "registered", "handoff", "standby", "blocked",
+        "invalidated", "off_rails", "stuck", "degraded", "compacting",
+    }
+    for item in registry.get("agents", []):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status", "")).lower() not in actionable_statuses:
+            continue
+        status = str(item.get("status", "")).lower()
+        heartbeat_stale = now - float(item.get("last_seen", 0) or 0) > sc_mesh_registry.STALE_HEARTBEAT_SECONDS
+        is_virtual = int(item.get("hwnd", 0) or 0) == 0 or item.get("class_name") == "virtual"
+        if heartbeat_stale and is_virtual and status not in {
+            "invalidated", "off_rails", "stuck", "degraded", "compacting"
+        }:
+            continue
+        inferred_local_models_active = inferred_local_models_active or bool(
+            is_virtual and str(item.get("agent", "")).lower() in {"local_model", "ollama", "qwen"}
+        )
+        agents.append({
+            "name": str(item.get("role") or item.get("label") or "unknown"),
+            "role": str(item.get("role") or ""),
+            "status": str(item.get("status") or "unknown"),
+            "status_source": "registry_observation",
+            "processing_proven": False,
+            "missed_acks": int(item.get("missed_acks") or 0),
+            "wrong_window_guard_failed": item.get("guard_ok") is False,
+        })
+    operational_activity_observed = any(
+        str(item.get("status", "")).lower() not in {"done", "removed", "inactive"}
+        for item in agents
+    )
+    return {
+        "schema_version": 1,
+        "source": "selfconnect-live-state",
+        "agents": agents,
+        "resources": resource_snapshot(),
+        "thresholds": default_thresholds(),
+        "baseline": None,
+        "run_active": False,
+        "processing_proven": False,
+        "processing_evidence": "none_authenticated",
+        "operational_activity_observed": operational_activity_observed,
+        "resource_guard_active": operational_activity_observed,
+        "local_models_active": bool(local_models_active or inferred_local_models_active),
+        "event_log_ok": bool(verification["ok"] and registry_ok),
+        "event_log": verification,
+        "registry_ok": registry_ok,
+        "registry_error": registry_error,
+        "registry_path": str(Path(registry_path) if registry_path else sc_mesh_registry.default_registry_path()),
+        "created_at": time.time(),
+    }
+
+
 def _agent_name(agent: dict[str, Any]) -> str:
     return str(agent.get("name") or agent.get("role") or agent.get("id") or "unknown")
 
@@ -152,6 +234,20 @@ def evaluate_fleet(
             "reasons": [],
         }
 
+        if str(report["status"]).lower() == "blocked":
+            report["risk"] = "red"
+            report["reasons"].append("agent_status_blocked")
+            blocked_count += 1
+        if str(report["status"]).lower() in {"invalidated", "off_rails", "stuck"}:
+            report["risk"] = "red"
+            report["reasons"].append(f"agent_status_{str(report['status']).lower()}")
+            hard_reasons.append({"kind": "unsafe_agent_status", "agent": name, "status": report["status"]})
+        if str(report["status"]).lower() in {"degraded", "compacting"}:
+            report["risk"] = "yellow"
+            report["capture"] = True
+            report["reasons"].append(f"agent_status_{str(report['status']).lower()}")
+            capture_triggers.append({"agent": name, "kind": "degraded_agent_status", "status": report["status"]})
+
         if missed_acks >= 1:
             report["risk"] = "yellow"
             report["capture"] = True
@@ -161,7 +257,8 @@ def evaluate_fleet(
             report["risk"] = "red"
             report["status"] = "blocked"
             report["reasons"].append("ack_block_threshold")
-            blocked_count += 1
+            if str(agent.get("status", "")).lower() != "blocked":
+                blocked_count += 1
         if local_narration >= int(cfg["local_narration_hard_stop"]):
             report["risk"] = "red"
             hard_reasons.append({
@@ -426,8 +523,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("resources")
     p.set_defaults(command="resources")
 
+    p = sub.add_parser("snapshot")
+    p.add_argument("--registry", default="")
+    p.add_argument("--event-log", default="")
+    p.add_argument("--local-models-active", action="store_true")
+
     p = sub.add_parser("guard")
-    p.add_argument("--state-json", required=True, help="JSON with agents/resources/baseline/thresholds")
+    p.add_argument("--state-json", default="", help="optional JSON override; live state is the default")
+    p.add_argument("--registry", default="")
+    p.add_argument("--event-log", default="")
     p.add_argument("--local-models-active", action="store_true")
 
     p = sub.add_parser("register")
@@ -472,29 +576,37 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.command == "resources":
         return _print_json(resource_snapshot())
+    if args.command == "snapshot":
+        return _print_json(live_state_snapshot(
+            registry_path=args.registry or None,
+            event_log_path=args.event_log or None,
+            local_models_active=args.local_models_active,
+        ))
     if args.command == "guard":
-        try:
-            state = _load_json_file(args.state_json)
-        except FileNotFoundError:
-            return _print_json_error(
-                "state_json_missing",
-                "fleet guard state file does not exist",
-                path=args.state_json,
-            )
-        except json.JSONDecodeError as exc:
-            return _print_json_error(
-                "state_json_invalid",
-                "fleet guard state file is not valid JSON",
-                path=args.state_json,
-                line=exc.lineno,
-                column=exc.colno,
+        if args.state_json:
+            try:
+                state = _load_json_file(args.state_json)
+            except FileNotFoundError:
+                return _print_json_error(
+                    "state_json_missing", "fleet guard state file does not exist", path=args.state_json,
+                )
+            except json.JSONDecodeError as exc:
+                return _print_json_error(
+                    "state_json_invalid", "fleet guard state file is not valid JSON",
+                    path=args.state_json, line=exc.lineno, column=exc.colno,
+                )
+        else:
+            state = live_state_snapshot(
+                registry_path=args.registry or None,
+                event_log_path=args.event_log or None,
+                local_models_active=args.local_models_active,
             )
         return _print_json(evaluate_fleet(
             list(state.get("agents", [])),
             resources=state.get("resources") or resource_snapshot(),
             thresholds=state.get("thresholds"),
             baseline=state.get("baseline"),
-            run_active=bool(state.get("run_active", True)),
+            run_active=bool(state.get("resource_guard_active", state.get("run_active", True))),
             local_models_active=bool(args.local_models_active or state.get("local_models_active", False)),
             event_log_ok=bool(state.get("event_log_ok", True)),
         ))

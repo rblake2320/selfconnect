@@ -41,16 +41,22 @@ def _make_win32_stub():
     return mod
 
 
+_installed_stub = "self_connect" not in sys.modules
 sys.modules.setdefault("self_connect", _make_win32_stub())
 
 import hub_relay  # noqa: E402
 import spark2_client  # noqa: E402
 from sc_envelope import Envelope, load_or_create_mesh_key  # noqa: E402
 
+if _installed_stub:
+    # hub_relay/spark2_client retain the stub they imported. Do not leak it to
+    # unrelated Win32 tests collected in the same pytest process.
+    sys.modules.pop("self_connect", None)
+
 
 @pytest.fixture
 def tmp_key(tmp_path, monkeypatch):
-    key = load_or_create_mesh_key(tmp_path / "mesh.key")
+    key = load_or_create_mesh_key(tmp_path / "mesh.key", allow_plaintext_file=True)
     monkeypatch.setattr(hub_relay, "MESH_KEY", key)
     monkeypatch.setattr(spark2_client, "MESH_KEY", key)
     return key
@@ -95,7 +101,7 @@ def test_process_messages_accepts_valid_envelope(tmp_key, monkeypatch):
 
 
 def test_process_messages_drops_bad_sig(tmp_key, monkeypatch, tmp_path):
-    other_key = load_or_create_mesh_key(tmp_path / "other.key")
+    other_key = load_or_create_mesh_key(tmp_path / "other.key", allow_plaintext_file=True)
     env = Envelope(
         sender="cc-spark2", recipient="windows-a",
         kind="cmd", payload={"cmd": "CMD:MESH_STATUS"},
@@ -189,7 +195,7 @@ def test_sc_call_extracts_signed_reply(tmp_key, monkeypatch):
 
 
 def test_sc_call_rejects_bad_sig(tmp_key, monkeypatch, tmp_path):
-    other_key = load_or_create_mesh_key(tmp_path / "bad.key")
+    other_key = load_or_create_mesh_key(tmp_path / "bad.key", allow_plaintext_file=True)
     call_count = [0]
 
     class FakeResp:

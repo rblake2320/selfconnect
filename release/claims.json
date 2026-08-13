@@ -36,7 +36,7 @@
         },
         {
           "path": ".github/workflows/ci.yml",
-          "sha256_text": "4dc415a924ff2619b0f7f858dea8feacd9e6919b44495d22e5d21b132f08c1b1"
+          "sha256_text": "07e73e90534d4257faef41a1a8e074cedf4fd70fa61e7a17c59d90a9f59db568"
         }
       ]
     },
@@ -47,7 +47,7 @@
       "release": true,
       "scope": "The v0.12 Windows SDK surface declared by the tracked source and package tests.",
       "boundary": "The core SDK is not by itself a compliance product, authorization package, universal desktop controller, or proof that optional adapters are enabled in a deployment.",
-      "verified_on": "2026-07-15",
+      "verified_on": "2026-08-12",
       "public_readme": {
         "tag": "product.core_win32_bridge",
         "path": "README.md",
@@ -56,15 +56,15 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
+          "sha256_text": "ad9383a6bb7e722d3ccf2f601aee21f3904f455c6fdd81ba237baed095f64eda"
         },
         {
           "path": "sc_cli.py",
-          "sha256_text": "f3f3b671278e640fff9dfba6ee07af25b3a459e433ae17d3e8606db5d13704ca"
+          "sha256_text": "4f8dece26e2a00e4754b6447a6a24fb8eec14a6766b215a3159968898143016b"
         },
         {
           "path": "tests/test_package_adapters.py",
-          "sha256_text": "f1e4c06e99f192d93182f1b4f2a36871c3b35d02975ad2b56250b003e2297ef4"
+          "sha256_text": "a950a60a977d8078a4ded5823cb4877f44ed793188ce17d7e4bed48fc8f76436"
         }
       ]
     },
@@ -99,7 +99,7 @@
       "release": true,
       "scope": "Dependency declarations in pyproject.toml.",
       "boundary": "Dependency availability does not establish adapter enablement, deployment posture, or live validation.",
-      "verified_on": "2026-07-15",
+      "verified_on": "2026-08-12",
       "public_readme": {
         "tag": "package.installation_extras",
         "path": "README.md",
@@ -108,7 +108,7 @@
       "evidence": [
         {
           "path": "pyproject.toml",
-          "sha256_text": "ce2a1f486016b1a3fff5f1962e834f541cd375a5b0d276a7c4c2c6c45f6d5c49"
+          "sha256_text": "f3f235e207c37c07c257caf101bf3da7296bcfd891bc9ee10f398550ed4b122f"
         }
       ]
     },
@@ -119,7 +119,7 @@
       "release": true,
       "scope": "sc_cli.send_text_to_window and its package-adapter tests.",
       "boundary": "A matching guard and successful transport record do not establish receiver processing; an explicit non-terminal override remains available.",
-      "verified_on": "2026-07-15",
+      "verified_on": "2026-08-12",
       "public_readme": {
         "tag": "package.cli_target_guard",
         "path": "README.md",
@@ -128,11 +128,11 @@
       "evidence": [
         {
           "path": "sc_cli.py",
-          "sha256_text": "f3f3b671278e640fff9dfba6ee07af25b3a459e433ae17d3e8606db5d13704ca"
+          "sha256_text": "4f8dece26e2a00e4754b6447a6a24fb8eec14a6766b215a3159968898143016b"
         },
         {
           "path": "tests/test_package_adapters.py",
-          "sha256_text": "f1e4c06e99f192d93182f1b4f2a36871c3b35d02975ad2b56250b003e2297ef4"
+          "sha256_text": "a950a60a977d8078a4ded5823cb4877f44ed793188ce17d7e4bed48fc8f76436"
         }
       ]
     },
@@ -143,7 +143,7 @@
       "release": true,
       "scope": "The tracked sc_mcp.py server adapter and package tests.",
       "boundary": "MCP tool registration does not establish a running server, remote authorization, deployment hardening, or receiver delivery.",
-      "verified_on": "2026-07-15",
+      "verified_on": "2026-08-12",
       "public_readme": {
         "tag": "package.mcp_guarded_surface",
         "path": "README.md",
@@ -156,7 +156,7 @@
         },
         {
           "path": "tests/test_package_adapters.py",
-          "sha256_text": "f1e4c06e99f192d93182f1b4f2a36871c3b35d02975ad2b56250b003e2297ef4"
+          "sha256_text": "a950a60a977d8078a4ded5823cb4877f44ed793188ce17d7e4bed48fc8f76436"
         }
       ]
     },
@@ -187,7 +187,7 @@
       "release": true,
       "scope": "sc_mesh_registry.py and its deterministic package-adapter tests.",
       "boundary": "The local chain is tamper-evident for retained content, not deletion- or truncation-resistant without an external checkpoint, and does not prove current runtime mesh health.",
-      "verified_on": "2026-07-15",
+      "verified_on": "2026-08-12",
       "public_readme": {
         "tag": "mesh.registry_hash_chain",
         "path": "README.md",
@@ -196,11 +196,11 @@
       "evidence": [
         {
           "path": "sc_mesh_registry.py",
-          "sha256_text": "fd207149d0f6f40bf9172437c343fc9b6b75a7c153cca2ac1a31bc27418bdcb2"
+          "sha256_text": "b092dd751caf459487e21f86f28acc0bbdb3584c96e15c56c5dc5f006d5a32b2"
         },
         {
           "path": "tests/test_package_adapters.py",
-          "sha256_text": "f1e4c06e99f192d93182f1b4f2a36871c3b35d02975ad2b56250b003e2297ef4"
+          "sha256_text": "a950a60a977d8078a4ded5823cb4877f44ed793188ce17d7e4bed48fc8f76436"
         }
       ]
     },
@@ -211,7 +211,7 @@
       "release": true,
       "scope": "The guarded Windows Terminal CASCADIA surface only.",
       "boundary": "A successful PostMessageW return establishes queue acceptance, not receiver processing or visible delivery. This does not cover ConsoleWindowClass, universal application input, or claim that the wider ecosystem never uses APIs, MCP, brokers, or networks.",
-      "verified_on": "2026-07-15",
+      "verified_on": "2026-08-12",
       "public_readme": {
         "tag": "terminal.os_native_actuation",
         "path": "README.md",
@@ -220,11 +220,11 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
+          "sha256_text": "ad9383a6bb7e722d3ccf2f601aee21f3904f455c6fdd81ba237baed095f64eda"
         },
         {
           "path": "tests/test_package_adapters.py",
-          "sha256_text": "f1e4c06e99f192d93182f1b4f2a36871c3b35d02975ad2b56250b003e2297ef4"
+          "sha256_text": "a950a60a977d8078a4ded5823cb4877f44ed793188ce17d7e4bed48fc8f76436"
         }
       ]
     },
@@ -355,7 +355,7 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
+          "sha256_text": "ad9383a6bb7e722d3ccf2f601aee21f3904f455c6fdd81ba237baed095f64eda"
         },
         {
           "path": "tests/test_console_io.py",
@@ -370,7 +370,7 @@
       "release": true,
       "scope": "self_connect.__all__ and the exact export smoke test.",
       "boundary": "Export presence is not live behavior evidence and remains subject to Windows, target, permission, and optional-dependency boundaries.",
-      "verified_on": "2026-07-15",
+      "verified_on": "2026-08-12",
       "public_readme": {
         "tag": "package.public_api_surface",
         "path": "README.md",
@@ -379,11 +379,11 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
+          "sha256_text": "ad9383a6bb7e722d3ccf2f601aee21f3904f455c6fdd81ba237baed095f64eda"
         },
         {
           "path": "tests/test_package_adapters.py",
-          "sha256_text": "f1e4c06e99f192d93182f1b4f2a36871c3b35d02975ad2b56250b003e2297ef4"
+          "sha256_text": "a950a60a977d8078a4ded5823cb4877f44ed793188ce17d7e4bed48fc8f76436"
         }
       ]
     },
@@ -511,7 +511,7 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
+          "sha256_text": "ad9383a6bb7e722d3ccf2f601aee21f3904f455c6fdd81ba237baed095f64eda"
         },
         {
           "path": "tests/test_console_io.py",
@@ -546,7 +546,7 @@
       "release": true,
       "scope": "The core local actuation implementation and its network-import release check.",
       "boundary": "The broader ecosystem can use networked adapters; this is an engineering distinction, not an exclusivity, prior-art, novelty, non-obviousness, or patentability conclusion.",
-      "verified_on": "2026-07-15",
+      "verified_on": "2026-08-12",
       "public_readme": {
         "tag": "transport.engineering_distinction",
         "path": "README.md",
@@ -555,11 +555,11 @@
       "evidence": [
         {
           "path": "self_connect.py",
-          "sha256_text": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
+          "sha256_text": "ad9383a6bb7e722d3ccf2f601aee21f3904f455c6fdd81ba237baed095f64eda"
         },
         {
           "path": "sc_cli.py",
-          "sha256_text": "f3f3b671278e640fff9dfba6ee07af25b3a459e433ae17d3e8606db5d13704ca"
+          "sha256_text": "4f8dece26e2a00e4754b6447a6a24fb8eec14a6766b215a3159968898143016b"
         },
         {
           "path": "docs/SELFCONNECT_PRODUCT_BOUNDARIES.md",
@@ -842,7 +842,7 @@
         },
         {
           "path": "self_connect.py",
-          "sha256_text": "070352a5ff5678fbbf760525ac5006663571ae4b71f20880a8139e1e182b9939"
+          "sha256_text": "ad9383a6bb7e722d3ccf2f601aee21f3904f455c6fdd81ba237baed095f64eda"
         }
       ]
     },

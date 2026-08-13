@@ -76,11 +76,16 @@ pip install selfconnect[full]
 ```bash
 selfconnect doctor --json
 selfconnect doctor --windows
+selfconnect doctor --json --terminal-hwnd 0x123456 --terminal-log proofs/terminal-health.jsonl --capture-on-risk
 selfconnect windows --query "Claude"
 selfconnect guard --hwnd 0x123456 --expect-pid 1234 --expect-class CASCADIA_HOSTING_WINDOW_CLASS
 selfconnect read --hwnd 0x123456
 selfconnect capture --hwnd 0x123456 --path proof.png
 ```
+
+For intermittent terminal flicker accompanied by scroll, selection, and copy
+lockout, see
+[`docs/TERMINAL_TUI_HEALTH.md`](docs/TERMINAL_TUI_HEALTH.md).
 
 <!-- SC-CLAIM:package.cli_target_guard START -->
 The CLI send path requires explicit input authorization and either matching

@@ -221,7 +221,7 @@ class HybridIdentity:
         ok  = identity.verify(b"hello", sig)
 
         # Export / import
-        bundle = identity.export_bundle()
+        bundle = identity.export_bundle(allow_private_export=True)
         same   = HybridIdentity.from_bundle(bundle)
 
     The DID is inherited from the Ed25519 component (backward compatible).
@@ -375,16 +375,18 @@ class HybridIdentity:
 
     # ── serialisation ─────────────────────────────────────────────────────
 
-    def export_bundle(self) -> dict:
+    def export_bundle(self, *, allow_private_export: bool = False) -> dict:
         """
         Export the full keypair bundle (SENSITIVE — contains private keys).
         Store encrypted at rest.
         """
+        if not allow_private_export:
+            raise PermissionError("hybrid private key export requires allow_private_export=True")
         return {
             "schema": "selfconnect-hybrid-identity-bundle-v1",
             "label": self.label,
             "did": self.did,
-            "ed25519_private_pem": self._classical.private_pem().decode(),
+            "ed25519_private_pem": self._classical.private_pem(allow_private_export=True).decode(),
             "mldsa_level": self._mldsa_level.value,
             "mldsa_pk": base64.b64encode(self._mldsa_pk).decode(),
             "mldsa_sk": base64.b64encode(self._mldsa_sk).decode(),
