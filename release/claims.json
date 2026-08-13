@@ -36,7 +36,7 @@
         },
         {
           "path": ".github/workflows/ci.yml",
-          "sha256_text": "676183eb837f289d77a130422028bccc33aa113b6225519df2d9e7cd322808e9"
+          "sha256_text": "796317eee539f6d4511a4b56c7757806aea899e1aa352d9135b78dbd64e02ce4"
         }
       ]
     },
@@ -108,7 +108,7 @@
       "evidence": [
         {
           "path": "pyproject.toml",
-          "sha256_text": "8db4da9920c0e9225daea08e625a1fc5f8e6b0cf51f466cd7e435da063a46a67"
+          "sha256_text": "f3f235e207c37c07c257caf101bf3da7296bcfd891bc9ee10f398550ed4b122f"
         }
       ]
     },
