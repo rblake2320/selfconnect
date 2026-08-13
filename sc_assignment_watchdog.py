@@ -6,7 +6,7 @@ import copy
 import re
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,6 +33,14 @@ _BLOCKED = re.compile(r"\A(?:status:\s*)?(?:blocked|approval required|permission
 _WORKING = re.compile(r"\A(?:status:\s*)?(?:working|thinking|running|in progress|processing)\b", re.I)
 _COMPLETED = re.compile(r"\A(?:status:\s*)?(?:completed|done|finished)\Z", re.I)
 _BARE_SHELL = re.compile(r"\A(?:PS [A-Za-z]:\\[^>]*>|\$)\s*\Z", re.I)
+
+
+def _plain_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {name: _plain_json(item) for name, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain_json(item) for item in value]
+    return value
 
 
 class AssignmentWatchdog:
@@ -161,7 +169,7 @@ class AssignmentWatchdog:
         poll_seconds: float,
         sleep: Callable[[float], None],
     ) -> Observation:
-        if not isinstance(assignment, dict):
+        if not isinstance(assignment, Mapping):
             self._escalate(hwnd=hwnd, state="blocked", reason="malformed_assignment_input")
             return Observation("blocked", "assignment input is malformed", "protocol")
         if not callable(self._receipt_reader) or not callable(self._source_guard) or not callable(self._target_guard):
@@ -191,14 +199,14 @@ class AssignmentWatchdog:
                 raw = self._receipt_reader()
                 self._guard_pair(assignment_source, expected_target, "after_receipt_read")
                 if raw is not None:
-                    if not isinstance(raw, dict):
+                    if not isinstance(raw, Mapping):
                         raise AssignmentVerificationError("receipt source returned a non-dict")
                     verification = self._resolve_verification()
                     if verification.get("expected_target_identity") != expected_target:
                         raise AssignmentVerificationError("live expected target identity changed")
                     verified = verify_consume_state_receipt(
-                        copy.deepcopy(raw),
-                        copy.deepcopy(assignment),
+                        _plain_json(raw),
+                        _plain_json(assignment),
                         store=self._store,
                         **verification,
                     )

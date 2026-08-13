@@ -13,6 +13,7 @@ import copy
 import hashlib
 import json
 import math
+import pickle
 import secrets
 import sqlite3
 import time
@@ -41,51 +42,68 @@ from sc_seat_revocation import resolve_revoked_key_ids
 from sc_terminal_tab import TerminalTabGuard, TerminalTabIdentity
 
 
-class ImmutableEvidence(dict):
-    """JSON-compatible recursively immutable authenticated evidence."""
+class ImmutableEvidence(tuple, Mapping[str, Any]):
+    """Immutable mapping composed solely from private immutable tuples."""
 
-    def __init__(self, *args: Any, expose_assurance: bool = False, **kwargs: Any) -> None:
-        dict.__init__(self, *args, **kwargs)
-        object.__setattr__(self, "_expose_assurance", expose_assurance)
+    __slots__ = ()
 
-    def __getitem__(self, name: Any) -> Any:
-        if name == "state_authority_assurance" and self._expose_assurance and not dict.__contains__(self, name):
+    def __new__(
+        cls,
+        items: tuple[tuple[str, Any], ...],
+        *,
+        expose_assurance: bool = False,
+    ) -> ImmutableEvidence:
+        return tuple.__new__(cls, (items, expose_assurance))
+
+    @property
+    def __items(self) -> tuple[tuple[str, Any], ...]:
+        return tuple.__getitem__(self, 0)
+
+    @property
+    def __expose_assurance(self) -> bool:
+        return tuple.__getitem__(self, 1)
+
+    def __getitem__(self, name: str) -> Any:
+        for key, value in self.__items:
+            if key == name:
+                return value
+        if name == "state_authority_assurance" and self.__expose_assurance:
             return _LOCAL_STATE_AUTHORITY_ASSURANCE
-        return dict.__getitem__(self, name)
+        raise KeyError(name)
 
-    def __contains__(self, name: object) -> bool:
-        return bool((name == "state_authority_assurance" and self._expose_assurance) or dict.__contains__(self, name))
+    def __iter__(self):
+        return (name for name, _value in self.__items)
 
-    def get(self, name: Any, default: Any = None) -> Any:
-        try:
-            return self[name]
-        except KeyError:
-            return default
+    def __len__(self) -> int:
+        return len(self.__items)
 
-    def _deny(self, *_args: Any, **_kwargs: Any) -> None:
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Mapping) and _thaw_evidence(self) == _thaw_evidence(other)
+
+    __hash__ = None
+
+    def __setattr__(self, _name: str, _value: Any) -> None:
         raise TypeError("authenticated evidence is immutable")
 
-    __setattr__ = _deny
-    __delattr__ = _deny
-    __setitem__ = _deny
-    __delitem__ = _deny
-    __ior__ = _deny
-    clear = _deny
-    pop = _deny
-    popitem = _deny
-    setdefault = _deny
-    update = _deny
+    def __delattr__(self, _name: str) -> None:
+        raise TypeError("authenticated evidence is immutable")
+
+    def __copy__(self) -> ImmutableEvidence:
+        return self
 
     def __deepcopy__(self, _memo: dict[int, Any]) -> ImmutableEvidence:
         return self
 
+    def __reduce_ex__(self, _protocol: int):
+        raise pickle.PicklingError("authenticated evidence is intentionally not picklable")
 
-_LOCAL_STATE_AUTHORITY_ASSURANCE = MappingProxyType(
-    {
-        "mode": "local_dpapi_integrity_only",
-        "same_user_threat": "excluded",
-        "external_monotonic_anchor": False,
-    }
+
+_LOCAL_STATE_AUTHORITY_ASSURANCE = ImmutableEvidence(
+    (
+        ("mode", "local_dpapi_integrity_only"),
+        ("same_user_threat", "excluded"),
+        ("external_monotonic_anchor", False),
+    )
 )
 
 
@@ -102,12 +120,30 @@ def _immutable_evidence(value: Any, *, expose_assurance: bool = False) -> Any:
     """Recursively freeze authenticated evidence after wire verification."""
     if type(value) is dict:
         return ImmutableEvidence(
-            {name: _immutable_evidence(item) for name, item in value.items()},
+            tuple((name, _immutable_evidence(item)) for name, item in value.items()),
             expose_assurance=expose_assurance,
         )
     if type(value) is list:
         return tuple(_immutable_evidence(item) for item in value)
     return value
+
+
+def _thaw_evidence(value: Any) -> Any:
+    """Produce an ordinary JSON value without virtual assurance view fields."""
+    if type(value) is ImmutableEvidence:
+        return {name: _thaw_evidence(item) for name, item in value._ImmutableEvidence__items}
+    if type(value) is tuple:
+        return [_thaw_evidence(item) for item in value]
+    if type(value) is dict:
+        return {name: _thaw_evidence(item) for name, item in value.items()}
+    if type(value) is list:
+        return [_thaw_evidence(item) for item in value]
+    return value
+
+
+def thaw_authenticated_evidence(value: Any) -> Any:
+    """Explicitly copy immutable authenticated evidence into plain JSON values."""
+    return _thaw_evidence(value)
 
 
 def _require_runtime_assurance(root: Any, high_assurance: bool) -> None:
@@ -242,7 +278,7 @@ def _resolve_revocations(resolver: SeatRevocationResolver) -> frozenset[str]:
 def _canonical(value: Any) -> bytes:
     try:
         return json.dumps(
-            value,
+            _thaw_evidence(value),
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=True,
@@ -1117,7 +1153,7 @@ class SeatAssignmentBroker:
             "state_authority_assurance": _wire_state_authority_assurance(),
         }
         receipt = emit_state_receipt(
-            assignment,
+            _thaw_evidence(assignment),
             seat_identity=self._seat_identity,
             authority_public_key_hex=self._bindings.authority_public_key_hex,
             current_target_identity=self._current_target(),
@@ -1143,9 +1179,9 @@ class SeatAssignmentBroker:
             return None
         revocations = _resolve_revocations(self._revocation_resolver)
         verified = verify_consume_ack(
-            ack,
-            receipt,
-            assignment,
+            _thaw_evidence(ack),
+            _thaw_evidence(receipt),
+            _thaw_evidence(assignment),
             store=self._store,
             pinned_coordinator_public_key_hex=self._bindings.coordinator_public_key_hex,
             authority_public_key_hex=self._bindings.authority_public_key_hex,
@@ -1428,7 +1464,7 @@ class ProductionAssignmentRuntime:
         """Idempotently recreate/publish an ACK after delivery loss."""
         revocations = _resolve_revocations(self._revocation_resolver)
         ack = acknowledge_state_receipt(
-            receipt,
+            _thaw_evidence(receipt),
             coordinator_identity=self._coordinator_identity,
             store=self._store,
             revoked_coordinator_key_ids=revocations,
@@ -1459,4 +1495,5 @@ __all__ = [
     "SelfConnectAssignmentReceiver",
     "parse_assignment_ingress",
     "provision_runtime_trust_root",
+    "thaw_authenticated_evidence",
 ]

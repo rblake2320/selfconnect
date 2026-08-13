@@ -219,7 +219,13 @@ def test_signed_inline_dispatch_broker_and_dynamic_watchdog_end_to_end(tmp_path,
 
     wall = [NOW + 1]
     broker = _broker(case, tmp_path, wall)
-    admission = broker.admit_raw(json.dumps(dispatch.assignment, sort_keys=True, separators=(",", ":")))
+    admission = broker.admit_raw(
+        json.dumps(
+            runtime_module.thaw_authenticated_evidence(dispatch.assignment),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
     assert admission.assignment["payload"] == PAYLOAD
     assert admission.accepted_receipt["state"] == "accepted"
     wall[0] = NOW + 2
@@ -271,7 +277,7 @@ def test_dynamic_reader_observes_receipt_published_after_initial_empty_read(tmp_
     reader = case["mailbox"].reader(assignment, channel=case["channel"])
     assert reader() is None
     admission = _broker(case, tmp_path, [NOW + 1]).admit_raw(
-        json.dumps(assignment, sort_keys=True, separators=(",", ":"))
+        json.dumps(runtime_module.thaw_authenticated_evidence(assignment), sort_keys=True, separators=(",", ":"))
     )
     receipt = reader()
     assert receipt == admission.accepted_receipt
@@ -297,7 +303,9 @@ def test_live_target_response_key_and_channel_mismatches_fail_before_admission(t
     for index, providers in enumerate(cases):
         with pytest.raises(AssignmentVerificationError):
             _broker(case, tmp_path / str(index), [NOW + 1], **providers).admit_raw(
-                json.dumps(assignment, sort_keys=True, separators=(",", ":"))
+                json.dumps(
+                    runtime_module.thaw_authenticated_evidence(assignment), sort_keys=True, separators=(",", ":")
+                )
             )
 
 
@@ -305,14 +313,14 @@ def test_mailbox_fork_and_forged_receipt_never_authenticate(tmp_path, monkeypatc
     case = _case(tmp_path, monkeypatch)
     assignment = case["runtime"].dispatch(PAYLOAD, now=NOW).assignment
     admission = _broker(case, tmp_path, [NOW + 1]).admit_raw(
-        json.dumps(assignment, sort_keys=True, separators=(",", ":"))
+        json.dumps(runtime_module.thaw_authenticated_evidence(assignment), sort_keys=True, separators=(",", ":"))
     )
-    fork = json.loads(json.dumps(admission.accepted_receipt))
+    fork = runtime_module.thaw_authenticated_evidence(admission.accepted_receipt)
     fork["detail"] = {"forged": True}
     with pytest.raises(AssignmentReplayError, match="fork"):
         case["mailbox"].publish(fork, channel=case["channel"])
 
-    forged = json.loads(json.dumps(admission.accepted_receipt))
+    forged = runtime_module.thaw_authenticated_evidence(admission.accepted_receipt)
     forged["signature_b64"] = "Zm9yZ2Vk"
     alerts = []
     watchdog = runtime_module.AssignmentWatchdog(

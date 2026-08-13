@@ -4,6 +4,7 @@ import base64
 import copy
 import hashlib
 import json
+import pickle
 import sqlite3
 
 import pytest
@@ -47,7 +48,12 @@ LOCAL_ASSURANCE = {
 
 
 def _canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    return json.dumps(
+        runtime_module.thaw_authenticated_evidence(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("ascii")
 
 
 def _local_root_material(env):
@@ -447,8 +453,8 @@ def test_durable_cursor_restart_skips_already_committed_expired_receipt(tmp_path
     reader = env["mailbox"].reader(assignment, channel=env["channel"], consumer_id="restart")
     observed = reader()
     verify_consume_state_receipt(
-        observed,
-        assignment,
+        runtime_module.thaw_authenticated_evidence(observed),
+        runtime_module.thaw_authenticated_evidence(assignment),
         store=env["coordinator_store"],
         **env["bindings"].verification(frozenset(), now=NOW + 2),
     )
@@ -505,7 +511,7 @@ def test_mailbox_detects_delete_truncate_record_tamper_and_reorder(tmp_path, mon
     assignment = _dispatch(env).assignment
     receipt = _broker(env, tmp_path).admit_raw(_canonical(assignment)).accepted_receipt
     if tamper == "reorder":
-        forged = json.loads(json.dumps(receipt))
+        forged = runtime_module.thaw_authenticated_evidence(receipt)
         forged["sequence"] = 3
         with pytest.raises(Exception, match=r"reorder|gap|fork"):
             env["mailbox"].publish(forged, channel=env["channel"])
@@ -536,8 +542,8 @@ def test_mailbox_read_is_an_immutable_toctou_snapshot(tmp_path, monkeypatch):
         )
     assert snapshot == receipt
     verify_consume_state_receipt(
-        snapshot,
-        assignment,
+        runtime_module.thaw_authenticated_evidence(snapshot),
+        runtime_module.thaw_authenticated_evidence(assignment),
         store=env["coordinator_store"],
         **env["bindings"].verification(frozenset(), now=NOW + 2),
     )
@@ -553,8 +559,8 @@ def test_ack_loss_recovery_is_durable_and_idempotent(tmp_path, monkeypatch):
     broker = _broker(env, tmp_path)
     receipt = broker.admit_raw(_canonical(assignment)).accepted_receipt
     verify_consume_state_receipt(
-        receipt,
-        assignment,
+        runtime_module.thaw_authenticated_evidence(receipt),
+        runtime_module.thaw_authenticated_evidence(assignment),
         store=env["coordinator_store"],
         **env["bindings"].verification(frozenset(), now=NOW + 2),
     )
@@ -583,13 +589,13 @@ def test_raw_ingress_quarantines_unsigned_wrong_key_and_noncanonical_text(tmp_pa
     env = _environment(tmp_path, monkeypatch)
     assignment = _dispatch(env).assignment
     broker = _broker(env, tmp_path)
-    unsigned = json.loads(json.dumps(assignment))
+    unsigned = runtime_module.thaw_authenticated_evidence(assignment)
     unsigned.pop("signature_b64")
     with pytest.raises(AssignmentVerificationError, match=r"signature|delivery-authorized"):
         broker.admit_raw(_canonical(unsigned))
 
     wrong = AgentIdentity.generate("wrong")
-    body = json.loads(json.dumps(assignment))
+    body = runtime_module.thaw_authenticated_evidence(assignment)
     body.pop("signature_b64")
     wrong_signed = {
         **body,
@@ -675,8 +681,8 @@ def test_all_local_authoritative_outputs_carry_canonical_assurance(tmp_path, mon
     receipt = broker.emit(dispatch.assignment, state="working", detail={}, idempotency_key="labeled-working")
     assert receipt["detail"]["state_authority_assurance"] == LOCAL_ASSURANCE
     verify_consume_state_receipt(
-        admission.accepted_receipt,
-        dispatch.assignment,
+        runtime_module.thaw_authenticated_evidence(admission.accepted_receipt),
+        runtime_module.thaw_authenticated_evidence(dispatch.assignment),
         store=env["coordinator_store"],
         **env["bindings"].verification(frozenset(), now=NOW + 2),
     )
@@ -693,8 +699,8 @@ def test_authenticated_assurance_labels_are_recursively_immutable_and_wire_compa
     broker = _broker(env, tmp_path)
     admission = broker.admit_raw(_canonical(dispatch.assignment))
     verify_consume_state_receipt(
-        admission.accepted_receipt,
-        dispatch.assignment,
+        runtime_module.thaw_authenticated_evidence(admission.accepted_receipt),
+        runtime_module.thaw_authenticated_evidence(dispatch.assignment),
         store=env["coordinator_store"],
         **env["bindings"].verification(frozenset(), now=NOW + 2),
     )
@@ -724,14 +730,28 @@ def test_authenticated_assurance_labels_are_recursively_immutable_and_wire_compa
         assert label == LOCAL_ASSURANCE
         with pytest.raises(TypeError):
             label["mode"] = "forged_high_assurance"
-    with pytest.raises(TypeError, match="immutable"):
+    with pytest.raises(TypeError):
         admission.accepted_receipt["detail"]["state_authority_assurance"] = {}
-    with pytest.raises(TypeError, match="immutable"):
+    with pytest.raises(TypeError):
         journal_entries[-1]["evidence"]["state_authority_assurance"] = {}
 
     # Virtual outer labels do not change the coordinator/seat signed wire schema.
-    assert "state_authority_assurance" not in json.loads(json.dumps(dispatch.assignment))
-    assert "state_authority_assurance" not in json.loads(json.dumps(admission.accepted_receipt))
+    assert "state_authority_assurance" not in runtime_module.thaw_authenticated_evidence(dispatch.assignment)
+    assert "state_authority_assurance" not in runtime_module.thaw_authenticated_evidence(admission.accepted_receipt)
+
+    evidence = admission.accepted_receipt
+    with pytest.raises(TypeError):
+        dict.__setitem__(evidence, "state", "forged")
+    with pytest.raises(TypeError):
+        dict.update(evidence, {"state": "forged"})
+    with pytest.raises((AttributeError, TypeError)):
+        object.__setattr__(evidence, "_ImmutableEvidence__expose_assurance", False)
+    assert isinstance(evidence["detail"], runtime_module.ImmutableEvidence)
+    assert isinstance(tuple(evidence["detail"].values()), tuple)
+    assert copy.copy(evidence) is evidence
+    assert copy.deepcopy(evidence) is evidence
+    with pytest.raises(pickle.PicklingError, match="not picklable"):
+        pickle.dumps(evidence)
 
 
 @pytest.mark.parametrize("value", (0, 1))
