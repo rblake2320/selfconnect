@@ -40,6 +40,30 @@ from sc_seat_identity import key_id
 from sc_seat_revocation import resolve_revoked_key_ids
 from sc_terminal_tab import TerminalTabGuard, TerminalTabIdentity
 
+_LOCAL_STATE_AUTHORITY_ASSURANCE = MappingProxyType(
+    {
+        "mode": "local_dpapi_integrity_only",
+        "same_user_threat": "excluded",
+        "external_monotonic_anchor": False,
+    }
+)
+
+
+def _state_authority_assurance() -> dict[str, Any]:
+    return dict(_LOCAL_STATE_AUTHORITY_ASSURANCE)
+
+
+def _require_runtime_assurance(root: Any, high_assurance: bool) -> None:
+    """Non-overridable module boundary for exact local-root assurance."""
+    if type(root) is not RuntimeTrustRoot:
+        raise TypeError("an exact RuntimeTrustRoot is required")
+    if type(high_assurance) is not bool:
+        raise TypeError("high_assurance must be an exact boolean")
+    if high_assurance:
+        raise AssignmentVerificationError(
+            "high-assurance state authority refuses: local DPAPI is not a same-user monotonic authority"
+        )
+
 
 class AssignmentDispatchError(RuntimeError):
     """A signed assignment was quarantined before it became admissible."""
@@ -257,6 +281,7 @@ class AssignmentBindings:
 class MailboxPublishOutcome:
     record: dict[str, Any]
     disposition: str
+    state_authority_assurance: dict[str, Any]
 
 
 def _dpapi_protect(data: bytes, entropy: bytes) -> bytes:
@@ -389,11 +414,7 @@ class RuntimeTrustRoot:
 
     @property
     def assurance(self) -> dict[str, Any]:
-        return {
-            "mode": "local_dpapi_integrity_only",
-            "same_user_threat": "excluded",
-            "external_monotonic_anchor": False,
-        }
+        return _state_authority_assurance()
 
     def require_high_assurance(self) -> None:
         raise AssignmentVerificationError(
@@ -562,7 +583,7 @@ class DurableReceiptMailbox:
                     connection.rollback()
                     raise AssignmentReplayError("receipt mailbox sequence fork rejected")
                 connection.commit()
-                return MailboxPublishOutcome(record, "duplicate_idempotent")
+                return MailboxPublishOutcome(record, "duplicate_idempotent", _state_authority_assurance())
             head = connection.execute(
                 "SELECT high_sequence,high_record_sha256 FROM receipt_mailbox_head_v1 WHERE assignment_id=?",
                 (assignment_id,),
@@ -589,7 +610,7 @@ class DurableReceiptMailbox:
                 connection.rollback()
                 raise AssignmentReplayError("receipt mailbox replay rejected") from exc
         self._advance_anchor()
-        return MailboxPublishOutcome(record, "inserted")
+        return MailboxPublishOutcome(record, "inserted", _state_authority_assurance())
 
     def reader(
         self,
@@ -635,7 +656,7 @@ class DurableReceiptMailbox:
                     connection.rollback()
                     raise AssignmentReplayError("receipt ACK mailbox fork rejected")
                 connection.commit()
-                return MailboxPublishOutcome(ack_record, "duplicate_idempotent")
+                return MailboxPublishOutcome(ack_record, "duplicate_idempotent", _state_authority_assurance())
             connection.execute(
                 "INSERT INTO receipt_ack_mailbox_v1 VALUES (?,?,?,?,?,?)",
                 (
@@ -648,7 +669,7 @@ class DurableReceiptMailbox:
                 ),
             )
             connection.commit()
-        return MailboxPublishOutcome(ack_record, "inserted")
+        return MailboxPublishOutcome(ack_record, "inserted", _state_authority_assurance())
 
     def read_ack(self, receipt: Any, *, channel: dict[str, Any]) -> dict[str, Any] | None:
         self._verify_anchor()
@@ -813,6 +834,10 @@ class DurableAssignmentJournal:
             state != "issued" and current != (assignment_hash, "issued")
         ):
             raise AssignmentReplayError("assignment dispatch transition rejected")
+        labeled_evidence = {
+            "state_authority_assurance": _state_authority_assurance(),
+            "evidence": _snapshot(evidence, "dispatch evidence") if type(evidence) is dict else evidence,
+        }
         entry = {
             "sequence": sequence + 1,
             "prior_sha256": prior,
@@ -820,7 +845,9 @@ class DurableAssignmentJournal:
             "assignment_sha256": assignment_hash,
             "state": state,
             "reason": reason,
-            "evidence_sha256": hashlib.sha256(_canonical(evidence)).hexdigest(),
+            "state_authority_assurance": _state_authority_assurance(),
+            "evidence": labeled_evidence,
+            "evidence_sha256": hashlib.sha256(_canonical(labeled_evidence)).hexdigest(),
         }
         raw = _canonical(entry)
         digest = hashlib.sha256(raw).hexdigest()
@@ -882,6 +909,7 @@ def parse_assignment_ingress(raw: str | bytes) -> dict[str, Any]:
 class SeatAdmission:
     assignment: dict[str, Any]
     accepted_receipt: dict[str, Any]
+    state_authority_assurance: dict[str, Any]
 
 
 class ReceiverLaunchContext:
@@ -896,12 +924,7 @@ class ReceiverLaunchContext:
         revocation_resolver: SeatRevocationResolver,
         high_assurance: bool = False,
     ) -> None:
-        if type(trust_root) is not RuntimeTrustRoot:
-            raise TypeError("receiver context requires the provisioned runtime trust root")
-        if type(high_assurance) is not bool:
-            raise TypeError("high_assurance must be an exact boolean")
-        if high_assurance:
-            trust_root.require_high_assurance()
+        _require_runtime_assurance(trust_root, high_assurance)
         if (
             assignment_journal._trust_root is not trust_root
             or mailbox._trust_root is not trust_root
@@ -909,7 +932,7 @@ class ReceiverLaunchContext:
         ):
             raise AssignmentVerificationError("receiver authorities do not share the provisioned trust root")
         self._trust_root = trust_root
-        self.assurance = trust_root.assurance
+        self.assurance = _state_authority_assurance()
         self.store_path = trust_root.path("receiver_store")
         self.store = AssignmentStateStore(self.store_path)
         self.assignment_journal = assignment_journal
@@ -955,6 +978,7 @@ class SeatAssignmentBroker:
         self._mailbox = launch_context.mailbox
         self._assignment_journal = launch_context.assignment_journal
         self._revocation_resolver = launch_context.revocation_resolver
+        self._state_authority_assurance = _state_authority_assurance()
         self._current_target = current_target
         self._current_terminal_tab = current_terminal_tab
         self._current_response_receiver_public_key = current_response_receiver_public_key
@@ -987,7 +1011,15 @@ class SeatAssignmentBroker:
             detail={"admitted": True},
             idempotency_key=f"accepted:{body['assignment_id']}",
         )
-        return SeatAdmission(copy.deepcopy(body), receipt)
+        labeled_assignment = {
+            **copy.deepcopy(body),
+            "state_authority_assurance": copy.deepcopy(self._state_authority_assurance),
+        }
+        return SeatAdmission(
+            labeled_assignment,
+            receipt,
+            copy.deepcopy(self._state_authority_assurance),
+        )
 
     def emit(
         self,
@@ -1001,6 +1033,10 @@ class SeatAssignmentBroker:
         channel = self._current_response_channel()
         self._mailbox.require_channel(channel)
         revocations = _resolve_revocations(self._revocation_resolver)
+        labeled_detail = {
+            **copy.deepcopy(detail),
+            "state_authority_assurance": copy.deepcopy(self._state_authority_assurance),
+        }
         receipt = emit_state_receipt(
             assignment,
             seat_identity=self._seat_identity,
@@ -1010,7 +1046,7 @@ class SeatAssignmentBroker:
             current_response_receiver_public_key_hex=(self._current_response_receiver_public_key()),
             current_response_channel=channel,
             state=state,
-            detail=detail,
+            detail=labeled_detail,
             result_sha256=result_sha256,
             idempotency_key=idempotency_key,
             store=self._store,
@@ -1027,7 +1063,7 @@ class SeatAssignmentBroker:
         if ack is None:
             return None
         revocations = _resolve_revocations(self._revocation_resolver)
-        return verify_consume_ack(
+        verified = verify_consume_ack(
             ack,
             receipt,
             assignment,
@@ -1042,6 +1078,10 @@ class SeatAssignmentBroker:
             revoked_seat_key_ids=revocations,
             now=self._time(),
         )
+        return {
+            **verified,
+            "state_authority_assurance": copy.deepcopy(self._state_authority_assurance),
+        }
 
 
 class SelfConnectAssignmentReceiver:
@@ -1101,6 +1141,7 @@ class GuardedSubmitConfig:
 class AssignmentDispatch:
     assignment: dict[str, Any]
     submit_result: dict[str, Any]
+    state_authority_assurance: dict[str, Any]
 
 
 class ProductionAssignmentRuntime:
@@ -1124,12 +1165,7 @@ class ProductionAssignmentRuntime:
     ) -> None:
         if type(terminal_tab_guard) is not TerminalTabGuard:
             raise TypeError("production runtime requires an exact TerminalTabGuard")
-        if type(trust_root) is not RuntimeTrustRoot:
-            raise TypeError("production runtime requires the provisioned read-only trust root")
-        if type(high_assurance) is not bool:
-            raise TypeError("high_assurance must be an exact boolean")
-        if high_assurance:
-            trust_root.require_high_assurance()
+        _require_runtime_assurance(trust_root, high_assurance)
         if (
             mailbox._trust_root is not trust_root
             or assignment_journal._trust_root is not trust_root
@@ -1153,7 +1189,7 @@ class ProductionAssignmentRuntime:
         self._terminal_tab_guard = terminal_tab_guard
         self._submit_config = submit_config
         self._wall_clock = wall_clock
-        self.assurance = trust_root.assurance
+        self.assurance = _state_authority_assurance()
 
     def dispatch(
         self,
@@ -1255,8 +1291,9 @@ class ProductionAssignmentRuntime:
             {
                 **copy.deepcopy(result),
                 "transport_assurance": "transport_unattested",
-                "state_authority_assurance": self._trust_root.assurance,
+                "state_authority_assurance": _state_authority_assurance(),
             },
+            _state_authority_assurance(),
         )
 
     def watchdog(

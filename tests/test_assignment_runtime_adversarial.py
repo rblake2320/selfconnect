@@ -39,6 +39,11 @@ from sc_terminal_tab import RUNTIME_ID_SCOPE, TerminalTabGuard, TerminalTabIdent
 NOW = 2_000_000_000.0
 PAYLOAD = "adversarial signed-inline assignment"
 RESULT_HASH = "a" * 64
+LOCAL_ASSURANCE = {
+    "mode": "local_dpapi_integrity_only",
+    "same_user_threat": "excluded",
+    "external_monotonic_anchor": False,
+}
 
 
 def _canonical(value):
@@ -601,11 +606,8 @@ def test_unattested_transport_is_labeled_and_high_assurance_refuses_it(tmp_path,
     env = _environment(tmp_path, monkeypatch)
     dispatch = _dispatch(env)
     assert dispatch.submit_result["transport_assurance"] == "transport_unattested"
-    assert dispatch.submit_result["state_authority_assurance"] == {
-        "mode": "local_dpapi_integrity_only",
-        "same_user_threat": "excluded",
-        "external_monotonic_anchor": False,
-    }
+    assert dispatch.submit_result["state_authority_assurance"] == LOCAL_ASSURANCE
+    assert dispatch.state_authority_assurance == LOCAL_ASSURANCE
     with pytest.raises(ValueError, match="transport_unattested"):
         GuardedSubmitConfig(
             sender="sender",
@@ -617,6 +619,72 @@ def test_unattested_transport_is_labeled_and_high_assurance_refuses_it(tmp_path,
             event_log_path=tmp_path / "events.jsonl",
             high_assurance=True,
         )
+
+
+def test_instance_method_shadow_cannot_bypass_high_assurance_refusal(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    env["trust_root"].require_high_assurance = lambda: None
+    with pytest.raises(AssignmentVerificationError, match="same-user monotonic"):
+        ReceiverLaunchContext(
+            trust_root=env["trust_root"],
+            assignment_journal=env["journal"],
+            mailbox=env["mailbox"],
+            revocation_resolver=env["revocation_resolver"],
+            high_assurance=True,
+        )
+    with pytest.raises(AssignmentVerificationError, match="same-user monotonic"):
+        ProductionAssignmentRuntime(
+            coordinator_identity=env["coordinator"],
+            coordinator_store=env["coordinator_store"],
+            receiver_enrollment=env["enrollment"],
+            bindings=env["bindings"],
+            trust_root=env["trust_root"],
+            mailbox=env["mailbox"],
+            assignment_journal=env["journal"],
+            revocation_resolver=env["revocation_resolver"],
+            terminal_tab_guard=env["runtime"]._terminal_tab_guard,
+            submit_config=env["runtime"]._submit_config,
+            high_assurance=True,
+        )
+
+
+def test_all_local_authoritative_outputs_carry_canonical_assurance(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    dispatch = _dispatch(env)
+    broker = _broker(env, tmp_path)
+    admission = broker.admit_raw(_canonical(dispatch.assignment))
+    assert admission.state_authority_assurance == LOCAL_ASSURANCE
+    assert admission.assignment["state_authority_assurance"] == LOCAL_ASSURANCE
+    assert admission.accepted_receipt["detail"]["state_authority_assurance"] == LOCAL_ASSURANCE
+    assert dispatch.state_authority_assurance == LOCAL_ASSURANCE
+    assert dispatch.submit_result["state_authority_assurance"] == LOCAL_ASSURANCE
+
+    with sqlite3.connect(env["journal"].path) as connection:
+        entries = [
+            json.loads(bytes(row[0]))
+            for row in connection.execute("SELECT entry_json FROM assignment_dispatch_chain_v2 ORDER BY sequence")
+        ]
+    assert entries
+    for entry in entries:
+        assert entry["state_authority_assurance"] == LOCAL_ASSURANCE
+        assert entry["evidence"]["state_authority_assurance"] == LOCAL_ASSURANCE
+
+    duplicate = env["mailbox"].publish(admission.accepted_receipt, channel=env["channel"])
+    assert duplicate.state_authority_assurance == LOCAL_ASSURANCE
+    env["wall"][0] = NOW + 2
+    receipt = broker.emit(dispatch.assignment, state="working", detail={}, idempotency_key="labeled-working")
+    assert receipt["detail"]["state_authority_assurance"] == LOCAL_ASSURANCE
+    verify_consume_state_receipt(
+        admission.accepted_receipt,
+        dispatch.assignment,
+        store=env["coordinator_store"],
+        **env["bindings"].verification(frozenset(), now=NOW + 2),
+    )
+    ack_outcome = env["runtime"].recover_receipt_ack(admission.accepted_receipt)
+    assert ack_outcome.state_authority_assurance == LOCAL_ASSURANCE
+    env["wall"][0] = NOW + 3
+    ack = broker.consume_receipt_ack(dispatch.assignment, admission.accepted_receipt)
+    assert ack["state_authority_assurance"] == LOCAL_ASSURANCE
 
     with pytest.raises(AssignmentVerificationError, match="monotonic anchor service"):
         RuntimeTrustRoot(
