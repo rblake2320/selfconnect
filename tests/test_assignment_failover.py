@@ -1009,6 +1009,48 @@ def test_rebound_module_assurance_name_cannot_change_signed_or_returned_labels(
         )
 
 
+def test_rebound_assurance_helper_cannot_authorize_false_seat_self_claim(
+    tmp_path,
+    monkeypatch,
+):
+    case = _case(tmp_path)
+    false_high = {
+        "mode": "high_assurance",
+        "same_user_threat": "covered",
+        "external_monotonic_authority": "present",
+        "monotonicity": "rollback_proof",
+        "high_assurance": True,
+    }
+    original = failover_module._require_ordinary_assurance
+    monkeypatch.setattr(
+        failover_module,
+        "_require_ordinary_assurance",
+        lambda _value: dict(false_high),
+    )
+
+    with pytest.raises(
+        AssignmentFailoverError,
+        match="assurance self-claim is not canonical ordinary mode",
+    ):
+        _run(case)
+    pending = _pending(case)[0]
+    assert pending["stage"] == "assignment_issued"
+    assert pending["continuity"]["assurance"]["high_assurance"] is False
+    with sqlite3.connect(case["delivery_store"].path) as connection:
+        raw = connection.execute(
+            "SELECT receipt_json FROM delivery_claim_v1 WHERE state='completed'"
+        ).fetchone()[0]
+    poisoned_receipt = json.loads(bytes(raw))
+    assert poisoned_receipt["assurance"] == false_high
+
+    monkeypatch.setattr(failover_module, "_require_ordinary_assurance", original)
+    with pytest.raises(
+        AssignmentFailoverError,
+        match="assurance self-claim is not canonical ordinary mode",
+    ):
+        _run(case)
+
+
 def test_paired_same_user_rollback_can_readmit_only_in_labeled_ordinary_mode(
     tmp_path,
     _protected_credential_backend,

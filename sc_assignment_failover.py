@@ -1378,7 +1378,6 @@ def _verify_delivery_receipt(
     replacement: Mapping[str, Any],
     failover_root_id: str,
     claim_store_database_id: str,
-    assurance: Mapping[str, Any],
     now: float,
     require_fresh: bool,
 ) -> dict[str, Any]:
@@ -1399,9 +1398,9 @@ def _verify_delivery_receipt(
         "delivery_idempotency_key": f"failover-delivery:{operation_id}",
         "failover_root_id": failover_root_id,
         "claim_store_database_id": claim_store_database_id,
-        "assurance": _require_ordinary_assurance(assurance),
     }
     expected_fields = set(exact) | {
+        "assurance",
         "actuation_proof",
         "delivery_claim_id",
         "delivery_claim_commit_sha256",
@@ -1411,6 +1410,29 @@ def _verify_delivery_receipt(
     }
     if set(body) != expected_fields or any(body.get(field) != value for field, value in exact.items()):
         raise AssignmentFailoverError("delivery receipt exact binding mismatch")
+    # The seat's signed assurance field is a self-claim, never authority.  Its
+    # only accepted value in this build is checked inline against independent
+    # literals.  Do not delegate this final decision to a replaceable helper.
+    receipt_assurance = body.get("assurance")
+    if (
+        type(receipt_assurance) is not dict
+        or set(receipt_assurance)
+        != {
+            "mode",
+            "same_user_threat",
+            "external_monotonic_authority",
+            "monotonicity",
+            "high_assurance",
+        }
+        or receipt_assurance.get("mode") != "ordinary"
+        or receipt_assurance.get("same_user_threat") != "excluded"
+        or receipt_assurance.get("external_monotonic_authority") != "absent"
+        or receipt_assurance.get("monotonicity") != "local_best_effort"
+        or receipt_assurance.get("high_assurance") is not False
+    ):
+        raise AssignmentFailoverError(
+            "delivery receipt assurance self-claim is not canonical ordinary mode"
+        )
     nonce = body.get("delivery_nonce")
     if type(nonce) is not str or len(nonce) != 64 or any(ch not in "0123456789abcdef" for ch in nonce):
         raise AssignmentFailoverError("delivery receipt nonce is invalid")
@@ -1977,7 +1999,6 @@ def failover_assignment(
                     replacement=replacement,
                     failover_root_id=context.root_id,
                     claim_store_database_id=context.claim_store_database_id,
-                    assurance=assurance,
                     now=current,
                     require_fresh=True,
                 )
@@ -2006,7 +2027,6 @@ def failover_assignment(
                 replacement=replacement,
                 failover_root_id=context.root_id,
                 claim_store_database_id=context.claim_store_database_id,
-                assurance=assurance,
                 now=current,
                 require_fresh=False,
             )
