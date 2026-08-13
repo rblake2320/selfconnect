@@ -23,7 +23,6 @@ from collections.abc import Callable, Mapping
 from contextlib import closing
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any
 
 import sc_mesh_registry
@@ -76,15 +75,6 @@ FAILOVER_ROOT_CONFIG_ENV = "SELFCONNECT_FAILOVER_ROOT_CONFIG"
 FAILOVER_ROOT_PUBLIC_KEY_ENV = "SELFCONNECT_FAILOVER_ROOT_PUBLIC_KEY_HEX"
 _LAUNCH_CONFIG_PATH = os.environ.get(FAILOVER_ROOT_CONFIG_ENV, "")
 _LAUNCH_PUBLIC_KEY_HEX = os.environ.get(FAILOVER_ROOT_PUBLIC_KEY_ENV, "")
-ORDINARY_ASSURANCE = MappingProxyType({
-    "mode": "ordinary",
-    "same_user_threat": "excluded",
-    "external_monotonic_authority": "absent",
-    "monotonicity": "local_best_effort",
-    "high_assurance": False,
-})
-
-
 class AssignmentFailoverError(AssignmentVerificationError):
     """A failover authorization, saga, or high-assurance boundary failed."""
 
@@ -216,7 +206,15 @@ class _FailoverLaunchContext:
                 "high-assurance failover refused: no separately privileged "
                 "external monotonic authority is configured"
             )
-        return dict(ORDINARY_ASSURANCE)
+        # Keep construction local and literal.  A module attribute must never
+        # be able to redefine the assurance asserted by signed artifacts.
+        return {
+            "mode": "ordinary",
+            "same_user_threat": "excluded",
+            "external_monotonic_authority": "absent",
+            "monotonicity": "local_best_effort",
+            "high_assurance": False,
+        }
 
     def require_delivery_claim(
         self,
@@ -848,11 +846,25 @@ def _require_ordinary_assurance(value: Any) -> dict[str, Any]:
         "failover assurance",
         require_canonical_wire=False,
     )
-    expected = dict(ORDINARY_ASSURANCE)
-    if assurance != expected or set(assurance) != set(expected):
+    # This independent literal check intentionally does not call the builder
+    # or read a module-level policy object.  Rebinding either cannot make a
+    # false assurance label pass verification.
+    if (
+        set(assurance)
+        != {
+            "mode",
+            "same_user_threat",
+            "external_monotonic_authority",
+            "monotonicity",
+            "high_assurance",
+        }
+        or assurance.get("mode") != "ordinary"
+        or assurance.get("same_user_threat") != "excluded"
+        or assurance.get("external_monotonic_authority") != "absent"
+        or assurance.get("monotonicity") != "local_best_effort"
+        or assurance.get("high_assurance") is not False
+    ):
         raise AssignmentFailoverError("failover assurance label is invalid")
-    if type(assurance.get("high_assurance")) is not bool:
-        raise AssignmentFailoverError("failover assurance high_assurance must be an exact bool")
     return assurance
 
 

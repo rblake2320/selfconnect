@@ -956,8 +956,57 @@ def test_ordinary_mode_labels_same_user_gap_and_high_assurance_refuses_first(tmp
     assert result["continuity"]["assurance"] == expected
     assert result["delivery_receipt"]["assurance"] == expected
     assert "same_user_threat" in result["replacement_assignment"]["payload"]
-    with pytest.raises(TypeError):
-        failover_module.ORDINARY_ASSURANCE["mode"] = "high"
+    assert not hasattr(failover_module, "ORDINARY_ASSURANCE")
+
+
+def test_rebound_module_assurance_name_cannot_change_signed_or_returned_labels(
+    tmp_path,
+    monkeypatch,
+):
+    case = _case(tmp_path)
+    attacker_label = {
+        "mode": "high_assurance",
+        "same_user_threat": "covered",
+        "external_monotonic_authority": "present",
+        "monotonicity": "rollback_proof",
+        "high_assurance": True,
+    }
+    monkeypatch.setattr(
+        failover_module,
+        "ORDINARY_ASSURANCE",
+        attacker_label,
+        raising=False,
+    )
+
+    result, _shared = _run(case)
+    expected = {
+        "mode": "ordinary",
+        "same_user_threat": "excluded",
+        "external_monotonic_authority": "absent",
+        "monotonicity": "local_best_effort",
+        "high_assurance": False,
+    }
+    assert result["assurance"] == expected
+    assert result["continuity"]["assurance"] == expected
+    assert result["delivery_receipt"]["assurance"] == expected
+    assert result["assurance"] != attacker_label
+
+    with pytest.raises(AssignmentFailoverError, match="assurance label is invalid"):
+        failover_module._create_delivery_receipt(
+            operation_id=result["operation_id"],
+            continuity=result["continuity"],
+            replacement_assignment=result["replacement_assignment"],
+            seat_identity=case["new_seat"],
+            delivery_claim_id="a" * 64,
+            delivery_idempotency_key=f"failover-delivery:{result['operation_id']}",
+            delivery_claim_commit_sha256="b" * 64,
+            failover_root_id=result["delivery_receipt"]["failover_root_id"],
+            claim_store_database_id=result["delivery_receipt"]["claim_store_database_id"],
+            actuation_proof=result["delivery_receipt"]["actuation_proof"],
+            result_sha256=result["delivery_receipt"]["result_sha256"],
+            assurance=attacker_label,
+            delivered_at=NOW + 3,
+        )
 
 
 def test_paired_same_user_rollback_can_readmit_only_in_labeled_ordinary_mode(
@@ -1027,7 +1076,13 @@ def test_private_receipt_helpers_without_claim_rows_cannot_complete_failover(tmp
             claim_store_database_id=case["context"].claim_store_database_id,
             actuation_proof=proof,
             result_sha256="d" * 64,
-            assurance=dict(failover_module.ORDINARY_ASSURANCE),
+            assurance={
+                "mode": "ordinary",
+                "same_user_threat": "excluded",
+                "external_monotonic_authority": "absent",
+                "monotonicity": "local_best_effort",
+                "high_assurance": False,
+            },
             delivered_at=NOW + 3,
         )
 
