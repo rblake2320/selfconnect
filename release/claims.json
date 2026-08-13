@@ -36,7 +36,7 @@
         },
         {
           "path": ".github/workflows/ci.yml",
-          "sha256_text": "796317eee539f6d4511a4b56c7757806aea899e1aa352d9135b78dbd64e02ce4"
+          "sha256_text": "07e73e90534d4257faef41a1a8e074cedf4fd70fa61e7a17c59d90a9f59db568"
         }
       ]
     },
