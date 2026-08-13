@@ -353,10 +353,10 @@ def test_package_manifest_and_ci_include_failover_module():
     assert "sc_windows_credentials.py" in modules
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "ruff check\n" in workflow
-    assert (
-        "python -m py_compile self_connect.py sc_assignment_failover.py "
-        "sc_windows_credentials.py"
-    ) in workflow
+    compile_step = workflow.split("python -m py_compile", 1)[1]
+    assert "self_connect.py" in compile_step
+    assert "sc_assignment_failover.py" in compile_step
+    assert "sc_windows_credentials.py" in compile_step
 
 
 def test_public_action_uses_only_pinned_launch_durability_and_fresh_path_rejected(tmp_path):

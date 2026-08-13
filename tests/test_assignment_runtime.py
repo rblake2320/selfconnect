@@ -22,7 +22,7 @@ from sc_assignment_runtime import (
     SeatRevocationResolver,
     provision_runtime_trust_root,
 )
-from sc_authority_trust import bootstrap_authority_trust
+from sc_authority_trust import _bootstrap_local_authority_trust_for_test
 from sc_guarded_submit import AckKeyRing, TargetIdentity
 from sc_identity import AgentIdentity
 from sc_seat_identity import create_enrollment
@@ -113,7 +113,7 @@ def _case(tmp_path, monkeypatch):
     guard = TerminalTabGuard(tab, None, None, None)
     coordinator_store = AssignmentStateStore(tmp_path / "coordinator.sqlite3")
     trust_path, revocation_path = tmp_path / "trust.json", tmp_path / "revocations.json"
-    bootstrap_authority_trust(
+    _bootstrap_local_authority_trust_for_test(
         trust_path,
         root_public_keys=[authority.public_key_hex],
         quorum=1,

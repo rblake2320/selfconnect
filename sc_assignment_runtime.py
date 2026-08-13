@@ -38,7 +38,7 @@ from sc_assignment_watchdog import AssignmentWatchdog
 from sc_guarded_submit import AckKeyRing, DurableAckFinalizer, TargetIdentity, guarded_submit, verify_peer_ack
 from sc_identity import AgentIdentity
 from sc_seat_identity import key_id
-from sc_seat_revocation import resolve_revoked_key_ids
+from sc_seat_revocation import _resolve_local_revoked_key_ids
 from sc_terminal_tab import TerminalTabGuard, TerminalTabIdentity
 
 
@@ -236,7 +236,13 @@ def _verify_guarded_delivery_result(
 
 
 class SeatRevocationResolver:
-    """Mandatory signed/fresh resolver with launch-monotonic rollback memory."""
+    """Signed/fresh local-mode resolver with launch-monotonic rollback memory.
+
+    High-assurance construction is rejected elsewhere because the separately
+    privileged monotonic trust service does not exist yet.  This resolver is
+    therefore deliberately bound to the explicitly labelled local-integrity
+    path instead of the public high-assurance-only resolver.
+    """
 
     def __init__(self, trust_root: RuntimeTrustRoot, *, clock: Callable[[], float]) -> None:
         if type(trust_root) is not RuntimeTrustRoot:
@@ -253,7 +259,7 @@ class SeatRevocationResolver:
         if isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(float(now)):
             raise AssignmentVerificationError("revocation resolver time is invalid")
         try:
-            revoked = resolve_revoked_key_ids(self.store_path, self.trust_path, now=float(now))
+            revoked = _resolve_local_revoked_key_ids(self.store_path, self.trust_path, now=float(now))
             document = _snapshot(self.store_path.read_bytes(), "seat revocation store")
         except Exception as exc:
             raise AssignmentVerificationError(f"signed seat revocation resolution failed: {exc}") from exc

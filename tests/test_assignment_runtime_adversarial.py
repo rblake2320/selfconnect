@@ -30,7 +30,7 @@ from sc_assignment_runtime import (
     provision_runtime_trust_root,
 )
 from sc_assignment_watchdog import AssignmentWatchdog
-from sc_authority_trust import bootstrap_authority_trust
+from sc_authority_trust import _bootstrap_local_authority_trust_for_test
 from sc_guarded_submit import AckKeyRing, TargetIdentity
 from sc_identity import AgentIdentity
 from sc_seat_identity import create_enrollment, key_id
@@ -158,7 +158,7 @@ def _environment(tmp_path, monkeypatch, *, submit_result=None, submit_error=None
         )
     launch = AgentIdentity.generate("launch-provisioner")
     trust_path, revocation_path = tmp_path / "trust.json", tmp_path / "revocations.json"
-    bootstrap_authority_trust(
+    _bootstrap_local_authority_trust_for_test(
         trust_path,
         root_public_keys=[authority.public_key_hex],
         quorum=1,
@@ -1121,11 +1121,16 @@ def test_same_user_restore_reactivates_revoked_seat_and_high_assurance_refuses(t
     env = _environment(tmp_path, monkeypatch)
     assignment = _dispatch(env).assignment
     old_revocations = env["revocation_path"].read_bytes()
+    revocation_anchor = env["revocation_path"].with_suffix(
+        env["revocation_path"].suffix + ".local-integrity-anchor"
+    )
+    old_revocation_anchor = revocation_anchor.read_bytes()
     old_root_state = env["root_state_path"].read_bytes()
     _update_revocations(env, [key_id(env["seat"].public_key_hex)])
     assert key_id(env["seat"].public_key_hex) in env["revocation_resolver"]()
 
     env["revocation_path"].write_bytes(old_revocations)
+    revocation_anchor.write_bytes(old_revocation_anchor)
     env["root_state_path"].write_bytes(old_root_state)
     env["revocation_resolver"] = SeatRevocationResolver(env["trust_root"], clock=lambda: env["wall"][0])
     assert key_id(env["seat"].public_key_hex) not in env["revocation_resolver"]()
@@ -1142,12 +1147,17 @@ def test_same_user_restore_reactivates_revoked_seat_and_high_assurance_refuses(t
 def test_same_user_can_unprotect_rewrite_and_reprotect_revocation_high_water(tmp_path, monkeypatch):
     env = _environment(tmp_path, monkeypatch)
     old_revocations = env["revocation_path"].read_bytes()
+    revocation_anchor = env["revocation_path"].with_suffix(
+        env["revocation_path"].suffix + ".local-integrity-anchor"
+    )
+    old_revocation_anchor = revocation_anchor.read_bytes()
     old_snapshot = json.loads(old_revocations)["snapshot"]
     old_digest = hashlib.sha256(_canonical(old_snapshot)).hexdigest()
     _update_revocations(env, [key_id(env["seat"].public_key_hex)])
     env["revocation_resolver"]()
 
     env["revocation_path"].write_bytes(old_revocations)
+    revocation_anchor.write_bytes(old_revocation_anchor)
     entropy, state = _local_root_material(env)
     state["revocation_high_water"] = {"version": old_snapshot["version"], "digest": old_digest}
     _write_local_root_state(env, entropy, state)

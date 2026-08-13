@@ -1932,7 +1932,9 @@ def failover_assignment(
                     }
                 ).decode("ascii")
                 requested_ttl = _finite(replacement_ttl_seconds, "replacement assignment TTL")
-                remaining_enrollment = float(replacement["expires_at"]) - current
+                # Seat enrollment timestamps are canonical integer milliseconds;
+                # assignment timestamps and TTLs are seconds.
+                remaining_enrollment = float(replacement["expires_at"]) / 1000.0 - current
                 effective_ttl = min(requested_ttl, remaining_enrollment)
                 if effective_ttl <= 0:
                     raise AssignmentFailoverError("replacement enrollment expired before assignment issue")
