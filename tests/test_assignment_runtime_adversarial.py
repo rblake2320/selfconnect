@@ -505,7 +505,7 @@ def test_mailbox_detects_delete_truncate_record_tamper_and_reorder(tmp_path, mon
     assignment = _dispatch(env).assignment
     receipt = _broker(env, tmp_path).admit_raw(_canonical(assignment)).accepted_receipt
     if tamper == "reorder":
-        forged = copy.deepcopy(receipt)
+        forged = json.loads(json.dumps(receipt))
         forged["sequence"] = 3
         with pytest.raises(Exception, match=r"reorder|gap|fork"):
             env["mailbox"].publish(forged, channel=env["channel"])
@@ -583,13 +583,13 @@ def test_raw_ingress_quarantines_unsigned_wrong_key_and_noncanonical_text(tmp_pa
     env = _environment(tmp_path, monkeypatch)
     assignment = _dispatch(env).assignment
     broker = _broker(env, tmp_path)
-    unsigned = copy.deepcopy(assignment)
+    unsigned = json.loads(json.dumps(assignment))
     unsigned.pop("signature_b64")
     with pytest.raises(AssignmentVerificationError, match=r"signature|delivery-authorized"):
         broker.admit_raw(_canonical(unsigned))
 
     wrong = AgentIdentity.generate("wrong")
-    body = copy.deepcopy(assignment)
+    body = json.loads(json.dumps(assignment))
     body.pop("signature_b64")
     wrong_signed = {
         **body,
@@ -685,6 +685,98 @@ def test_all_local_authoritative_outputs_carry_canonical_assurance(tmp_path, mon
     env["wall"][0] = NOW + 3
     ack = broker.consume_receipt_ack(dispatch.assignment, admission.accepted_receipt)
     assert ack["state_authority_assurance"] == LOCAL_ASSURANCE
+
+
+def test_authenticated_assurance_labels_are_recursively_immutable_and_wire_compatible(tmp_path, monkeypatch):
+    env = _environment(tmp_path, monkeypatch)
+    dispatch = _dispatch(env)
+    broker = _broker(env, tmp_path)
+    admission = broker.admit_raw(_canonical(dispatch.assignment))
+    verify_consume_state_receipt(
+        admission.accepted_receipt,
+        dispatch.assignment,
+        store=env["coordinator_store"],
+        **env["bindings"].verification(frozenset(), now=NOW + 2),
+    )
+    ack_outcome = env["runtime"].recover_receipt_ack(admission.accepted_receipt)
+    env["wall"][0] = NOW + 3
+    consumed_ack = broker.consume_receipt_ack(dispatch.assignment, admission.accepted_receipt)
+    mailbox_outcome = env["mailbox"].publish(admission.accepted_receipt, channel=env["channel"])
+    journal_entries = env["journal"].entries()
+
+    labels = (
+        dispatch.state_authority_assurance,
+        dispatch.submit_result["state_authority_assurance"],
+        dispatch.assignment["state_authority_assurance"],
+        admission.state_authority_assurance,
+        admission.assignment["state_authority_assurance"],
+        admission.accepted_receipt["state_authority_assurance"],
+        admission.accepted_receipt["detail"]["state_authority_assurance"],
+        mailbox_outcome.state_authority_assurance,
+        mailbox_outcome.record["state_authority_assurance"],
+        ack_outcome.state_authority_assurance,
+        ack_outcome.record["state_authority_assurance"],
+        consumed_ack["state_authority_assurance"],
+        journal_entries[-1]["state_authority_assurance"],
+        journal_entries[-1]["evidence"]["state_authority_assurance"],
+    )
+    for label in labels:
+        assert label == LOCAL_ASSURANCE
+        with pytest.raises(TypeError):
+            label["mode"] = "forged_high_assurance"
+    with pytest.raises(TypeError, match="immutable"):
+        admission.accepted_receipt["detail"]["state_authority_assurance"] = {}
+    with pytest.raises(TypeError, match="immutable"):
+        journal_entries[-1]["evidence"]["state_authority_assurance"] = {}
+
+    # Virtual outer labels do not change the coordinator/seat signed wire schema.
+    assert "state_authority_assurance" not in json.loads(json.dumps(dispatch.assignment))
+    assert "state_authority_assurance" not in json.loads(json.dumps(admission.accepted_receipt))
+
+
+@pytest.mark.parametrize("value", (0, 1))
+def test_public_assurance_flags_reject_integer_truthiness(tmp_path, monkeypatch, value):
+    env = _environment(tmp_path, monkeypatch)
+    with pytest.raises(TypeError, match="exact boolean"):
+        RuntimeTrustRoot(
+            env["root_config_path"],
+            pinned_public_key_hex=env["root_key"],
+            high_assurance=value,
+        )
+    with pytest.raises(TypeError, match="exact boolean"):
+        ReceiverLaunchContext(
+            trust_root=env["trust_root"],
+            assignment_journal=env["journal"],
+            mailbox=env["mailbox"],
+            revocation_resolver=env["revocation_resolver"],
+            high_assurance=value,
+        )
+    with pytest.raises(TypeError, match="exact boolean"):
+        ProductionAssignmentRuntime(
+            coordinator_identity=env["coordinator"],
+            coordinator_store=env["coordinator_store"],
+            receiver_enrollment=env["enrollment"],
+            bindings=env["bindings"],
+            trust_root=env["trust_root"],
+            mailbox=env["mailbox"],
+            assignment_journal=env["journal"],
+            revocation_resolver=env["revocation_resolver"],
+            terminal_tab_guard=env["runtime"]._terminal_tab_guard,
+            submit_config=env["runtime"]._submit_config,
+            high_assurance=value,
+        )
+    with pytest.raises(TypeError, match="exact boolean"):
+        SelfConnectAssignmentReceiver(
+            _broker(env, tmp_path),
+            read_raw_assignment=lambda: b"{}",
+            high_assurance=value,
+        )
+    with pytest.raises(TypeError, match="exact boolean"):
+        SelfConnectAssignmentReceiver(
+            _broker(env, tmp_path),
+            read_raw_assignment=lambda: b"{}",
+            selfconnect_owned_sidecar=value,
+        )
 
     with pytest.raises(AssignmentVerificationError, match="monotonic anchor service"):
         RuntimeTrustRoot(

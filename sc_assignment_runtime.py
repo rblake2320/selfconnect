@@ -16,7 +16,7 @@ import math
 import secrets
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +40,46 @@ from sc_seat_identity import key_id
 from sc_seat_revocation import resolve_revoked_key_ids
 from sc_terminal_tab import TerminalTabGuard, TerminalTabIdentity
 
+
+class ImmutableEvidence(dict):
+    """JSON-compatible recursively immutable authenticated evidence."""
+
+    def __init__(self, *args: Any, expose_assurance: bool = False, **kwargs: Any) -> None:
+        dict.__init__(self, *args, **kwargs)
+        object.__setattr__(self, "_expose_assurance", expose_assurance)
+
+    def __getitem__(self, name: Any) -> Any:
+        if name == "state_authority_assurance" and self._expose_assurance and not dict.__contains__(self, name):
+            return _LOCAL_STATE_AUTHORITY_ASSURANCE
+        return dict.__getitem__(self, name)
+
+    def __contains__(self, name: object) -> bool:
+        return bool((name == "state_authority_assurance" and self._expose_assurance) or dict.__contains__(self, name))
+
+    def get(self, name: Any, default: Any = None) -> Any:
+        try:
+            return self[name]
+        except KeyError:
+            return default
+
+    def _deny(self, *_args: Any, **_kwargs: Any) -> None:
+        raise TypeError("authenticated evidence is immutable")
+
+    __setattr__ = _deny
+    __delattr__ = _deny
+    __setitem__ = _deny
+    __delitem__ = _deny
+    __ior__ = _deny
+    clear = _deny
+    pop = _deny
+    popitem = _deny
+    setdefault = _deny
+    update = _deny
+
+    def __deepcopy__(self, _memo: dict[int, Any]) -> ImmutableEvidence:
+        return self
+
+
 _LOCAL_STATE_AUTHORITY_ASSURANCE = MappingProxyType(
     {
         "mode": "local_dpapi_integrity_only",
@@ -49,8 +89,25 @@ _LOCAL_STATE_AUTHORITY_ASSURANCE = MappingProxyType(
 )
 
 
-def _state_authority_assurance() -> dict[str, Any]:
+def _state_authority_assurance() -> Mapping[str, Any]:
+    return _LOCAL_STATE_AUTHORITY_ASSURANCE
+
+
+def _wire_state_authority_assurance() -> dict[str, Any]:
+    """Mutable JSON form used only inside canonical signed/stored wire records."""
     return dict(_LOCAL_STATE_AUTHORITY_ASSURANCE)
+
+
+def _immutable_evidence(value: Any, *, expose_assurance: bool = False) -> Any:
+    """Recursively freeze authenticated evidence after wire verification."""
+    if type(value) is dict:
+        return ImmutableEvidence(
+            {name: _immutable_evidence(item) for name, item in value.items()},
+            expose_assurance=expose_assurance,
+        )
+    if type(value) is list:
+        return tuple(_immutable_evidence(item) for item in value)
+    return value
 
 
 def _require_runtime_assurance(root: Any, high_assurance: bool) -> None:
@@ -281,7 +338,7 @@ class AssignmentBindings:
 class MailboxPublishOutcome:
     record: dict[str, Any]
     disposition: str
-    state_authority_assurance: dict[str, Any]
+    state_authority_assurance: Mapping[str, Any]
 
 
 def _dpapi_protect(data: bytes, entropy: bytes) -> bytes:
@@ -413,7 +470,7 @@ class RuntimeTrustRoot:
         self._read_state()
 
     @property
-    def assurance(self) -> dict[str, Any]:
+    def assurance(self) -> Mapping[str, Any]:
         return _state_authority_assurance()
 
     def require_high_assurance(self) -> None:
@@ -583,7 +640,11 @@ class DurableReceiptMailbox:
                     connection.rollback()
                     raise AssignmentReplayError("receipt mailbox sequence fork rejected")
                 connection.commit()
-                return MailboxPublishOutcome(record, "duplicate_idempotent", _state_authority_assurance())
+                return MailboxPublishOutcome(
+                    _immutable_evidence(record, expose_assurance=True),
+                    "duplicate_idempotent",
+                    _state_authority_assurance(),
+                )
             head = connection.execute(
                 "SELECT high_sequence,high_record_sha256 FROM receipt_mailbox_head_v1 WHERE assignment_id=?",
                 (assignment_id,),
@@ -610,7 +671,11 @@ class DurableReceiptMailbox:
                 connection.rollback()
                 raise AssignmentReplayError("receipt mailbox replay rejected") from exc
         self._advance_anchor()
-        return MailboxPublishOutcome(record, "inserted", _state_authority_assurance())
+        return MailboxPublishOutcome(
+            _immutable_evidence(record, expose_assurance=True),
+            "inserted",
+            _state_authority_assurance(),
+        )
 
     def reader(
         self,
@@ -656,7 +721,11 @@ class DurableReceiptMailbox:
                     connection.rollback()
                     raise AssignmentReplayError("receipt ACK mailbox fork rejected")
                 connection.commit()
-                return MailboxPublishOutcome(ack_record, "duplicate_idempotent", _state_authority_assurance())
+                return MailboxPublishOutcome(
+                    _immutable_evidence(ack_record, expose_assurance=True),
+                    "duplicate_idempotent",
+                    _state_authority_assurance(),
+                )
             connection.execute(
                 "INSERT INTO receipt_ack_mailbox_v1 VALUES (?,?,?,?,?,?)",
                 (
@@ -669,7 +738,11 @@ class DurableReceiptMailbox:
                 ),
             )
             connection.commit()
-        return MailboxPublishOutcome(ack_record, "inserted", _state_authority_assurance())
+        return MailboxPublishOutcome(
+            _immutable_evidence(ack_record, expose_assurance=True),
+            "inserted",
+            _state_authority_assurance(),
+        )
 
     def read_ack(self, receipt: Any, *, channel: dict[str, Any]) -> dict[str, Any] | None:
         self._verify_anchor()
@@ -690,7 +763,7 @@ class DurableReceiptMailbox:
                 raise AssignmentVerificationError("receipt ACK mailbox integrity failed")
             record = _snapshot(raw, "receipt ACK")
             connection.commit()
-            return record
+            return _immutable_evidence(record, expose_assurance=True)
 
 
 class DynamicReceiptReader:
@@ -744,7 +817,7 @@ class DynamicReceiptReader:
                 raise AssignmentVerificationError("receipt mailbox routing integrity failed")
             connection.commit()
         self._pending = (next_sequence, digest)
-        return record
+        return _immutable_evidence(record, expose_assurance=True)
 
     def acknowledge(self, receipt: Any) -> None:
         record = _snapshot(receipt, "acknowledged mailbox receipt")
@@ -835,7 +908,7 @@ class DurableAssignmentJournal:
         ):
             raise AssignmentReplayError("assignment dispatch transition rejected")
         labeled_evidence = {
-            "state_authority_assurance": _state_authority_assurance(),
+            "state_authority_assurance": _wire_state_authority_assurance(),
             "evidence": _snapshot(evidence, "dispatch evidence") if type(evidence) is dict else evidence,
         }
         entry = {
@@ -845,7 +918,7 @@ class DurableAssignmentJournal:
             "assignment_sha256": assignment_hash,
             "state": state,
             "reason": reason,
-            "state_authority_assurance": _state_authority_assurance(),
+            "state_authority_assurance": _wire_state_authority_assurance(),
             "evidence": labeled_evidence,
             "evidence_sha256": hashlib.sha256(_canonical(labeled_evidence)).hexdigest(),
         }
@@ -883,6 +956,15 @@ class DurableAssignmentJournal:
         row = states.get(assignment_id)
         return None if row is None or row[0] != digest else row[1]
 
+    def entries(self) -> tuple[Mapping[str, Any], ...]:
+        """Return an immutable authenticated view of all journal evidence."""
+        self._verify_anchor()
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT entry_json FROM assignment_dispatch_chain_v2 ORDER BY sequence"
+            ).fetchall()
+        return tuple(_immutable_evidence(_snapshot(bytes(row[0]), "dispatch journal entry")) for row in rows)
+
 
 def parse_assignment_ingress(raw: str | bytes) -> dict[str, Any]:
     """Strict composer boundary: one canonical JSON assignment or quarantine."""
@@ -909,7 +991,7 @@ def parse_assignment_ingress(raw: str | bytes) -> dict[str, Any]:
 class SeatAdmission:
     assignment: dict[str, Any]
     accepted_receipt: dict[str, Any]
-    state_authority_assurance: dict[str, Any]
+    state_authority_assurance: Mapping[str, Any]
 
 
 class ReceiverLaunchContext:
@@ -1011,14 +1093,11 @@ class SeatAssignmentBroker:
             detail={"admitted": True},
             idempotency_key=f"accepted:{body['assignment_id']}",
         )
-        labeled_assignment = {
-            **copy.deepcopy(body),
-            "state_authority_assurance": copy.deepcopy(self._state_authority_assurance),
-        }
+        labeled_assignment = _immutable_evidence(copy.deepcopy(body), expose_assurance=True)
         return SeatAdmission(
             labeled_assignment,
-            receipt,
-            copy.deepcopy(self._state_authority_assurance),
+            _immutable_evidence(receipt, expose_assurance=True),
+            self._state_authority_assurance,
         )
 
     def emit(
@@ -1035,7 +1114,7 @@ class SeatAssignmentBroker:
         revocations = _resolve_revocations(self._revocation_resolver)
         labeled_detail = {
             **copy.deepcopy(detail),
-            "state_authority_assurance": copy.deepcopy(self._state_authority_assurance),
+            "state_authority_assurance": _wire_state_authority_assurance(),
         }
         receipt = emit_state_receipt(
             assignment,
@@ -1078,10 +1157,12 @@ class SeatAssignmentBroker:
             revoked_seat_key_ids=revocations,
             now=self._time(),
         )
-        return {
-            **verified,
-            "state_authority_assurance": copy.deepcopy(self._state_authority_assurance),
-        }
+        return _immutable_evidence(
+            {
+                **verified,
+            },
+            expose_assurance=True,
+        )
 
 
 class SelfConnectAssignmentReceiver:
@@ -1097,6 +1178,10 @@ class SelfConnectAssignmentReceiver:
     ) -> None:
         if type(broker) is not SeatAssignmentBroker or not callable(read_raw_assignment):
             raise TypeError("receiver requires an exact broker and raw SelfConnect reader")
+        if type(selfconnect_owned_sidecar) is not bool:
+            raise TypeError("selfconnect_owned_sidecar must be an exact boolean")
+        if type(high_assurance) is not bool:
+            raise TypeError("high_assurance must be an exact boolean")
         if high_assurance or not selfconnect_owned_sidecar:
             raise ValueError(
                 "receiver refuses third-party TUI ingress and high-assurance mode until "
@@ -1141,7 +1226,7 @@ class GuardedSubmitConfig:
 class AssignmentDispatch:
     assignment: dict[str, Any]
     submit_result: dict[str, Any]
-    state_authority_assurance: dict[str, Any]
+    state_authority_assurance: Mapping[str, Any]
 
 
 class ProductionAssignmentRuntime:
@@ -1287,12 +1372,14 @@ class ProductionAssignmentRuntime:
             evidence={"result": result, "durable_attestation": durable_attestation},
         )
         return AssignmentDispatch(
-            copy.deepcopy(assignment),
-            {
-                **copy.deepcopy(result),
-                "transport_assurance": "transport_unattested",
-                "state_authority_assurance": _state_authority_assurance(),
-            },
+            _immutable_evidence(copy.deepcopy(assignment), expose_assurance=True),
+            _immutable_evidence(
+                {
+                    **copy.deepcopy(result),
+                    "transport_assurance": "transport_unattested",
+                    "state_authority_assurance": _wire_state_authority_assurance(),
+                }
+            ),
             _state_authority_assurance(),
         )
 

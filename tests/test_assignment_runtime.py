@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import inspect
 import json
 
@@ -308,12 +307,12 @@ def test_mailbox_fork_and_forged_receipt_never_authenticate(tmp_path, monkeypatc
     admission = _broker(case, tmp_path, [NOW + 1]).admit_raw(
         json.dumps(assignment, sort_keys=True, separators=(",", ":"))
     )
-    fork = copy.deepcopy(admission.accepted_receipt)
+    fork = json.loads(json.dumps(admission.accepted_receipt))
     fork["detail"] = {"forged": True}
     with pytest.raises(AssignmentReplayError, match="fork"):
         case["mailbox"].publish(fork, channel=case["channel"])
 
-    forged = copy.deepcopy(admission.accepted_receipt)
+    forged = json.loads(json.dumps(admission.accepted_receipt))
     forged["signature_b64"] = "Zm9yZ2Vk"
     alerts = []
     watchdog = runtime_module.AssignmentWatchdog(

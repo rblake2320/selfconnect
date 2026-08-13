@@ -191,7 +191,7 @@ class AssignmentWatchdog:
                 raw = self._receipt_reader()
                 self._guard_pair(assignment_source, expected_target, "after_receipt_read")
                 if raw is not None:
-                    if type(raw) is not dict:
+                    if not isinstance(raw, dict):
                         raise AssignmentVerificationError("receipt source returned a non-dict")
                     verification = self._resolve_verification()
                     if verification.get("expected_target_identity") != expected_target:
