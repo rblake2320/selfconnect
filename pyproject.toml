@@ -86,6 +86,7 @@ Repository = "https://github.com/rblake2320/selfconnect"
 [tool.hatch.build.targets.wheel]
 artifacts = [
     "experiments/win32_probe/results/console_input_transport_PASS_redacted.json",
+    "experiments/win32_probe/results/observation_state_live_20260824_redacted.json",
     "experiments/fabric_v2/results/baseline_5agent_fabric_v2_service_transport.json",
     "experiments/fabric_v2/results/SC_FABRIC_SERVICE_20260621_1135_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_service_selftest_20260621_113419_redacted.json",
@@ -107,6 +108,7 @@ include = [
     "approval_telegram.py",
     "self_connect.py",
     "sc_cli.py",
+    "sc_observation.py",
     "sc_done.py",
     "sc_envelope.py",
     "sc_mcp.py",
@@ -149,6 +151,7 @@ include = [
     "experiments/win32_probe/channel_router_composition_probe.py",
     "experiments/win32_probe/chained_channel.py",
     "experiments/win32_probe/browser_local_proof.py",
+    "experiments/win32_probe/observation_state_live_probe.py",
     "experiments/win32_probe/console_input_transport_probe.py",
     "experiments/win32_probe/results/console_input_transport_PASS_redacted.json",
     "experiments/win32_probe/etw_provider.py",
@@ -158,6 +161,7 @@ include = [
     "experiments/win32_probe/service_sid_probe.py",
     "experiments/win32_probe/uia_echo_filter_probe.py",
     "experiments/win32_probe/results/browser_local_proof_PASS_redacted.json",
+    "experiments/win32_probe/results/observation_state_live_20260824_redacted.json",
     "experiments/win32_probe/results/channel_router_composition_LIVE_PASS_redacted.json",
     "experiments/win32_probe/results/channel_router_composition_PASS_redacted.json",
     "experiments/win32_probe/results/pipe_role_lease_PASS_redacted.json",
@@ -178,6 +182,8 @@ include = [
     "experiments/fabric_v2/results/fabric_v2_router_state_20260621_081434_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_selftest_20260621_073951_redacted.json",
     "docs/BROWSER_LOCAL_PROOF.md",
+    "docs/COMPUTER_USE_COMPARISON_2026-08-24.md",
+    "docs/SELFCONNECT_NATIVE_OBSERVATION_PROOF.md",
     "docs/CHANNEL_ROUTER_COMPOSITION_PROOF.md",
     "docs/WINDOWS_TERMINAL_ACTIVE_TAB_GUARD.md",
     "docs/CLAIM_EVIDENCE_MATRIX.md",
@@ -201,11 +207,13 @@ include = [
     "docs/PROVEN_VS_UNTESTED.md",
     "docs/SELFCONNECT_PRODUCT_BOUNDARIES.md",
     "docs/TPM_PLATFORM_ATTESTATION.md",
+    "tests/fixtures/owned_observation_window.py",
     "skills/selfconnect-win32/**",
 ]
 
 [tool.hatch.build.targets.sdist]
 artifacts = [
+    "experiments/win32_probe/results/observation_state_live_20260824_redacted.json",
     "experiments/fabric_v2/results/baseline_5agent_fabric_v2_service_transport.json",
     "experiments/fabric_v2/results/SC_FABRIC_SERVICE_20260621_1135_redacted.json",
     "experiments/fabric_v2/results/fabric_v2_service_selftest_20260621_113419_redacted.json",

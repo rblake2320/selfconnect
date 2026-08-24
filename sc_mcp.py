@@ -45,6 +45,19 @@ def build_server():
         return sc_cli.list_window_records(query, limit)
 
     @server.tool()
+    def resolve_window(
+        query: str,
+        exact_title: bool = False,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Resolve exactly one window; fail closed with candidates on ambiguity."""
+        return sc_cli.resolve_unique_window(
+            query,
+            exact_title=exact_title,
+            limit=limit,
+        )
+
+    @server.tool()
     def read_window(
         hwnd: int,
         prefer_uia: bool = True,
@@ -62,6 +75,41 @@ def build_server():
         return sc_cli.read_window(
             hwnd,
             prefer_uia=prefer_uia,
+            profile=profile,
+            role=role or None,
+            generation=generation or None,
+            mesh=mesh,
+            birth_id=birth_id or None,
+        )
+
+    @server.tool()
+    def observe_window(
+        hwnd: int,
+        include_text: bool = True,
+        include_elements: bool = False,
+        include_screenshot: bool = False,
+        screenshot_path: str = "",
+        crop: bool = True,
+        ocr_mode: str = "auto",
+        max_text_chars: int = 100_000,
+        element_limit: int = 200,
+        profile: str = "explore",
+        role: str = "",
+        generation: int = 0,
+        mesh: str = "default",
+        birth_id: str = "",
+    ) -> dict[str, Any]:
+        """Observe one verified HWND with adaptive UIA, capture, and OCR paths."""
+        return sc_cli.observe_window(
+            hwnd,
+            include_text=include_text,
+            include_elements=include_elements,
+            include_screenshot=include_screenshot,
+            screenshot_path=screenshot_path,
+            crop=crop,
+            ocr_mode=ocr_mode,
+            max_text_chars=max_text_chars,
+            element_limit=element_limit,
             profile=profile,
             role=role or None,
             generation=generation or None,

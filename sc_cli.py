@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from sc_mesh_lease import GOVERNED_PROFILE, RoleLeaseTable, evaluate_lease_gate
+from sc_observation import observe_window
 
 # Shared in-process lease table so the CLI and MCP adapters enforce against the
 # same governed lease state. Optional: only consulted in governed mode.
@@ -100,6 +101,61 @@ def _filter_windows(windows: list[Any], query: str = "", limit: int = 100) -> li
 def list_window_records(query: str = "", limit: int = 100) -> list[dict[str, Any]]:
     sc = _load_sc()
     return [window_to_dict(w) for w in _filter_windows(sc.list_windows(), query, limit)]
+
+
+def resolve_unique_window(
+    query: str,
+    *,
+    exact_title: bool = False,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Resolve exactly one visible window or fail with bounded candidates.
+
+    Unlike the legacy ``find_target`` convenience helper, this adapter never
+    silently picks the first fuzzy match. Agent-facing callers can therefore
+    stop on ambiguity before any capture or input is attempted.
+    """
+    normalized_query = str(query).strip()
+    if not normalized_query:
+        return {
+            "ok": False,
+            "query": normalized_query,
+            "exact_title": bool(exact_title),
+            "error": "query is required",
+            "reason": "empty_query",
+            "candidates": [],
+        }
+
+    candidates = list_window_records(
+        normalized_query,
+        limit=max(1, min(int(limit), 500)),
+    )
+    if exact_title:
+        wanted = normalized_query.casefold()
+        candidates = [item for item in candidates if str(item.get("title", "")).strip().casefold() == wanted]
+
+    if len(candidates) != 1:
+        reason = "no_matching_window" if not candidates else "ambiguous_window"
+        return {
+            "ok": False,
+            "query": normalized_query,
+            "exact_title": bool(exact_title),
+            "error": (
+                "no visible window matched the query"
+                if not candidates
+                else f"expected exactly one visible window; found {len(candidates)}"
+            ),
+            "reason": reason,
+            "candidates": candidates,
+        }
+
+    return {
+        "ok": True,
+        "query": normalized_query,
+        "exact_title": bool(exact_title),
+        "window": candidates[0],
+        "candidates": candidates,
+    }
 
 
 def find_window_by_hwnd(hwnd: int):
@@ -700,6 +756,28 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=100)
     p.add_argument("--json", action="store_true", help="emit JSON")
 
+    p = sub.add_parser(
+        "resolve",
+        help="resolve exactly one visible window or report bounded candidates",
+    )
+    p.add_argument("--query", required=True, help="filter by title, exe, or class")
+    p.add_argument("--exact-title", action="store_true")
+    p.add_argument("--limit", type=int, default=100)
+
+    p = sub.add_parser(
+        "observe",
+        help="capture one target-bound text/UIA/screenshot/OCR observation",
+    )
+    p.add_argument("--hwnd", required=True, type=parse_hwnd)
+    p.add_argument("--no-text", action="store_true", help="skip UIA/child text")
+    p.add_argument("--elements", action="store_true", help="include bounded UIA elements")
+    p.add_argument("--screenshot", action="store_true", help="save a PNG")
+    p.add_argument("--path", default="", help="PNG path when --screenshot is used")
+    p.add_argument("--no-crop", action="store_true")
+    p.add_argument("--ocr-mode", choices=("auto", "always", "never"), default="auto")
+    p.add_argument("--max-text-chars", type=int, default=100_000)
+    p.add_argument("--element-limit", type=int, default=200)
+
     p = sub.add_parser("read", help="read text from a window")
     p.add_argument("--hwnd", required=True, type=parse_hwnd)
     p.add_argument("--no-uia", action="store_true", help="skip UIA and use child text only")
@@ -804,6 +882,30 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "windows":
             records = list_window_records(args.query, args.limit)
             return _print_json(records) if args.json else _print_windows(records)
+
+        if args.command == "resolve":
+            result = resolve_unique_window(
+                args.query,
+                exact_title=args.exact_title,
+                limit=args.limit,
+            )
+            _print_json(result)
+            return 0 if result.get("ok") is True else 1
+
+        if args.command == "observe":
+            result = observe_window(
+                args.hwnd,
+                include_text=not args.no_text,
+                include_elements=args.elements,
+                include_screenshot=args.screenshot,
+                screenshot_path=args.path,
+                crop=not args.no_crop,
+                ocr_mode=args.ocr_mode,
+                max_text_chars=args.max_text_chars,
+                element_limit=args.element_limit,
+            )
+            _print_json(result)
+            return 0 if result.get("ok") is True else 1
 
         if args.command == "read":
             return _print_json(read_window(args.hwnd, prefer_uia=not args.no_uia))

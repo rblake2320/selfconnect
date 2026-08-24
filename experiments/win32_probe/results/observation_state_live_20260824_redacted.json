@@ -1,0 +1,80 @@
+{
+  "ambiguity": {
+    "candidate_count": 2,
+    "rejected": true
+  },
+  "app": {
+    "accessibility_assessment": "chrome_only",
+    "capture_low_information": false,
+    "capture_route": "selfconnect_native_capture",
+    "elapsed_ms": 636.376,
+    "observation_method": "ocr",
+    "resolution_ok": true,
+    "resolve_ms": 1420.317,
+    "screenshot_saved": true,
+    "sentinel_match": true,
+    "sentinel_sha256": "373a7ba3818731804f0f685da8cdded297a930df3b51a0f33fc83f8841bc75c1",
+    "target_stable": true
+  },
+  "browser": {
+    "assessment": "rich_text_fast_path",
+    "available": true,
+    "browser_exe": "msedge.exe",
+    "browser_kind": "msedge",
+    "elapsed_ms": 174.886,
+    "method": "uia_text",
+    "nonce_sha256": "c0dd7dc392b0b862c24af165f275c5eca166fcbb18dfee0df9748a7a21ac7946",
+    "ok": true,
+    "owned_page_sentinel_match": true,
+    "readiness_ms": 560.458,
+    "resolution_ok": true,
+    "resolve_ms": 2.487,
+    "target_stable": true
+  },
+  "checks": {
+    "ambiguity_failed_closed": true,
+    "browser_owned_page_read": true,
+    "browser_target_stable": true,
+    "browser_unique_resolution": true,
+    "chrome_only_escalated_to_ocr": true,
+    "closed_hwnd_failed_closed": true,
+    "real_app_sentinel_read": true,
+    "real_pixels_captured": true,
+    "target_stable": true,
+    "terminal_accessibility_fast_path": true,
+    "terminal_real_ocr": true,
+    "terminal_unique_resolution": true,
+    "unique_resolution": true
+  },
+  "closed_target": {
+    "rejected": true
+  },
+  "generated_at": "2026-08-24T21:14:28.999754+00:00",
+  "platform": "win32",
+  "real_windows_only": true,
+  "redacted": true,
+  "schema": "selfconnect.observation.live-proof.v1",
+  "status": "PASS",
+  "terminal": {
+    "adaptive_method": "uia_text",
+    "adaptive_ms": 34.037,
+    "adaptive_ok": true,
+    "adaptive_reason": "rich_text_fast_path",
+    "adaptive_samples": 5,
+    "adaptive_sentinel_match": true,
+    "adaptive_speedup_vs_forced_ocr_x": 10.836,
+    "available": true,
+    "forced_capture_low_information": false,
+    "forced_capture_route": "selfconnect_native_capture",
+    "forced_ocr_characters": 808,
+    "forced_ocr_ms": 368.809,
+    "forced_ocr_ok": true,
+    "forced_ocr_samples": 3,
+    "forced_ocr_sentinel_match": true,
+    "resolution_max_ms": 2.172,
+    "resolution_ok": true,
+    "resolution_p50_ms": 1.544,
+    "sentinel_sha256": "49e6fc1e71fab47382ebdb7ad90c77871737e1912ba3fa6bb98a203ca59199ca"
+  },
+  "uses_mocks": false
+}
