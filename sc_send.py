@@ -7,8 +7,14 @@ Usage:
     python sc_send.py --list                 # show injectable windows
 
 Protocol enforced: text and Enter use one class-selected transport call.
-Safety: refuses ambiguous targets (use --first to override), skips own window,
-idle-guards Codex-style busy spinners unless --force.
+Safety: refuses ambiguous targets, skips own window, idle-guards Codex-style
+busy spinners unless --force.
+
+Duplicate titles: tab names are project-scoped and reused across sessions, so
+several visible windows can share one title (stale twins linger). On multiple
+matches sc_send consults the mesh registry and picks the single match whose
+hwnd carries an ACTIVE registration; anything less decisive stays AMBIGUOUS
+(fail-closed). --first remains an explicit operator override, not a default.
 """
 import argparse
 import ctypes
@@ -31,6 +37,53 @@ def find_targets(sub):
     me = own_hwnd()
     return [w for w in list_windows()
             if sub in (w.title or "").lower() and w.hwnd != me]
+
+
+# An "active" record whose last_seen is older than this is not evidence the
+# window is still that agent: 31 of 39 active records were >7 days old when
+# measured (2026-08-04), so unbounded trust would let a stale-active twin beat
+# a live-unregistered window and print DISAMBIGUATED confidently.
+STALE_ACTIVE_SECONDS = 24 * 3600
+
+
+def registry_record_for(hwnd, registry):
+    """Best registry record for an hwnd: an active one, else most recent."""
+    candidates = [rec for rec in (registry or {}).get("agents", [])
+                  if rec.get("hwnd") == hwnd]
+    if not candidates:
+        return None
+    active = [rec for rec in candidates if rec.get("status") == "active"]
+    pool = active or candidates
+    return max(pool, key=lambda rec: rec.get("last_seen") or 0)
+
+
+def pick_by_registry(matches, registry, now=None):
+    """Resolve duplicate-title matches through mesh-registry classification.
+
+    Returns (winner, rows). winner is the ONE match holding a FRESH active
+    registration (last_seen within STALE_ACTIVE_SECONDS), or None when zero
+    or several qualify — ambiguity between two live registered agents,
+    rotated HWNDs, stale-active twins, and unreadable registries all stay
+    fail-closed. rows carry (window, status, role, birth_id) for display;
+    an aged active record shows as "active-stale".
+    """
+    import time
+    now = time.time() if now is None else now
+    rows = []
+    active_matches = []
+    for win in matches:
+        rec = registry_record_for(win.hwnd, registry)
+        status = rec.get("status") if rec else "unregistered"
+        fresh = bool(rec) and (now - (rec.get("last_seen") or 0)) <= STALE_ACTIVE_SECONDS
+        if status == "active" and not fresh:
+            status = "active-stale"
+        rows.append((win, status,
+                     rec.get("role") if rec else None,
+                     rec.get("birth_id") if rec else None))
+        if status == "active":
+            active_matches.append(win)
+    winner = active_matches[0] if len(active_matches) == 1 else None
+    return winner, rows
 
 
 def main():
@@ -56,11 +109,40 @@ def main():
     if not matches:
         print(f"NO MATCH for {args.to!r} — run with --list to see windows")
         return 1
-    if len(matches) > 1 and not args.first:
-        print(f"AMBIGUOUS — {len(matches)} windows match {args.to!r} (use --first or narrow):")
-        for w in matches:
-            print(f"  0x{w.hwnd:08X}  {w.title[:70]}")
-        return 2
+    if len(matches) > 1:
+        try:
+            from sc_mesh_registry import load_registry
+            registry = load_registry()
+        except Exception:  # registry unreadable → behave exactly as before
+            registry = None
+        winner, rows = pick_by_registry(matches, registry)
+        if args.first:
+            # --first stays an override, but never a silent one: enumeration
+            # order changes mid-session (observed twice, 2026-08-04), so a
+            # bare --first can re-flip onto a dead twin with no signal.
+            chosen = matches[0]
+            if winner is not None and winner.hwnd != chosen.hwnd:
+                _, _, role, birth = next(r for r in rows
+                                         if r[0].hwnd == winner.hwnd)
+                print(f"WARNING --first overrides the registry: taking "
+                      f"0x{chosen.hwnd:08X} while the fresh-active match is "
+                      f"0x{winner.hwnd:08X} (role={role} birth={birth}). "
+                      "Drop --first to send to the live agent.")
+            matches = [chosen]
+        if winner is not None:
+            _, status, role, birth = next(r for r in rows if r[0].hwnd == winner.hwnd)
+            print(f"DISAMBIGUATED via mesh registry: role={role} birth={birth} "
+                  f"0x{winner.hwnd:08X} (sole active registration among "
+                  f"{len(matches)} title matches)")
+            matches = [winner]
+        else:
+            print(f"AMBIGUOUS — {len(matches)} windows match {args.to!r} "
+                  "and the mesh registry does not single one out "
+                  "(use --first or narrow):")
+            for w, status, role, _ in rows:
+                extra = f"  [{status}" + (f": {role}]" if role else "]")
+                print(f"  0x{w.hwnd:08X}  {w.title[:60]}{extra}")
+            return 2
     win = matches[0]
 
     if not args.force:
