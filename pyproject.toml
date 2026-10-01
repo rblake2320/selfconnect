@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "selfconnect"
+name = "selfconnect-sdk"
 version = "0.12.0"
 description = "OS-native Win32 bridge for AI agent orchestration — PostMessage, PrintWindow, UIA, cross-machine mesh, Telegram approvals, ClaudeGo dashboard."
 readme = "README.md"

@@ -62,13 +62,13 @@ enabled or validated that adapter.
 <!-- SC-CLAIM:package.installation_extras END -->
 
 ```bash
-pip install selfconnect
-pip install selfconnect[uia]
-pip install selfconnect[mcp]
-pip install selfconnect[service]
-pip install selfconnect[telegram]
-pip install selfconnect[claudego]
-pip install selfconnect[full]
+pip install --no-index --find-links ./wheelhouse selfconnect-sdk==0.12.0
+pip install --no-index --find-links ./wheelhouse selfconnect-sdk[uia]
+pip install --no-index --find-links ./wheelhouse selfconnect-sdk[mcp]
+pip install --no-index --find-links ./wheelhouse selfconnect-sdk[service]
+pip install --no-index --find-links ./wheelhouse selfconnect-sdk[telegram]
+pip install --no-index --find-links ./wheelhouse selfconnect-sdk[claudego]
+pip install --no-index --find-links ./wheelhouse selfconnect-sdk[full]
 ```
 
 ## Package Probes And Guarded Input
@@ -113,7 +113,7 @@ not use by every core path or an external validation or authorization.
 <!-- SC-CLAIM:package.mcp_guarded_surface END -->
 
 ```bash
-pip install selfconnect[mcp]
+pip install --no-index --find-links ./wheelhouse selfconnect-sdk[mcp]
 selfconnect-mcp
 ```
 
@@ -286,3 +286,7 @@ response = chat(session, "What model are you?")
 ## License
 
 Apache License 2.0 - see [`LICENSE`](LICENSE).
+
+### Distribution identity
+
+The local wheel distribution is `selfconnect-sdk==0.12.0`; Python modules and CLI entrypoints are unchanged. This rename does not publish a PyPI package. Use a fresh environment and the approved offline wheelhouse; never install old `selfconnect` and `selfconnect-sdk` together because they own the same flat modules. Enterprise deployments use their signed, hash-locked installer bundle. Packaging regression: `python -m pytest test_distribution_name.py`; wheel acceptance checks METADATA and installed imports.

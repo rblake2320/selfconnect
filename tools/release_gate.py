@@ -499,7 +499,7 @@ def audit(
 
     if mode == "runtime":
         try:
-            installed = importlib.metadata.version("selfconnect")
+            installed = importlib.metadata.version("selfconnect-sdk")
         except importlib.metadata.PackageNotFoundError:
             installed = "<not-installed>"
         versions["installed"] = installed
